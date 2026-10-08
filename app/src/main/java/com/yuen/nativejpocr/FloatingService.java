@@ -1243,12 +1243,17 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
+        openLookupHost(q, true, LOOKUP_MODE_FLOAT);
+    }
+
+    private void openLookupHost(String q, boolean returnToSearch, String mode) {
         String value = q == null ? "" : q.trim();
         if (value.isEmpty()) return;
         Intent host = new Intent(this, LookupLinkActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 .putExtra(EXTRA_LOOKUP_QUERY, value)
-                .putExtra(EXTRA_RETURN_TO_SEARCH, true)
+                .putExtra(EXTRA_LOOKUP_MODE, mode)
+                .putExtra(EXTRA_RETURN_TO_SEARCH, returnToSearch)
                 .putExtra(EXTRA_SEARCH_QUERY, currentSearchQuery);
         try {
             startActivity(host);
@@ -2182,8 +2187,16 @@ public class FloatingService extends Service {
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 
             if (!q.isEmpty()) {
-                lookupOverlayHosted = intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false);
-                showLookupOverlay(q, returnToSearch, mode);
+                if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
+                    lookupOverlayHosted = true;
+                    showLookupOverlay(q, returnToSearch, mode);
+                } else {
+                    // OCR still delivers its result directly to this Service.
+                    // The shared transparent host supplies full-display mask
+                    // pixels and a real system Back target, then forwards the
+                    // hosted request back here to render the same overlay card.
+                    openLookupHost(q, returnToSearch, mode);
+                }
             }
         }
 

@@ -234,19 +234,19 @@ APK 文件名固定格式：
 - 桌面搜索 Widget
 - 桌面 Widget 和系统 `ACTION_SEARCH` 共用 `SearchActivity` 路由：有查询时直接进入透明 `LookupLinkActivity` 承载的查词小窗，没有查询时进入同一宿主承载的悬浮搜索。禁止从此路由直接发送无宿主的 `mode=float` 查词请求，否则会漏掉全屏 Mask 和系统返回宿主；路由自身也必须透明、无预览、无动画、空 taskAffinity、排除最近任务，避免拉起应用主页。桌面直接查词关闭后回到调用方，不恢复搜索层。
 - 交互固定：轻点悬浮球进入桌面全局搜索；拖拽悬浮球进行区域 OCR，识别成功后必须直接打开查词弹窗，不得先进入或回落到桌面全局搜索层
-- 全局悬浮搜索由 `TYPE_APPLICATION_OVERLAY` 显示搜索框和候选列表，复用透明 `LookupLinkActivity` 承载全屏 Mask 和系统返回。Mask 覆盖搜索内容外的整个屏幕，包括状态栏与导航栏；点击空白 Mask、左右返回手势或系统返回均关闭搜索和 Mask，底层应用保持原页面。关闭搜索后恢复调用方系统栏。OCR 查词结果必须通过显式 Intent 触发 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，由 `WindowManager.TYPE_APPLICATION_OVERLAY` 直接显示在当前桌面或前台 App 上方，禁止为了 OCR 查词启动 `QuickLookupActivity`、切换 Activity 或切换任务栈
+- 全局悬浮搜索由 `TYPE_APPLICATION_OVERLAY` 显示搜索框和候选列表，复用透明 `LookupLinkActivity` 承载全屏 Mask 和系统返回。Mask 覆盖搜索内容外的整个屏幕，包括状态栏与导航栏；点击空白 Mask、左右返回手势或系统返回均关闭搜索和 Mask，底层应用保持原页面。关闭搜索后恢复调用方系统栏。OCR 查词结果必须通过显式 Intent 触发 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，由 `WindowManager.TYPE_APPLICATION_OVERLAY` 直接显示在当前桌面或前台 App 上方，OCR 结果统一由 Service 接入透明 `LookupLinkActivity` 承载全屏 Mask 和系统返回，再由同一 Service 绘制查词浮层；禁止启动 `QuickLookupActivity`、应用主页或全局搜索页。透明宿主不得渲染词典页面，不得使用应用主页的任务归属、预览或过渡动画
 - 首次开启 OCR 仅通过透明、无预览、无动画、空 taskAffinity、排除最近任务的 `OcrActivity` 请求系统屏幕共享授权，不得把应用主页拉到前台。授权或取消后立即结束授权宿主并恢复之前的应用；系统屏幕共享授权框必须保留。
-- 有悬浮窗权限时，Intent（Deep Link / PROCESS_TEXT / SEND）与悬浮搜索选词复用 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY` 的同一查词卡片。两个入口统一默认大小、位置、标题拖动、底部版权栏缩放和持久化窗口设置，并都带全屏 Mask；入口差异只影响关闭后是否恢复搜索。没有悬浮窗权限时，PROCESS_TEXT / SEND 可回退到独立 Activity。
+- 有悬浮窗权限时，OCR、Intent（Deep Link / PROCESS_TEXT / SEND）与悬浮搜索选词复用 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY` 的同一查词卡片。这些入口统一默认大小、位置、标题拖动、底部版权栏缩放和持久化窗口设置，并都带全屏 Mask；入口差异只影响关闭后是否恢复搜索。没有悬浮窗权限时，PROCESS_TEXT / SEND 可回退到独立 Activity。
 - OCR 查词 WindowManager 浮层以用户提供的视频1词典页为 UI 基准：紧凑白色圆角卡片、词头 + 收藏图标、独立发音行、40dp 左右的浅灰词典分区头、白色词条内容区、底部工具栏和版权栏；工具图标使用黑色描边资源，禁止使用 Unicode 字符冒充主要工具栏图标。参考视频中的灰色圆点属于触摸指示器，不得做成可见抓手。顶部标题区可拖动窗口；底部版权栏整条区域作为隐形缩放热区，横向拖动改变宽度、纵向拖动改变高度，左上角保持锚定，并持久化窗口 x/y/宽/高
-- Intent 与搜索查词小窗必须自己消费左右返回手势、系统返回和实体返回键，统一调用 `handleLookupBack()`，一次返回直接关闭整个小窗；编辑态和查询历史都不得拦截为“退出编辑”或“上一词”。收起键盘并移除 Mask 后，底层应用保持原页面；搜索入口可恢复原搜索查询。蓝色悬浮球始终位于查词浮层最上层。
+- OCR、Intent 与搜索查词小窗必须自己消费左右返回手势、系统返回和实体返回键，统一调用 `handleLookupBack()`，一次返回直接关闭整个小窗；编辑态和查询历史都不得拦截为“退出编辑”或“上一词”。收起键盘并移除 Mask 后，底层应用保持原页面；搜索入口可恢复原搜索查询。蓝色悬浮球始终位于查词浮层最上层。
 - 对外查询 Deep Link 固定为 `jp-native://lookup?q=<URL编码后的查询内容>`；由无界面的 `LookupLinkActivity` 接收后转发到 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，Deep Link 本身不得渲染或切换到查词 Activity 页面
-- Deep Link 继续接受 `mode=fullscreen` 与 `mode=float`，两者在 Intent 入口都采用同一可拖动、可缩放小窗和全屏 Mask；不再因入口或 mode 改变卡片大小和交互。词典卡片仍是 `TYPE_APPLICATION_OVERLAY`；透明、无预览、无动画、空 taskAffinity 的 `LookupLinkActivity` 只承载 Mask 和系统返回，不渲染词典页面，并在小窗关闭时 finish。OCR 入口保持通过 Service 直接打开浮层，不启动 Activity。
-- Intent 与搜索的 WindowManager 根层覆盖整个显示区域并允许布局进入刘海区域。卡片外点击通过独立 Mask 点击层调用关闭方法；系统返回键、Android 13+ 返回回调和左右边缘返回手势统一调用 `handleLookupBack()`。
+- Deep Link 继续接受 `mode=fullscreen` 与 `mode=float`，两者在 Intent 入口都采用同一可拖动、可缩放小窗和全屏 Mask；不再因入口或 mode 改变卡片大小和交互。词典卡片仍是 `TYPE_APPLICATION_OVERLAY`；透明、无预览、无动画、空 taskAffinity 的 `LookupLinkActivity` 只承载 Mask 和系统返回，不渲染词典页面，并在小窗关闭时 finish。OCR 入口仍通过显式 Intent 将识别原文直接交给 Service，由 Service 复用该透明宿主；返回关闭后保持原桌面或应用，不恢复搜索层。
+- OCR、Intent 与搜索的 WindowManager 根层覆盖整个显示区域并允许布局进入刘海区域。卡片外点击通过独立 Mask 点击层调用关闭方法；系统返回键、Android 13+ 返回回调和左右边缘返回手势统一调用 `handleLookupBack()`。
 - 全屏黑色 Mask 使用约 42% 不透明度，由透明 `LookupLinkActivity` 的独立全屏 View 绘制，覆盖底部、状态栏和导航栏；系统栏透明且关闭系统额外 contrast scrim，关闭宿主后恢复调用方系统栏。`TYPE_APPLICATION_OVERLAY` 根层保留独立的卡片外点击层，宿主已绘制 Mask 时此层不重复着色，避免双重变暗；没有宿主时由 Overlay 自己绘制 Mask。不能仅依赖悬浮窗口扩大范围或半透明 Root background 保证系统栏遮罩。
-- Intent 与搜索小窗顶部词头支持编辑态：点词头切换为输入框 + 蓝色“确认”并弹出键盘；点击与标题拖动通过 touch slop 区分。编辑态返回也直接关闭整个小窗并收起键盘。OCR 触发期间蓝色悬浮球不得临时设为 INVISIBLE。
-- Intent 与搜索小窗的系统返回由透明、无动画、可触摸的 `LookupLinkActivity` 在小窗生命周期内接收。Android 13+ 通过 Activity 的 `OnBackInvokedDispatcher`、旧版本通过 `onBackPressed()` 把返回发送给 `FloatingService.ACTION_LOOKUP_BACK`；小窗关闭后 Service 通知宿主 finish，保持调用方页面不变。
-- 普通浏览/全屏 Mask 状态下 Intent Overlay 必须保持 `FLAG_NOT_FOCUSABLE`，确保透明 Back 宿主是真正的系统返回目标；只有点顶部词头进入编辑时临时去掉 `FLAG_NOT_FOCUSABLE` 以获取 IME，退出编辑或确认后立即恢复。禁止让常态 Overlay 抢走 Activity Back 焦点
-- OCR 没有 Activity 返回宿主，因此 OCR 查词 Overlay 在普通浏览时必须自己保持返回焦点，使用 `FLAG_ALT_FOCUSABLE_IM` 避免唤起键盘；进入词头编辑时移除此标记，确认后恢复。Android 13+ 普通浏览及编辑都注册 `PRIORITY_OVERLAY` 返回回调，关闭后释放焦点，底层应用不得收到该次返回。
+- OCR、Intent 与搜索小窗顶部词头支持编辑态：点词头切换为输入框 + 蓝色“确认”并弹出键盘；点击与标题拖动通过 touch slop 区分。编辑态返回也直接关闭整个小窗并收起键盘。OCR 触发期间蓝色悬浮球不得临时设为 INVISIBLE。
+- OCR、Intent 与搜索小窗的系统返回由透明、无动画、可触摸的 `LookupLinkActivity` 在小窗生命周期内接收。Android 13+ 通过 Activity 的 `OnBackInvokedDispatcher`、旧版本通过 `onBackPressed()` 把返回发送给 `FloatingService.ACTION_LOOKUP_BACK`；小窗关闭后 Service 通知宿主 finish，保持调用方页面不变。
+- 普通浏览/全屏 Mask 状态下已接入透明宿主的 OCR、Intent 与搜索查词 Overlay 必须保持 `FLAG_NOT_FOCUSABLE`，确保透明 Back 宿主是真正的系统返回目标；只有点顶部词头进入编辑时临时去掉 `FLAG_NOT_FOCUSABLE` 以获取 IME，退出编辑或确认后立即恢复。禁止让常态 Overlay 抢走 Activity Back 焦点
+- OCR 成功后的查词请求必须与 Intent、搜索选词共用透明 Mask / Back 宿主，不得继续渲染无宿主的 `mode=float` 结果。普通浏览时由宿主接收返回，Overlay 保持 `FLAG_NOT_FOCUSABLE`；词头编辑时临时聚焦 Overlay 并注册 `PRIORITY_OVERLAY` 返回回调，一次返回同时关闭键盘、查词和 Mask，底层应用不得收到该次返回。
 - 搜索浮层的 Android 13+ 返回回调使用 `PRIORITY_OVERLAY`，系统返回回调有效时不再同时执行自定义边缘手势。旧版本的自定义返回只在 `ACTION_UP` 完成时关闭，`ACTION_CANCEL` 必须取消，禁止在 `ACTION_MOVE` 移除窗口后让同一手势穿透到底层应用；输入框在旧版本通过 `onKeyPreIme()` 消费返回。
 - 搜索选词、查词返回搜索共用同一透明返回宿主。搜索输入框未编辑时 Overlay 保持 `FLAG_NOT_FOCUSABLE`，由宿主接收返回；编辑时临时聚焦搜索 Overlay 并注册返回回调。宿主退到后台时必须移除搜索、查词和 Mask，不得在后台恢复搜索。
 - vivo/OriginOS 的透明 Back 宿主不得设置 `FLAG_NOT_TOUCHABLE`，两种 mode 都保持可触摸、可聚焦，并在 `onPostResume()` 注册高优先级返回回调；上方 WindowManager Overlay 继续接收卡片和卡片外点击。
