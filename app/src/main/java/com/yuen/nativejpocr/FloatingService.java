@@ -317,19 +317,25 @@ public class FloatingService extends Service {
     }
 
     @android.annotation.SuppressLint("AppCompatCustomView")
-    private final class SearchEditor extends EditText {
-        SearchEditor(Context context) { super(context); }
+    private class OverlayEditor extends EditText {
+        OverlayEditor(Context context) { super(context); }
 
         @Override public void onWindowFocusChanged(boolean hasWindowFocus) {
             super.onWindowFocusChanged(hasWindowFocus);
             if (hasWindowFocus && isFocused()) {
                 post(() -> {
+                    if (!hasWindowFocus() || !isFocused()) return;
                     InputMethodManager imm =
                             (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
                     imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
                 });
             }
         }
+    }
+
+    @android.annotation.SuppressLint("AppCompatCustomView")
+    private final class SearchEditor extends OverlayEditor {
+        SearchEditor(Context context) { super(context); }
 
         @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
             if (keyCode == KeyEvent.KEYCODE_BACK) {
@@ -344,7 +350,7 @@ public class FloatingService extends Service {
 
     // This app intentionally uses platform widgets without AppCompat.
     @android.annotation.SuppressLint("AppCompatCustomView")
-    private final class LookupEditor extends EditText {
+    private final class LookupEditor extends OverlayEditor {
         LookupEditor(Context context) { super(context); }
 
         @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
@@ -1367,6 +1373,10 @@ public class FloatingService extends Service {
 
     private void setLookupOverlayFocusable(boolean focusable) {
         if (lookupOverlay == null || lookupOverlayLp == null || wm == null) return;
+
+        lookupOverlayLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+                (focusable ? WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED
+                        : WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
 
         if (focusable) {
             lookupOverlayLp.flags &=

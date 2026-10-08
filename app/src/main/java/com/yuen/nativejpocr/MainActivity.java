@@ -256,33 +256,28 @@ public class MainActivity extends Activity {
 
         void route(Intent i){
             String q=readIncoming(i);
-            if(q!=null && !q.trim().isEmpty()){
-                String value = q.trim();
-                if(Settings.canDrawOverlays(this)){
-                    Intent lookup = new Intent(this,FloatingService.class)
-                            .setAction(FloatingService.ACTION_SHOW_LOOKUP_OVERLAY)
-                            .putExtra(FloatingService.EXTRA_LOOKUP_QUERY,value)
-                            .putExtra(FloatingService.EXTRA_LOOKUP_MODE,
-                                    FloatingService.LOOKUP_MODE_FLOAT)
-                            .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,false);
-                    if(Build.VERSION.SDK_INT>=26) startForegroundService(lookup);
-                    else startService(lookup);
-                }else{
-                    startActivity(new Intent(this,QuickLookupActivity.class)
-                            .putExtra("query",value));
-                }
-                finish();
-                return;
-            }
-
+            String value=q==null?"":q.trim();
             if(Settings.canDrawOverlays(this)){
-                Intent service=new Intent(this,FloatingService.class)
-                        .setAction(FloatingService.ACTION_SHOW_SEARCH);
-                if(Build.VERSION.SDK_INT>=26) startForegroundService(service); else startService(service);
+                // Desktop/widget search needs the same mask and Back host as
+                // Intent lookup; a direct float Service request has no host.
+                Intent host=new Intent(this,LookupLinkActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                                Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                if(value.isEmpty()){
+                    host.putExtra(FloatingService.EXTRA_HOST_SEARCH,true);
+                }else{
+                    host.putExtra(FloatingService.EXTRA_LOOKUP_QUERY,value)
+                            .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,false);
+                }
+                startActivity(host);
+            }else if(!value.isEmpty()){
+                startActivity(new Intent(this,QuickLookupActivity.class)
+                        .putExtra("query",value));
             }else{
                 startActivity(new Intent(this,MainActivity.class));
             }
             finish();
+            overridePendingTransition(0,0);
         }
 
         String readIncoming(Intent i){

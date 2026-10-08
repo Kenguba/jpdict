@@ -232,6 +232,7 @@ APK 文件名固定格式：
 - Intent 快速词条弹窗
 - PROCESS_TEXT / SEND
 - 桌面搜索 Widget
+- 桌面 Widget 和系统 `ACTION_SEARCH` 共用 `SearchActivity` 路由：有查询时直接进入透明 `LookupLinkActivity` 承载的查词小窗，没有查询时进入同一宿主承载的悬浮搜索。禁止从此路由直接发送无宿主的 `mode=float` 查词请求，否则会漏掉全屏 Mask 和系统返回宿主；路由自身也必须透明、无预览、无动画、空 taskAffinity、排除最近任务，避免拉起应用主页。桌面直接查词关闭后回到调用方，不恢复搜索层。
 - 交互固定：轻点悬浮球进入桌面全局搜索；拖拽悬浮球进行区域 OCR，识别成功后必须直接打开查词弹窗，不得先进入或回落到桌面全局搜索层
 - 全局悬浮搜索由 `TYPE_APPLICATION_OVERLAY` 显示搜索框和候选列表，复用透明 `LookupLinkActivity` 承载全屏 Mask 和系统返回。Mask 覆盖搜索内容外的整个屏幕，包括状态栏与导航栏；点击空白 Mask、左右返回手势或系统返回均关闭搜索和 Mask，底层应用保持原页面。关闭搜索后恢复调用方系统栏。OCR 查词结果必须通过显式 Intent 触发 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，由 `WindowManager.TYPE_APPLICATION_OVERLAY` 直接显示在当前桌面或前台 App 上方，禁止为了 OCR 查词启动 `QuickLookupActivity`、切换 Activity 或切换任务栈
 - 首次开启 OCR 仅通过透明、无预览、无动画、空 taskAffinity、排除最近任务的 `OcrActivity` 请求系统屏幕共享授权，不得把应用主页拉到前台。授权或取消后立即结束授权宿主并恢复之前的应用；系统屏幕共享授权框必须保留。

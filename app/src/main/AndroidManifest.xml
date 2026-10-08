@@ -30,6 +30,9 @@
         <activity
             android:name=".MainActivity$SearchActivity"
             android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.LookupLinkBridge"
             android:label="日语搜索"
             android:icon="@drawable/app_icon">
             <intent-filter>
