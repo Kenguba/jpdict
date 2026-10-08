@@ -3,23 +3,23 @@ package com.yuen.jpdict;
 import android.app.*;
 import android.content.*;
 import android.content.pm.ServiceInfo;
+import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.*;
 import android.provider.Settings;
-import android.text.Editable;
-import android.text.TextWatcher;
 import android.util.DisplayMetrics;
 import android.view.*;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 
-import java.util.ArrayList;
+import androidx.core.content.ContextCompat;
+
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -38,6 +38,7 @@ public class FloatingService extends Service {
     public static final String ACTION_LOOKUP_DISMISS =
             "com.yuen.jpdict.LOOKUP_DISMISS";
     public static final String EXTRA_LOOKUP_HOSTED = "lookup_hosted";
+    public static final String EXTRA_LOOKUP_PRIVATE = "lookup_private";
     public static final String EXTRA_HOST_SEARCH = "host_search";
     public static final String ACTION_LOOKUP_HOST_FINISH =
             "com.yuen.jpdict.LOOKUP_HOST_FINISH";
@@ -66,6 +67,8 @@ public class FloatingService extends Service {
     private View searchPanel;
     private WindowManager.LayoutParams searchPanelLp;
     private boolean searchPanelHosted;
+    private boolean searchPrivateMode;
+    private boolean lookupPrivateMode;
     private View resultCard;
     private View lookupOverlay;
     private WindowManager.LayoutParams lookupOverlayLp;
@@ -155,11 +158,8 @@ public class FloatingService extends Service {
         startAsForeground();
 
         IntentFilter filter = new IntentFilter(MainActivity.ScreenCaptureService.ACTION_RESULT);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(ocrReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(ocrReceiver, filter);
-        }
+        ContextCompat.registerReceiver(this, ocrReceiver, filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED);
 
         if (Settings.canDrawOverlays(this)) showBubble();
         else stopSelf();
@@ -182,7 +182,10 @@ public class FloatingService extends Service {
                 this, 51, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        return new Notification.Builder(this, CH)
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, CH)
+                : new Notification.Builder(this);
+        return builder
                 .setSmallIcon(android.R.drawable.ic_menu_search)
                 .setContentTitle("多语种浮动取词已开启")
                 .setContentText("轻点搜索；拖动并松手可 OCR 取词")
@@ -238,84 +241,6 @@ public class FloatingService extends Service {
         return g;
     }
 
-    private final class BackGestureFrameLayout extends FrameLayout {
-        private float downX;
-        private float downY;
-        private boolean trackingEdge;
-        private boolean backRecognized;
-
-        BackGestureFrameLayout(Context context) {
-            super(context);
-            setFocusableInTouchMode(true);
-        }
-
-        private boolean isFromEdge(float x) {
-            int edge = dp(34);
-            return x <= edge || x >= Math.max(edge, getWidth() - edge);
-        }
-
-        private boolean isBackDistance(float x, float y) {
-            float dx = x - downX;
-            float dy = y - downY;
-            boolean inward = downX <= dp(34) ? dx >= dp(72) : dx <= -dp(72);
-            return inward && Math.abs(dx) > Math.abs(dy) * 1.15f;
-        }
-
-        @Override public boolean onInterceptTouchEvent(MotionEvent e) {
-            if (searchPanelHosted || searchBackDispatcher != null) return super.onInterceptTouchEvent(e);
-            switch (e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    downX = e.getX();
-                    downY = e.getY();
-                    trackingEdge = isFromEdge(downX);
-                    backRecognized = false;
-                    break;
-                case MotionEvent.ACTION_MOVE:
-                    if (trackingEdge && isBackDistance(e.getX(), e.getY())) {
-                        backRecognized = true;
-                        return true;
-                    }
-                    break;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    trackingEdge = false;
-                    backRecognized = false;
-                    break;
-            }
-            return false;
-        }
-
-        @Override public boolean onTouchEvent(MotionEvent e) {
-            if (searchPanelHosted || searchBackDispatcher != null) return super.onTouchEvent(e);
-            if (!trackingEdge && e.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                downX = e.getX();
-                downY = e.getY();
-                trackingEdge = isFromEdge(downX);
-            }
-
-            if (trackingEdge && e.getActionMasked() == MotionEvent.ACTION_MOVE &&
-                    isBackDistance(e.getX(), e.getY())) backRecognized = true;
-
-            // Keep the Back owner alive until completion. CANCEL means the
-            // system owns this gesture and must dispatch it to our callback.
-            if (trackingEdge && backRecognized &&
-                    e.getActionMasked() == MotionEvent.ACTION_UP) {
-                markAction("SEARCH_EDGE_BACK");
-                removeSearchPanel();
-                trackingEdge = false;
-                backRecognized = false;
-                return true;
-            }
-
-            if (e.getActionMasked() == MotionEvent.ACTION_UP ||
-                    e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                trackingEdge = false;
-                backRecognized = false;
-            }
-            return trackingEdge || super.onTouchEvent(e);
-        }
-    }
-
     @android.annotation.SuppressLint("AppCompatCustomView")
     private class OverlayEditor extends EditText {
         OverlayEditor(Context context) { super(context); }
@@ -330,21 +255,6 @@ public class FloatingService extends Service {
                     imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
                 });
             }
-        }
-    }
-
-    @android.annotation.SuppressLint("AppCompatCustomView")
-    private final class SearchEditor extends OverlayEditor {
-        SearchEditor(Context context) { super(context); }
-
-        @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
-            if (keyCode == KeyEvent.KEYCODE_BACK) {
-                if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
-                    removeSearchPanel();
-                }
-                return true;
-            }
-            return super.onKeyPreIme(keyCode, event);
         }
     }
 
@@ -731,100 +641,27 @@ public class FloatingService extends Service {
 
     private void showSearchPanel() {
         if (!Settings.canDrawOverlays(this) || wm == null) return;
-
         removeResultCard();
-
-        BackGestureFrameLayout root = new BackGestureFrameLayout(this);
-        root.setBackgroundColor(Color.TRANSPARENT);
-        View mask = new View(this);
-        mask.setBackgroundColor(searchPanelHosted ? Color.TRANSPARENT : 0x6b000000);
-        mask.setContentDescription("点击关闭搜索浮窗");
-        mask.setOnClickListener(v -> removeSearchPanel());
-        root.addView(mask, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-        root.setFocusableInTouchMode(true);
-        root.setOnKeyListener((v, keyCode, event) -> {
-            if (keyCode == KeyEvent.KEYCODE_BACK &&
-                    event.getAction() == KeyEvent.ACTION_UP) {
-                markAction("SEARCH_KEY_BACK");
-                removeSearchPanel();
-                return true;
+        FloatingSearchView root = new FloatingSearchView(this, currentSearchQuery,
+                searchPrivateMode, new FloatingSearchView.Callback() {
+            @Override public void onQueryChanged(String query) { currentSearchQuery = query; }
+            @Override public void onPrivateModeChanged(boolean privacy) { searchPrivateMode = privacy; }
+            @Override public void onLookup(String query, boolean privacy) {
+                searchPrivateMode = privacy;
+                removeSearchPanel(false);
+                openQuickLookup(query);
             }
-            return false;
+            @Override public void onEditingChanged(boolean editing) { setSearchFocusable(editing); }
+            @Override public void onComposerBoundsChanged(Rect bounds, boolean keyboardVisible) {
+                keepSearchBubbleClearOfComposer(bounds, keyboardVisible);
+            }
+            @Override public void onClose() { removeSearchPanel(); }
         });
-
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-
-        FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT);
-        contentLp.leftMargin = dp(15);
-        contentLp.rightMargin = dp(15);
-        contentLp.topMargin = dp(6);
-        root.addView(content, contentLp);
-
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(14), 0, dp(4), 0);
-        bar.setBackground(outline(0xff079bff, 1, 0xf218191d, 10));
-        bar.setElevation(dp(4));
-
-        EditText input = new SearchEditor(this);
-        input.setSingleLine(true);
-        input.setTextColor(0xfff4f5f7);
-        input.setHintTextColor(0xff969ca6);
-        input.setHint("请输入需要查找的内容");
-        input.setTextSize(18);
-        input.setBackgroundColor(Color.TRANSPARENT);
-        input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        input.setSelectAllOnFocus(false);
-        input.setPadding(0, 0, dp(8), 0);
-
-        TextView clear = new TextView(this);
-        clear.setText("×");
-        clear.setTextColor(0xff079bff);
-        clear.setTextSize(31);
-        clear.setGravity(Gravity.CENTER);
-        clear.setPadding(0, 0, 0, dp(2));
-
-        bar.addView(input, new LinearLayout.LayoutParams(0, dp(44), 1));
-        bar.addView(clear, new LinearLayout.LayoutParams(dp(42), dp(44)));
-
-        content.addView(bar, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(false);
-        scroll.setBackground(bg(0xe6101820, 10));
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setClipToPadding(false);
-
-        LinearLayout suggestions = new LinearLayout(this);
-        suggestions.setOrientation(LinearLayout.VERTICAL);
-        suggestions.setPadding(0, dp(8), 0, dp(56));
-        scroll.addView(suggestions, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        scrollLp.topMargin = dp(2);
-        content.addView(scroll, scrollLp);
-
-        // The transparent host dims system bars; this window owns search UI
-        // and mask touches throughout the display, including its bottom edge.
         int flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                 (searchPanelHosted ? WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE : 0);
-
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                overlayType(),
-                flags,
-                PixelFormat.TRANSLUCENT);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(-1, -1,
+                overlayType(), flags, PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
         if (Build.VERSION.SDK_INT >= 30) {
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
@@ -832,270 +669,66 @@ public class FloatingService extends Service {
         } else if (Build.VERSION.SDK_INT >= 28) {
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
-        lp.softInputMode =
-                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
-
         searchPanel = root;
         searchPanelLp = lp;
-        root.setOnApplyWindowInsetsListener((view, insets) -> {
-            root.setPadding(0, insets.getSystemWindowInsetTop(), 0, insets.getSystemWindowInsetBottom());
-            return insets;
-        });
-        markAction("SHOW_SEARCH_PANEL_ADD_VIEW");
         try {
-            wm.addView(searchPanel, lp);
-        } catch (Throwable firstError) {
+            wm.addView(root, lp);
+            root.requestApplyInsets();
+            root.requestFocus();
+            if (!searchPanelHosted) registerSearchBackCallback();
+            bringBubbleToFront();
+            markAction("SHOW_SEARCH_PANEL_FINISH");
+        } catch (Throwable error) {
+            root.dispose();
             searchPanel = null;
-            showResultCard(
-                    "搜索悬浮层打开失败",
-                    firstError.getClass().getSimpleName() + ": "
-                            + (firstError.getMessage() == null ? "未知窗口错误" : firstError.getMessage()));
-            return;
-        }
-
-        if (!searchPanelHosted) registerSearchBackCallback();
-
-        markAction("SHOW_SEARCH_PANEL_UPDATE_SUGGESTIONS");
-        String initialQuery = currentSearchQuery == null ? "" : currentSearchQuery;
-        if (!initialQuery.isEmpty()) {
-            input.setText(initialQuery);
-            input.setSelection(input.length());
-        }
-        updateSuggestions(suggestions, initialQuery);
-
-        input.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                currentSearchQuery = s == null ? "" : s.toString();
-                updateSuggestions(suggestions, currentSearchQuery);
-            }
-
-            @Override public void afterTextChanged(Editable s) {}
-        });
-
-        input.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_SEARCH ||
-                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
-                String q = input.getText().toString().trim();
-                if (!q.isEmpty()) {
-                    removeSearchPanel(false);
-                    openQuickLookup(q);
-                }
-                return true;
-            }
-            return false;
-        });
-
-        input.setOnTouchListener((v, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                searchPanelLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-                searchPanelLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
-                        WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED;
-                wm.updateViewLayout(root, searchPanelLp);
-                registerSearchBackCallback();
-            } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                input.requestFocus();
-                input.post(() -> {
-                    if (searchPanel != root) return;
-                    InputMethodManager imm =
-                            (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
-                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
-                });
-            }
-            return false;
-        });
-
-        input.setOnKeyListener((v, keyCode, event) -> {
-            if (keyCode == KeyEvent.KEYCODE_BACK &&
-                    event.getAction() == KeyEvent.ACTION_UP) {
-                markAction("SEARCH_INPUT_BACK");
-                removeSearchPanel();
-                return true;
-            }
-            return false;
-        });
-
-        clear.setOnClickListener(v -> {
-            if (input.length() > 0) {
-                input.setText("");
-                input.requestFocus();
-            } else {
-                removeSearchPanel();
-            }
-        });
-
-        markAction("SHOW_SEARCH_PANEL_FINISH");
-        root.requestFocus();
-        bringBubbleToFront();
-    }
-
-    private void updateSuggestions(LinearLayout suggestions, String raw) {
-        suggestions.removeAllViews();
-
-        String q = raw == null ? "" : raw.trim();
-        String lower = q.toLowerCase(Locale.ROOT);
-        Set<String> shown = new LinkedHashSet<>();
-        int count = 0;
-
-        List<String> history = recentHistory();
-
-        if (q.isEmpty()) {
-            for (String item : history) {
-                if (item.isEmpty() || !shown.add(item)) continue;
-                suggestions.addView(createSuggestionRow(
-                        item,
-                        lookupSubtitle(item),
-                        true));
-                count++;
-                if (count >= 12) break;
-            }
-
-            if (count < 12) {
-                for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
-                    String word = e.getKey();
-                    if (!shown.add(word)) continue;
-                    suggestions.addView(createSuggestionRow(
-                            word,
-                            formatSubtitle(e.getValue()),
-                            false));
-                    count++;
-                    if (count >= 12) break;
-                }
-            }
-        } else {
-            for (String item : history) {
-                if (!item.toLowerCase(Locale.ROOT).contains(lower)) continue;
-                if (!shown.add(item)) continue;
-                suggestions.addView(createSuggestionRow(
-                        item,
-                        lookupSubtitle(item),
-                        true));
-                count++;
-                if (count >= 10) break;
-            }
-
-            for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
-                String word = e.getKey();
-                String[] d = e.getValue();
-
-                boolean match =
-                        word.contains(q) ||
-                        d[0].contains(q) ||
-                        d[1].toLowerCase(Locale.ROOT).contains(lower) ||
-                        d[3].contains(q);
-
-                if (!match || !shown.add(word)) continue;
-
-                suggestions.addView(createSuggestionRow(
-                        word,
-                        formatSubtitle(d),
-                        false));
-                count++;
-                if (count >= 10) break;
-            }
-
-            if (!shown.contains(q)) {
-                suggestions.addView(createSuggestionRow(
-                        q,
-                        "搜索「" + q + "」",
-                        false));
-                count++;
-            }
-        }
-
-        if (count == 0) {
-            TextView empty = new TextView(this);
-            empty.setText("输入日语、中文或英文进行查询");
-            empty.setTextColor(0xffa4aab3);
-            empty.setTextSize(16);
-            empty.setPadding(dp(56), dp(28), dp(12), dp(20));
-            suggestions.addView(empty);
+            searchPanelLp = null;
+            searchPanelHosted = false;
+            recordHandledCrash("showSearchPanel", error);
+            notifyLookupHostFinish();
+            safeToast("搜索浮层打开失败");
         }
     }
 
-    private String formatSubtitle(String[] data) {
-        if (data == null || data.length < 4) return "最近查询";
-        return data[2] + ". " + data[3] + "  ·  " + data[0];
+    private void setSearchFocusable(boolean editing) {
+        if (searchPanel == null || searchPanelLp == null || wm == null) return;
+        boolean focused = (searchPanelLp.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0;
+        if (focused == editing) return;
+        if (editing) searchPanelLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        else searchPanelLp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        searchPanelLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED;
+        try { wm.updateViewLayout(searchPanel, searchPanelLp); }
+        catch (Throwable error) { recordHandledCrash("setSearchFocusable", error); }
+        if (editing) registerSearchBackCallback(); else clearSearchBackCallback();
     }
 
-    private String lookupSubtitle(String query) {
-        String lower = query.toLowerCase(Locale.ROOT);
-        for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
-            String[] d = e.getValue();
-            if (e.getKey().equals(query) ||
-                    d[0].equals(query) ||
-                    d[1].toLowerCase(Locale.ROOT).equals(lower)) {
-                return formatSubtitle(d);
-            }
+    private void keepSearchBubbleClearOfComposer(Rect composerBounds, boolean keyboardVisible) {
+        if (bubbleTopProxy == null || bubbleTopProxyLp == null || bubbleLp == null || wm == null) return;
+        int[] position = new int[2];
+        bubbleTopProxy.getLocationOnScreen(position);
+        int parentX = position[0] - bubbleTopProxyLp.x;
+        int parentY = position[1] - bubbleTopProxyLp.y;
+        Rect savedBounds = new Rect(bubbleLp.x + parentX, bubbleLp.y + parentY,
+                bubbleLp.x + parentX + bubbleTopProxyLp.width,
+                bubbleLp.y + parentY + bubbleTopProxyLp.height);
+        int y = bubbleLp.y;
+        if (keyboardVisible && Rect.intersects(savedBounds, composerBounds)) {
+            y = Math.max(0, composerBounds.top - parentY - bubbleTopProxyLp.height - dp(12));
         }
-        return "最近查询";
+        if (bubbleTopProxyLp.y == y && bubbleTopProxyLp.x == bubbleLp.x) return;
+        // Move only the temporary proxy. The real bubble remains mounted and
+        // its saved position is restored automatically when the keyboard closes.
+        bubbleTopProxyLp.x = bubbleLp.x;
+        bubbleTopProxyLp.y = y;
+        try { wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp); }
+        catch (Exception ignored) {}
     }
 
-    private List<String> recentHistory() {
-        String saved = getSharedPreferences("lookup_history", MODE_PRIVATE)
-                .getString("items", "");
-        List<String> out = new ArrayList<>();
-        if (saved == null || saved.isEmpty()) return out;
-
-        for (String line : saved.split("\\n")) {
-            String item = line.trim();
-            if (!item.isEmpty()) out.add(item);
-        }
-        return out;
-    }
-
-    private View createSuggestionRow(String word, String subtitle, boolean historyStyle) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.TOP);
-        row.setPadding(0, dp(4), dp(2), dp(4));
-        row.setBackgroundColor(Color.TRANSPARENT);
-        row.setMinimumHeight(dp(54));
-
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(historyStyle
-                ? R.drawable.ic_history_clock
-                : R.drawable.ic_dictionary_result);
-        icon.setColorFilter(0xffd3d9df);
-        icon.setPadding(dp(5), dp(5), dp(5), dp(5));
-        LinearLayout.LayoutParams iconLp =
-                new LinearLayout.LayoutParams(dp(38), dp(40));
-        row.addView(icon, iconLp);
-
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(2), 0, 0, 0);
-
-        TextView title = new TextView(this);
-        title.setText(word);
-        title.setTextColor(0xfff0f2f4);
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
-        title.setSingleLine(true);
-        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-
-        TextView meaning = new TextView(this);
-        meaning.setText(subtitle == null ? "" : subtitle);
-        meaning.setTextColor(0xff9ea5ae);
-        meaning.setTextSize(13);
-        meaning.setMaxLines(2);
-        meaning.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        meaning.setPadding(0, dp(1), 0, 0);
-
-        body.addView(title);
-        if (subtitle != null && !subtitle.isEmpty()) body.addView(meaning);
-
-        row.addView(body, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        row.setOnClickListener(v -> {
-            removeSearchPanel(false);
-            openQuickLookup(word);
-        });
-
-        return row;
+    private void handleSearchBack() {
+        if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).handleBack();
+        else removeSearchPanel();
     }
 
     private View createBubbleVisual() {
@@ -1169,6 +802,9 @@ public class FloatingService extends Service {
                         int dx = Math.round(e.getRawX() - downRawX);
                         int dy = Math.round(e.getRawY() - downRawY);
                         if (Math.abs(dx) > dp(5) || Math.abs(dy) > dp(5)) moved = true;
+                        // A tap on a temporarily relocated proxy must not move
+                        // the real bubble or replace its saved coordinates.
+                        if (!moved) return true;
 
                         DisplayMetrics dm = getResources().getDisplayMetrics();
                         int nx = Math.max(0, Math.min(startX + dx, dm.widthPixels - dp(54)));
@@ -1249,12 +885,16 @@ public class FloatingService extends Service {
     private void openLookupHost(String q, boolean returnToSearch, String mode) {
         String value = q == null ? "" : q.trim();
         if (value.isEmpty()) return;
+        boolean privateLookup = returnToSearch && searchPrivateMode;
         Intent host = new Intent(this, LookupLinkActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 .putExtra(EXTRA_LOOKUP_QUERY, value)
                 .putExtra(EXTRA_LOOKUP_MODE, mode)
                 .putExtra(EXTRA_RETURN_TO_SEARCH, returnToSearch)
-                .putExtra(EXTRA_SEARCH_QUERY, currentSearchQuery);
+                .putExtra(EXTRA_LOOKUP_PRIVATE, privateLookup);
+        // Keep the private draft in this Service. An empty restore extra
+        // would overwrite it when the host forwards lookup and search actions.
+        if (!privateLookup) host.putExtra(EXTRA_SEARCH_QUERY, currentSearchQuery);
         try {
             startActivity(host);
         } catch (Throwable error) {
@@ -1436,7 +1076,7 @@ public class FloatingService extends Service {
         lookupOverlayQuery = q;
         lookupOverlayMode = mode;
         lookupOverlayReturnToSearch = returnToSearch;
-        saveLookupHistory(q);
+        if (!lookupPrivateMode) saveLookupHistory(q);
 
         LookupOverlayFrameLayout root = new LookupOverlayFrameLayout(this);
         boolean fullscreen = lookupOverlayHosted || LOOKUP_MODE_FULLSCREEN.equals(mode);
@@ -1513,7 +1153,8 @@ public class FloatingService extends Service {
         editor.setTextSize(18);
         editor.setTextColor(0xff242629);
         editor.setSelectAllOnFocus(false);
-        editor.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        editor.setImeOptions(EditorInfo.IME_ACTION_SEARCH |
+                (lookupPrivateMode && Build.VERSION.SDK_INT >= 26 ? EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING : 0));
         editor.setPadding(0, 0, dp(8), 0);
         if (Build.VERSION.SDK_INT >= 21) {
             editor.setBackgroundTintList(
@@ -1880,7 +1521,8 @@ public class FloatingService extends Service {
             View owner,
             ProgressBar progress,
             TextView aiBody) {
-        String cached = LOOKUP_AI_CACHE.get(q);
+        final boolean privateRequest = lookupPrivateMode;
+        String cached = privateRequest ? null : LOOKUP_AI_CACHE.get(q);
         if (cached != null) {
             progress.setVisibility(View.GONE);
             aiBody.setText(cached);
@@ -1900,7 +1542,7 @@ public class FloatingService extends Service {
         LOOKUP_AI_EXECUTOR.execute(() -> {
             try {
                 String answer = GroqClient.query(q, requestKey);
-                LOOKUP_AI_CACHE.put(q, answer);
+                if (!privateRequest) LOOKUP_AI_CACHE.put(q, answer);
                 main.post(() -> {
                     if (lookupOverlay != owner) return;
                     progress.setVisibility(View.GONE);
@@ -2096,14 +1738,15 @@ public class FloatingService extends Service {
         if (Build.VERSION.SDK_INT < 33 || searchPanel == null) return;
         View owner = searchPanel;
         owner.post(() -> {
-            if (searchPanel != owner) return;
+            if (searchPanel != owner || searchPanelLp == null ||
+                    (searchPanelLp.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0) return;
             try {
                 android.window.OnBackInvokedDispatcher dispatcher = owner.findOnBackInvokedDispatcher();
                 if (dispatcher == null) return;
                 clearSearchBackCallback();
                 android.window.OnBackInvokedCallback callback = () -> {
                     markAction("SEARCH_SYSTEM_GESTURE_BACK");
-                    removeSearchPanel();
+                    handleSearchBack();
                 };
                 dispatcher.registerOnBackInvokedCallback(
                         android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback);
@@ -2134,6 +1777,7 @@ public class FloatingService extends Service {
         clearSearchBackCallback();
 
         if (searchPanel != null && wm != null) {
+            if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).dispose();
             try {
                 InputMethodManager imm =
                         (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
@@ -2148,7 +1792,11 @@ public class FloatingService extends Service {
         }
         searchPanelLp = null;
         searchPanelHosted = false;
-        if (finishHost && hosted) notifyLookupHostFinish();
+        if (finishHost) {
+            if (searchPrivateMode) currentSearchQuery = "";
+            searchPrivateMode = false;
+            if (hosted) notifyLookupHostFinish();
+        }
         removeBubbleProxyIfUnused();
     }
 
@@ -2161,12 +1809,25 @@ public class FloatingService extends Service {
         }
     }
 
+    @Override public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        if (searchPanel != null) {
+            // Native layout dimensions are created in pixels. Recreate the
+            // search surface for density/font changes, retaining its draft
+            // and privacy state while leaving the real bubble mounted.
+            boolean hosted = searchPanelHosted;
+            removeSearchPanel(false);
+            searchPanelHosted = hosted;
+            showSearchPanel();
+        }
+    }
+
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (bubble == null && Settings.canDrawOverlays(this)) showBubble();
 
         if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())) {
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
-            if (restoredQuery != null) currentSearchQuery = restoredQuery;
+            if (restoredQuery != null && searchPanel == null) currentSearchQuery = restoredQuery;
 
             if (Settings.canDrawOverlays(this) && searchPanel == null) {
                 if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
@@ -2188,6 +1849,7 @@ public class FloatingService extends Service {
 
             if (!q.isEmpty()) {
                 if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
+                    lookupPrivateMode = intent.getBooleanExtra(EXTRA_LOOKUP_PRIVATE, false);
                     lookupOverlayHosted = true;
                     showLookupOverlay(q, returnToSearch, mode);
                 } else {
@@ -2204,6 +1866,9 @@ public class FloatingService extends Service {
             removeSearchPanel(false);
             removeLookupOverlay(true);
             lookupOverlayHosted = false;
+            if (searchPrivateMode) currentSearchQuery = "";
+            searchPrivateMode = false;
+            lookupPrivateMode = false;
             notifyLookupHostFinish();
         }
 
@@ -2213,7 +1878,7 @@ public class FloatingService extends Service {
             if (lookupOverlay != null) {
                 handleLookupBack();
             } else if (searchPanel != null) {
-                removeSearchPanel();
+                handleSearchBack();
             } else {
                 notifyLookupHostFinish();
             }

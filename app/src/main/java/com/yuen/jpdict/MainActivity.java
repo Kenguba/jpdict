@@ -107,7 +107,7 @@ public class MainActivity extends Activity {
         root.addView(button("🔍 打开悬浮搜索页", v->openFloatingSearch()));
         root.addView(button("📷 屏幕 OCR", v->startActivity(new Intent(this,OcrActivity.class))));
         TextView note=text("这是自己的浮动取词功能，不调用欧路。\n"
-                +"轻点浮动按钮：打开深色悬浮搜索。\n"
+                +"轻点浮动按钮：打开原生悬浮搜索。\n"
                 +"按住拖动：如果尚未授权屏幕共享，会立即呼出系统授权；授权后再次拖动即可区域 OCR 取词。\n"
                 +"屏幕共享只请求“共享整个屏幕”。");
         root.addView(note);
@@ -388,7 +388,9 @@ public class MainActivity extends Activity {
         Notification notification(String title,String body){
             PendingIntent o=PendingIntent.getService(this,1,new Intent(this,ScreenCaptureService.class).setAction(ACT_OCR),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
             PendingIntent s=PendingIntent.getService(this,2,new Intent(this,ScreenCaptureService.class).setAction(ACT_STOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-            return new Notification.Builder(this,CH).setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle(title).setContentText(body).setOngoing(true)
+            Notification.Builder builder=Build.VERSION.SDK_INT>=26
+                    ? new Notification.Builder(this,CH) : new Notification.Builder(this);
+            return builder.setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle(title).setContentText(body).setOngoing(true)
                     .addAction(new Notification.Action.Builder(null,"识别当前屏幕",o).build())
                     .addAction(new Notification.Action.Builder(null,"停止",s).build()).build();
         }
@@ -509,7 +511,9 @@ public class MainActivity extends Activity {
         void postResult(String q){
             Intent i=new Intent(this,SearchActivity.class).putExtra("query",q);
             PendingIntent p=PendingIntent.getActivity(this,3,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-            Notification n=new Notification.Builder(this,CH).setSmallIcon(android.R.drawable.ic_menu_search).setContentTitle("OCR 识别结果").setContentText(q).setContentIntent(p).setAutoCancel(true).build();
+            Notification.Builder builder=Build.VERSION.SDK_INT>=26
+                    ? new Notification.Builder(this,CH) : new Notification.Builder(this);
+            Notification n=builder.setSmallIcon(android.R.drawable.ic_menu_search).setContentTitle("OCR 识别结果").setContentText(q).setContentIntent(p).setAutoCancel(true).build();
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(43,n);
         }
         void stopCapture(){

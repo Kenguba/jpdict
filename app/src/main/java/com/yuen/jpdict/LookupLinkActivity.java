@@ -16,6 +16,8 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Toast;
 
+import androidx.core.content.ContextCompat;
+
 /**
  * Transparent Back and mask host for the shared lookup overlay.
  *
@@ -24,10 +26,12 @@ import android.widget.Toast;
  * a real application window to target for system Back gestures.
  */
 public final class LookupLinkActivity extends Activity {
+    private static final String STATE_SHOWING_SEARCH = "showing_search";
     private android.window.OnBackInvokedCallback backCallback;
     private boolean finishReceiverRegistered;
     private String currentMode = FloatingService.LOOKUP_MODE_FULLSCREEN;
     private boolean showingSearch;
+    private boolean hostVisible;
 
     private final BroadcastReceiver finishReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -35,6 +39,7 @@ public final class LookupLinkActivity extends Activity {
                 markHostAction("HOST_FINISH_BROADCAST");
                 finishBridge();
             } else if (FloatingService.ACTION_LOOKUP_HOST_SEARCH.equals(intent.getAction())) {
+                if (!hostVisible || isFinishing()) return;
                 showingSearch = true;
                 configureTransparentHost();
                 forwardSearch(getIntent());
@@ -45,10 +50,23 @@ public final class LookupLinkActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         currentMode = extractMode(getIntent());
-        showingSearch = getIntent().getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false);
+        showingSearch = state != null
+                ? state.getBoolean(STATE_SHOWING_SEARCH,
+                        getIntent().getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false))
+                : getIntent().getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false);
         configureTransparentHost();
         registerFinishReceiver();
-        forward(getIntent());
+        // A lookup host can switch back to search without a new Activity intent.
+        // On recreation, retain that mode and let the Service keep the live draft.
+        forward(state != null && showingSearch
+                ? new Intent(this, LookupLinkActivity.class)
+                        .putExtra(FloatingService.EXTRA_HOST_SEARCH, true)
+                : getIntent());
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        state.putBoolean(STATE_SHOWING_SEARCH, showingSearch);
+        super.onSaveInstanceState(state);
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -60,6 +78,11 @@ public final class LookupLinkActivity extends Activity {
         forward(intent);
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        hostVisible = true;
+    }
+
     @Override protected void onPostResume() {
         super.onPostResume();
         // Register only after the Activity is truly resumed. Some OriginOS
@@ -69,6 +92,7 @@ public final class LookupLinkActivity extends Activity {
     }
 
     @Override protected void onStop() {
+        hostVisible = false;
         super.onStop();
         // Do not leave a modal overlay behind after its mask/Back host is hidden.
         if (!isFinishing() && !isChangingConfigurations()) {
@@ -141,11 +165,8 @@ public final class LookupLinkActivity extends Activity {
         IntentFilter filter = new IntentFilter(FloatingService.ACTION_LOOKUP_HOST_FINISH);
         filter.addAction(FloatingService.ACTION_LOOKUP_HOST_SEARCH);
         try {
-            if (Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(finishReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                registerReceiver(finishReceiver, filter);
-            }
+            ContextCompat.registerReceiver(this, finishReceiver, filter,
+                    ContextCompat.RECEIVER_NOT_EXPORTED);
             finishReceiverRegistered = true;
         } catch (Throwable ignored) {}
     }
@@ -178,6 +199,8 @@ public final class LookupLinkActivity extends Activity {
                 w.setAttributes(attributes);
             }
             w.getDecorView().setSystemUiVisibility(
+                    (showingSearch ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR |
+                            (Build.VERSION.SDK_INT >= 26 ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0) : 0) |
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
                     View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
                     View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
@@ -186,7 +209,7 @@ public final class LookupLinkActivity extends Activity {
             // can be cropped by OEM policy. The Activity owns one edge-to-edge
             // mask; the overlay owns the dictionary card and mask hit target.
             View mask = new View(this);
-            mask.setBackgroundColor(0x6b000000);
+            mask.setBackgroundColor(showingSearch ? 0xfffcfcfc : 0x6b000000);
             mask.setContentDescription(showingSearch ? "点击关闭搜索浮窗" : "点击关闭查词小窗");
             mask.setOnClickListener(v -> sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS));
             setContentView(mask);
@@ -317,6 +340,8 @@ public final class LookupLinkActivity extends Activity {
                 .putExtra(FloatingService.EXTRA_LOOKUP_QUERY, query)
                 .putExtra(FloatingService.EXTRA_LOOKUP_MODE, mode)
                 .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
+                .putExtra(FloatingService.EXTRA_LOOKUP_PRIVATE,
+                        source.getBooleanExtra(FloatingService.EXTRA_LOOKUP_PRIVATE, false))
                 .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,
                         source.getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false))
                 .putExtra(FloatingService.EXTRA_SEARCH_QUERY,

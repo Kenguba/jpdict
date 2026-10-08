@@ -51,6 +51,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Verify floating search interaction state
+        run: sh scripts/test-floating-search-state.sh
+
       - name: Install Android command-line tools
         shell: bash
         run: |
@@ -73,31 +76,14 @@ jobs:
 
       - name: Set build version
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_STAGE: ${{ github.event.inputs.stage || 'B' }}
         run: |
-          VERSION_DATE=$(TZ=Asia/Shanghai date +'%y.%m.%d')
-          STAGE="${{ github.event.inputs.stage || 'B' }}"
-          case "$STAGE" in
-            A|D|B|T|C|R|P|H) ;;
-            *) echo "::error::Invalid release stage: $STAGE"; exit 1 ;;
-          esac
-
-          MAX_SEQ=0
-          while IFS= read -r ref; do
-            tag=${ref#refs/tags/}
-            tag=${tag%\^\{\}}
-            if [[ "$tag" =~ ^${VERSION_DATE}-([0-9]{5})[ADBTCRPH]$ ]]; then
-              seq=$((10#${BASH_REMATCH[1]}))
-              if (( seq > MAX_SEQ )); then MAX_SEQ=$seq; fi
-            fi
-          done < <(git ls-remote --tags origin | awk '{print $2}')
-
-          NEXT_SEQ=$((MAX_SEQ + 1))
-          printf -v SEQ '%05d' "$NEXT_SEQ"
-          VERSION_NAME="${VERSION_DATE}-${SEQ}${STAGE}"
-
-          echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
-          echo "Build version: $VERSION_NAME (versionCode=$GITHUB_RUN_NUMBER)"
+          python3 scripts/allocate-build-version.py \
+            --date "$(TZ=Asia/Shanghai date +'%y.%m.%d')" \
+            --stage "$BUILD_STAGE" \
+            --run-number "$GITHUB_RUN_NUMBER"
 
       - name: Guard vivo system-bar compatibility
         shell: bash
@@ -106,6 +92,13 @@ jobs:
             echo "::error::Unsupported WindowInsetsController path reintroduced; this crashes QuickLookupActivity on the target vivo/OriginOS device."
             exit 1
           fi
+
+      - name: Check Android compatibility with Lint
+        run: >-
+          gradle --no-daemon
+          :app:lintArmDebug
+          :app:lintArm64Debug
+          :app:lintArmv7Debug
 
       - name: Detect release signing secrets
         shell: bash
@@ -187,13 +180,29 @@ jobs:
           done
           exit "$FAILED"
 
-      - name: Verify release signatures
+      - name: Verify release identity and signatures
         if: env.HAS_SIGNING == 'true'
         shell: bash
         run: |
+          EXPECTED_CERT=cb8b97989bfe7894e796842ce5b2e3e3b2aab48aa7f0f7a97c1ece04ac184252
+          PUBLIC_CERT=$(openssl x509 -in signing/jpdict-release-cert.pem -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          if [[ "$PUBLIC_CERT" != "$EXPECTED_CERT" ]]; then
+            echo "::error::Public release certificate does not match the fixed signing identity."
+            exit 1
+          fi
           for apk in dist/*.apk; do
-            echo "===== $apk ====="
-            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
+            SIGNATURE=$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk")
+            APK_CERT=$(sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p' <<< "$SIGNATURE" | tr '[:upper:]' '[:lower:]')
+            if [[ "$APK_CERT" != "$EXPECTED_CERT" ]]; then
+              echo "::error file=$apk::APK is signed with a different release certificate."
+              exit 1
+            fi
+            PACKAGE=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | sed -n '/^package: /p')
+            if [[ "$PACKAGE" != *"name='com.yuen.jpdict'"* || "$PACKAGE" != *"versionCode='$VERSION_CODE'"* || "$PACKAGE" != *"versionName='$VERSION_NAME'"* ]]; then
+              echo "::error file=$apk::APK package/version does not match the allocated build version."
+              exit 1
+            fi
+            echo "Verified $(basename "$apk"): $VERSION_NAME (versionCode=$VERSION_CODE), fixed release certificate."
           done
 
       - name: Create SHA-256 checksums
