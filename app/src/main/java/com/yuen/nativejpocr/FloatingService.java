@@ -38,8 +38,11 @@ public class FloatingService extends Service {
     public static final String ACTION_LOOKUP_DISMISS =
             "com.yuen.nativejpocr.LOOKUP_DISMISS";
     public static final String EXTRA_LOOKUP_HOSTED = "lookup_hosted";
+    public static final String EXTRA_HOST_SEARCH = "host_search";
     public static final String ACTION_LOOKUP_HOST_FINISH =
             "com.yuen.nativejpocr.LOOKUP_HOST_FINISH";
+    public static final String ACTION_LOOKUP_HOST_SEARCH =
+            "com.yuen.nativejpocr.LOOKUP_HOST_SEARCH";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
     public static final String EXTRA_LOOKUP_QUERY = "lookup_query";
     public static final String EXTRA_LOOKUP_MODE = "lookup_mode";
@@ -61,6 +64,8 @@ public class FloatingService extends Service {
     private WindowManager.LayoutParams targetLp;
 
     private View searchPanel;
+    private WindowManager.LayoutParams searchPanelLp;
+    private boolean searchPanelHosted;
     private View resultCard;
     private View lookupOverlay;
     private WindowManager.LayoutParams lookupOverlayLp;
@@ -76,8 +81,8 @@ public class FloatingService extends Service {
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
     private android.window.OnBackInvokedCallback searchBackCallback;
-    private android.window.OnBackInvokedDispatcher lookupEditBackDispatcher;
-    private android.window.OnBackInvokedCallback lookupEditBackCallback;
+    private android.window.OnBackInvokedDispatcher lookupBackDispatcher;
+    private android.window.OnBackInvokedCallback lookupBackCallback;
     private EditText lookupEditor;
     private View lookupHeaderNormal;
     private View lookupHeaderEdit;
@@ -237,6 +242,7 @@ public class FloatingService extends Service {
         private float downX;
         private float downY;
         private boolean trackingEdge;
+        private boolean backRecognized;
 
         BackGestureFrameLayout(Context context) {
             super(context);
@@ -256,47 +262,83 @@ public class FloatingService extends Service {
         }
 
         @Override public boolean onInterceptTouchEvent(MotionEvent e) {
+            if (searchPanelHosted || searchBackDispatcher != null) return super.onInterceptTouchEvent(e);
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = e.getX();
                     downY = e.getY();
                     trackingEdge = isFromEdge(downX);
+                    backRecognized = false;
                     break;
                 case MotionEvent.ACTION_MOVE:
                     if (trackingEdge && isBackDistance(e.getX(), e.getY())) {
+                        backRecognized = true;
                         return true;
                     }
                     break;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
                     trackingEdge = false;
+                    backRecognized = false;
                     break;
             }
             return false;
         }
 
         @Override public boolean onTouchEvent(MotionEvent e) {
+            if (searchPanelHosted || searchBackDispatcher != null) return super.onTouchEvent(e);
             if (!trackingEdge && e.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 downX = e.getX();
                 downY = e.getY();
                 trackingEdge = isFromEdge(downX);
             }
 
-            if (trackingEdge &&
-                    (e.getActionMasked() == MotionEvent.ACTION_MOVE ||
-                     e.getActionMasked() == MotionEvent.ACTION_UP) &&
-                    isBackDistance(e.getX(), e.getY())) {
+            if (trackingEdge && e.getActionMasked() == MotionEvent.ACTION_MOVE &&
+                    isBackDistance(e.getX(), e.getY())) backRecognized = true;
+
+            // Keep the Back owner alive until completion. CANCEL means the
+            // system owns this gesture and must dispatch it to our callback.
+            if (trackingEdge && backRecognized &&
+                    e.getActionMasked() == MotionEvent.ACTION_UP) {
                 markAction("SEARCH_EDGE_BACK");
                 removeSearchPanel();
                 trackingEdge = false;
+                backRecognized = false;
                 return true;
             }
 
             if (e.getActionMasked() == MotionEvent.ACTION_UP ||
                     e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
                 trackingEdge = false;
+                backRecognized = false;
             }
             return trackingEdge || super.onTouchEvent(e);
+        }
+    }
+
+    @android.annotation.SuppressLint("AppCompatCustomView")
+    private final class SearchEditor extends EditText {
+        SearchEditor(Context context) { super(context); }
+
+        @Override public void onWindowFocusChanged(boolean hasWindowFocus) {
+            super.onWindowFocusChanged(hasWindowFocus);
+            if (hasWindowFocus && isFocused()) {
+                post(() -> {
+                    InputMethodManager imm =
+                            (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+                    imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+                });
+            }
+        }
+
+        @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
+                    removeSearchPanel();
+                }
+                return true;
+            }
+            return super.onKeyPreIme(keyCode, event);
         }
     }
 
@@ -356,7 +398,9 @@ public class FloatingService extends Service {
         @Override public boolean onInterceptTouchEvent(MotionEvent event) {
             // A hosted lookup uses the system's single Back gesture owner.
             // Running a second recognizer here can close the caller as well.
-            if (lookupOverlayHosted) return super.onInterceptTouchEvent(event);
+            if (lookupOverlayHosted || lookupBackDispatcher != null) {
+                return super.onInterceptTouchEvent(event);
+            }
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     edgeDownX = event.getX();
@@ -385,6 +429,9 @@ public class FloatingService extends Service {
         }
 
         @Override public boolean onTouchEvent(MotionEvent event) {
+            if (lookupOverlayHosted || lookupBackDispatcher != null) {
+                return super.onTouchEvent(event);
+            }
             if (trackingEdgeBack && !backConsumed &&
                     event.getActionMasked() == MotionEvent.ACTION_MOVE &&
                     isBackSwipe(event.getX(), event.getY())) {
@@ -636,7 +683,7 @@ public class FloatingService extends Service {
                 return;
             }
             markAction("SHOW_SEARCH_PANEL_BEGIN");
-            showSearchPanel();
+            openSearchHost();
             markAction("SHOW_SEARCH_PANEL_OK");
         } catch (Throwable t) {
             searchPanel = null;
@@ -663,13 +710,32 @@ public class FloatingService extends Service {
         }
     }
 
+    private void openSearchHost() {
+        Intent host = new Intent(this, LookupLinkActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                .putExtra(EXTRA_HOST_SEARCH, true)
+                .putExtra(EXTRA_SEARCH_QUERY, currentSearchQuery);
+        try {
+            startActivity(host);
+        } catch (Throwable error) {
+            recordHandledCrash("openSearchHost", error);
+            safeToast("搜索浮层启动失败");
+        }
+    }
+
     private void showSearchPanel() {
         if (!Settings.canDrawOverlays(this) || wm == null) return;
 
         removeResultCard();
 
         BackGestureFrameLayout root = new BackGestureFrameLayout(this);
-        root.setBackgroundColor(0x99101820);
+        root.setBackgroundColor(Color.TRANSPARENT);
+        View mask = new View(this);
+        mask.setBackgroundColor(searchPanelHosted ? Color.TRANSPARENT : 0x6b000000);
+        mask.setContentDescription("点击关闭搜索浮窗");
+        mask.setOnClickListener(v -> removeSearchPanel());
+        root.addView(mask, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         root.setFocusableInTouchMode(true);
         root.setOnKeyListener((v, keyCode, event) -> {
             if (keyCode == KeyEvent.KEYCODE_BACK &&
@@ -686,7 +752,7 @@ public class FloatingService extends Service {
 
         FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT);
+                FrameLayout.LayoutParams.WRAP_CONTENT);
         contentLp.leftMargin = dp(15);
         contentLp.rightMargin = dp(15);
         contentLp.topMargin = dp(6);
@@ -699,7 +765,7 @@ public class FloatingService extends Service {
         bar.setBackground(outline(0xff079bff, 1, 0xf218191d, 10));
         bar.setElevation(dp(4));
 
-        EditText input = new EditText(this);
+        EditText input = new SearchEditor(this);
         input.setSingleLine(true);
         input.setTextColor(0xfff4f5f7);
         input.setHintTextColor(0xff969ca6);
@@ -724,7 +790,8 @@ public class FloatingService extends Service {
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
 
         ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
+        scroll.setFillViewport(false);
+        scroll.setBackground(bg(0xe6101820, 10));
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setClipToPadding(false);
 
@@ -736,13 +803,15 @@ public class FloatingService extends Service {
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1);
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         scrollLp.topMargin = dp(2);
         content.addView(scroll, scrollLp);
 
-        // Keep the launcher/foreground app's native status bar untouched.
-        // A TYPE_APPLICATION_OVERLAY must not lay out across the system status bar.
-        int flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        // The transparent host dims system bars; this window owns search UI
+        // and mask touches throughout the display, including its bottom edge.
+        int flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
+                (searchPanelHosted ? WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE : 0);
 
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -751,11 +820,22 @@ public class FloatingService extends Service {
                 flags,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
+        if (Build.VERSION.SDK_INT >= 30) {
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            lp.setFitInsetsTypes(0);
+        } else if (Build.VERSION.SDK_INT >= 28) {
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
         lp.softInputMode =
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
 
         searchPanel = root;
+        searchPanelLp = lp;
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            root.setPadding(0, insets.getSystemWindowInsetTop(), 0, insets.getSystemWindowInsetBottom());
+            return insets;
+        });
         markAction("SHOW_SEARCH_PANEL_ADD_VIEW");
         try {
             wm.addView(searchPanel, lp);
@@ -768,27 +848,7 @@ public class FloatingService extends Service {
             return;
         }
 
-        if (Build.VERSION.SDK_INT >= 33) {
-            root.post(() -> {
-                try {
-                    android.window.OnBackInvokedDispatcher dispatcher =
-                            root.findOnBackInvokedDispatcher();
-                    if (dispatcher != null && searchPanel == root) {
-                        android.window.OnBackInvokedCallback callback = () -> {
-                            markAction("SEARCH_SYSTEM_GESTURE_BACK");
-                            removeSearchPanel();
-                        };
-                        dispatcher.registerOnBackInvokedCallback(
-                                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                                callback);
-                        searchBackDispatcher = dispatcher;
-                        searchBackCallback = callback;
-                    }
-                } catch (Throwable t) {
-                    recordHandledCrash("registerSearchBackCallback", t);
-                }
-            });
-        }
+        if (!searchPanelHosted) registerSearchBackCallback();
 
         markAction("SHOW_SEARCH_PANEL_UPDATE_SUGGESTIONS");
         String initialQuery = currentSearchQuery == null ? "" : currentSearchQuery;
@@ -814,7 +874,7 @@ public class FloatingService extends Service {
                     (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
                 String q = input.getText().toString().trim();
                 if (!q.isEmpty()) {
-                    removeSearchPanel();
+                    removeSearchPanel(false);
                     openQuickLookup(q);
                 }
                 return true;
@@ -822,11 +882,23 @@ public class FloatingService extends Service {
             return false;
         });
 
-        input.setOnClickListener(v -> {
-            input.requestFocus();
-            InputMethodManager imm =
-                    (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
-            imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        input.setOnTouchListener((v, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                searchPanelLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                searchPanelLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+                        WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED;
+                wm.updateViewLayout(root, searchPanelLp);
+                registerSearchBackCallback();
+            } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                input.requestFocus();
+                input.post(() -> {
+                    if (searchPanel != root) return;
+                    InputMethodManager imm =
+                            (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+                });
+            }
+            return false;
         });
 
         input.setOnKeyListener((v, keyCode, event) -> {
@@ -1013,7 +1085,7 @@ public class FloatingService extends Service {
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
         row.setOnClickListener(v -> {
-            removeSearchPanel();
+            removeSearchPanel(false);
             openQuickLookup(word);
         });
 
@@ -1255,17 +1327,42 @@ public class FloatingService extends Service {
                 : LOOKUP_MODE_FLOAT;
     }
 
-    private void clearLookupEditBackCallback() {
+    private void clearLookupBackCallback() {
         if (Build.VERSION.SDK_INT >= 33 &&
-                lookupEditBackDispatcher != null &&
-                lookupEditBackCallback != null) {
+                lookupBackDispatcher != null &&
+                lookupBackCallback != null) {
             try {
-                lookupEditBackDispatcher.unregisterOnBackInvokedCallback(
-                        lookupEditBackCallback);
+                lookupBackDispatcher.unregisterOnBackInvokedCallback(
+                        lookupBackCallback);
             } catch (Throwable ignored) {}
         }
-        lookupEditBackDispatcher = null;
-        lookupEditBackCallback = null;
+        lookupBackDispatcher = null;
+        lookupBackCallback = null;
+    }
+
+    private void registerLookupBackCallback() {
+        if (Build.VERSION.SDK_INT < 33 || lookupOverlay == null) return;
+        View owner = lookupOverlay;
+        owner.post(() -> {
+            if (lookupOverlay != owner || (lookupOverlayHosted && lookupEditor == null)) return;
+            try {
+                android.window.OnBackInvokedDispatcher dispatcher =
+                        owner.findOnBackInvokedDispatcher();
+                if (dispatcher != null) {
+                    clearLookupBackCallback();
+                    android.window.OnBackInvokedCallback callback = () -> {
+                        markAction("LOOKUP_OVERLAY_SYSTEM_BACK");
+                        handleLookupBack();
+                    };
+                    dispatcher.registerOnBackInvokedCallback(
+                            android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback);
+                    lookupBackDispatcher = dispatcher;
+                    lookupBackCallback = callback;
+                }
+            } catch (Throwable t) {
+                recordHandledCrash("registerLookupBackCallback", t);
+            }
+        });
     }
 
     private void setLookupOverlayFocusable(boolean focusable) {
@@ -1273,10 +1370,17 @@ public class FloatingService extends Service {
 
         if (focusable) {
             lookupOverlayLp.flags &=
-                    ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-        } else {
+                    ~(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                      WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+        } else if (lookupOverlayHosted) {
             lookupOverlayLp.flags |=
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            lookupOverlayLp.flags &= ~WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        } else {
+            // OCR has no Activity Back host. Keep its window focused for Back,
+            // while staying independent of the IME outside headword editing.
+            lookupOverlayLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            lookupOverlayLp.flags |= WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
         }
 
         try {
@@ -1285,35 +1389,11 @@ public class FloatingService extends Service {
             recordHandledCrash("setLookupOverlayFocusable", t);
         }
 
-        if (focusable) {
+        if (focusable || !lookupOverlayHosted) {
             lookupOverlay.requestFocus();
-
-            if (Build.VERSION.SDK_INT >= 33) {
-                View owner = lookupOverlay;
-                owner.post(() -> {
-                    if (lookupOverlay != owner || lookupEditor == null) return;
-                    try {
-                        android.window.OnBackInvokedDispatcher dispatcher =
-                                owner.findOnBackInvokedDispatcher();
-                        if (dispatcher != null) {
-                            clearLookupEditBackCallback();
-                            android.window.OnBackInvokedCallback callback = () -> {
-                                markAction("LOOKUP_EDIT_SYSTEM_BACK");
-                                handleLookupBack();
-                            };
-                            dispatcher.registerOnBackInvokedCallback(
-                                    android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
-                                    callback);
-                            lookupEditBackDispatcher = dispatcher;
-                            lookupEditBackCallback = callback;
-                        }
-                    } catch (Throwable t) {
-                        recordHandledCrash("registerLookupEditBackCallback", t);
-                    }
-                });
-            }
+            registerLookupBackCallback();
         } else {
-            clearLookupEditBackCallback();
+            clearLookupBackCallback();
             lookupOverlay.clearFocus();
         }
     }
@@ -1335,7 +1415,7 @@ public class FloatingService extends Service {
         if (q.isEmpty()) return;
 
         removeLookupOverlay(false);
-        removeSearchPanel();
+        removeSearchPanel(false);
         removeResultCard();
 
         lookupOverlayQuery = q;
@@ -1660,8 +1740,9 @@ public class FloatingService extends Service {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
 
-        int lookupWindowFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        int lookupWindowFlags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+                (lookupOverlayHosted ? WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        : WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
         if (fullscreen) {
             lookupWindowFlags |= WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
@@ -1705,6 +1786,10 @@ public class FloatingService extends Service {
 
         try {
             wm.addView(root, lookupOverlayLp);
+            if (!lookupOverlayHosted) {
+                root.requestFocus();
+                registerLookupBackCallback();
+            }
 
             // Keep the original bubble mounted continuously. A proxy is added
             // above the result layer instead of removing/re-adding the bubble.
@@ -1897,23 +1982,22 @@ public class FloatingService extends Service {
 
     private void closeLookupOverlay() {
         boolean restoreSearch = lookupOverlayReturnToSearch;
+        boolean keepHost = restoreSearch && lookupOverlayHosted;
         removeLookupOverlay(false);
         lookupOverlayHosted = false;
-        notifyLookupHostFinish();
-
-        if (restoreSearch) {
-            main.postDelayed(() -> {
-                if (Settings.canDrawOverlays(this) && searchPanel == null) {
-                    showSearchPanel();
-                }
-            }, 80);
+        lookupOverlayReturnToSearch = false;
+        if (keepHost) {
+            sendBroadcast(new Intent(ACTION_LOOKUP_HOST_SEARCH).setPackage(getPackageName()));
+        } else {
+            notifyLookupHostFinish();
+            if (restoreSearch) main.postDelayed(this::openSearchHost, 80);
         }
     }
 
     private void removeLookupOverlay(boolean clearRestoreState) {
         if (lookupWindow != null) lookupWindow.save();
         if (lookupEditor != null) exitLookupEditMode();
-        clearLookupEditBackCallback();
+        clearLookupBackCallback();
 
         if (lookupOverlay != null && wm != null) {
             try {
@@ -1993,7 +2077,30 @@ public class FloatingService extends Service {
         }, 7000);
     }
 
-    private void removeSearchPanel() {
+    private void registerSearchBackCallback() {
+        if (Build.VERSION.SDK_INT < 33 || searchPanel == null) return;
+        View owner = searchPanel;
+        owner.post(() -> {
+            if (searchPanel != owner) return;
+            try {
+                android.window.OnBackInvokedDispatcher dispatcher = owner.findOnBackInvokedDispatcher();
+                if (dispatcher == null) return;
+                clearSearchBackCallback();
+                android.window.OnBackInvokedCallback callback = () -> {
+                    markAction("SEARCH_SYSTEM_GESTURE_BACK");
+                    removeSearchPanel();
+                };
+                dispatcher.registerOnBackInvokedCallback(
+                        android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback);
+                searchBackDispatcher = dispatcher;
+                searchBackCallback = callback;
+            } catch (Throwable t) {
+                recordHandledCrash("registerSearchBackCallback", t);
+            }
+        });
+    }
+
+    private void clearSearchBackCallback() {
         if (Build.VERSION.SDK_INT >= 33 &&
                 searchBackDispatcher != null &&
                 searchBackCallback != null) {
@@ -2003,6 +2110,13 @@ public class FloatingService extends Service {
             searchBackDispatcher = null;
             searchBackCallback = null;
         }
+    }
+
+    private void removeSearchPanel() { removeSearchPanel(true); }
+
+    private void removeSearchPanel(boolean finishHost) {
+        boolean hosted = searchPanelHosted;
+        clearSearchBackCallback();
 
         if (searchPanel != null && wm != null) {
             try {
@@ -2017,6 +2131,9 @@ public class FloatingService extends Service {
 
             searchPanel = null;
         }
+        searchPanelLp = null;
+        searchPanelHosted = false;
+        if (finishHost && hosted) notifyLookupHostFinish();
         removeBubbleProxyIfUnused();
     }
 
@@ -2036,11 +2153,14 @@ public class FloatingService extends Service {
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 
-            long delay = restoredQuery == null ? 0L : 120L;
-            main.postDelayed(() -> {
-                if (!Settings.canDrawOverlays(this)) return;
-                if (searchPanel == null) showSearchPanel();
-            }, delay);
+            if (Settings.canDrawOverlays(this) && searchPanel == null) {
+                if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
+                    searchPanelHosted = true;
+                    showSearchPanel();
+                } else {
+                    openSearchHost();
+                }
+            }
         }
 
         if (intent != null && ACTION_SHOW_LOOKUP_OVERLAY.equals(intent.getAction())) {
@@ -2058,13 +2178,20 @@ public class FloatingService extends Service {
         }
 
         if (intent != null && ACTION_LOOKUP_DISMISS.equals(intent.getAction())) {
-            closeLookupOverlay();
+            removeSearchPanel(false);
+            removeLookupOverlay(true);
+            lookupOverlayHosted = false;
+            notifyLookupHostFinish();
         }
 
         if (intent != null && ACTION_LOOKUP_BACK.equals(intent.getAction())) {
             // Service callbacks already run on the main thread. Handle Back
             // immediately so it cannot overtake a queued overlay show/dismiss.
-            if (!handleLookupBack()) {
+            if (lookupOverlay != null) {
+                handleLookupBack();
+            } else if (searchPanel != null) {
+                removeSearchPanel();
+            } else {
                 notifyLookupHostFinish();
             }
         }

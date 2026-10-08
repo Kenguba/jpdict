@@ -59,7 +59,12 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".MainActivity$OcrActivity" android:exported="false"/>
+        <activity
+            android:name=".MainActivity$OcrActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.LookupLinkBridge"/>
 
         <activity
             android:name=".LookupLinkActivity"

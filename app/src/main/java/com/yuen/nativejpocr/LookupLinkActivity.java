@@ -27,12 +27,17 @@ public final class LookupLinkActivity extends Activity {
     private android.window.OnBackInvokedCallback backCallback;
     private boolean finishReceiverRegistered;
     private String currentMode = FloatingService.LOOKUP_MODE_FULLSCREEN;
+    private boolean showingSearch;
 
     private final BroadcastReceiver finishReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (FloatingService.ACTION_LOOKUP_HOST_FINISH.equals(intent.getAction())) {
                 markHostAction("HOST_FINISH_BROADCAST");
                 finishBridge();
+            } else if (FloatingService.ACTION_LOOKUP_HOST_SEARCH.equals(intent.getAction())) {
+                showingSearch = true;
+                configureTransparentHost();
+                forwardSearch(getIntent());
             }
         }
     };
@@ -40,6 +45,7 @@ public final class LookupLinkActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         currentMode = extractMode(getIntent());
+        showingSearch = getIntent().getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false);
         configureTransparentHost();
         registerFinishReceiver();
         forward(getIntent());
@@ -49,6 +55,7 @@ public final class LookupLinkActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         currentMode = extractMode(intent);
+        showingSearch = intent.getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false);
         configureTransparentHost();
         forward(intent);
     }
@@ -132,6 +139,7 @@ public final class LookupLinkActivity extends Activity {
 
     private void registerFinishReceiver() {
         IntentFilter filter = new IntentFilter(FloatingService.ACTION_LOOKUP_HOST_FINISH);
+        filter.addAction(FloatingService.ACTION_LOOKUP_HOST_SEARCH);
         try {
             if (Build.VERSION.SDK_INT >= 33) {
                 registerReceiver(finishReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -179,7 +187,7 @@ public final class LookupLinkActivity extends Activity {
             // mask; the overlay owns the dictionary card and mask hit target.
             View mask = new View(this);
             mask.setBackgroundColor(0x6b000000);
-            mask.setContentDescription("点击关闭查词小窗");
+            mask.setContentDescription(showingSearch ? "点击关闭搜索浮窗" : "点击关闭查词小窗");
             mask.setOnClickListener(v -> sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS));
             setContentView(mask);
 
@@ -284,6 +292,10 @@ public final class LookupLinkActivity extends Activity {
     }
 
     private void forward(Intent source) {
+        if (showingSearch) {
+            forwardSearch(source);
+            return;
+        }
         String query = extractQuery(source);
         String mode = extractMode(source);
 
@@ -322,6 +334,27 @@ public final class LookupLinkActivity extends Activity {
                     this,
                     "查词浮层启动失败：" + t.getClass().getSimpleName(),
                     Toast.LENGTH_LONG).show();
+            finishBridge();
+        }
+    }
+
+    private void forwardSearch(Intent source) {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "没有悬浮窗权限，无法显示搜索浮层", Toast.LENGTH_SHORT).show();
+            finishBridge();
+            return;
+        }
+        Intent show = new Intent(this, FloatingService.class)
+                .setAction(FloatingService.ACTION_SHOW_SEARCH)
+                .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
+                .putExtra(FloatingService.EXTRA_SEARCH_QUERY,
+                        source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY));
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(show);
+            else startService(show);
+            markHostAction("HOST_FORWARD_SEARCH");
+        } catch (Throwable error) {
+            Toast.makeText(this, "搜索浮层启动失败", Toast.LENGTH_SHORT).show();
             finishBridge();
         }
     }
