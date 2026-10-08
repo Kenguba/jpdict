@@ -78,7 +78,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          BUILD_STAGE: ${{ github.event.inputs.stage || 'B' }}
+          BUILD_STAGE: ${{ github.event.inputs.stage || 'R' }}
         run: |
           python3 scripts/allocate-build-version.py \
             --date "$(TZ=Asia/Shanghai date +'%y.%m.%d')" \

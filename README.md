@@ -337,6 +337,8 @@ gradle --no-daemon \
 
 GitHub Actions 会自动重命名 APK、验证签名、计算 SHA-256、上传 Artifact，并创建 GitHub Release。所有产物名称和版本号必须遵守本 README 的规则。
 
+推送到 `main` 时使用 `R` 正式发行阶段；手动运行 Workflow 时仍可选择其他阶段。
+
 ## 搜索交互状态验证
 
 轻量纯 Java 状态测试已接入 GitHub Actions，覆盖菜单互斥、所有返回层级组合、私密切换及重置：
