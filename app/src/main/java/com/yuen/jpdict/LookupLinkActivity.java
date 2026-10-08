@@ -1,4 +1,4 @@
-package com.yuen.nativejpocr;
+package com.yuen.jpdict;
 
 import android.app.Activity;
 import android.content.BroadcastReceiver;
@@ -256,7 +256,7 @@ public final class LookupLinkActivity extends Activity {
             if (text != null) query = text.toString().trim();
         }
 
-        if (query.startsWith("intent://") || query.startsWith("jp-native://")) {
+        if (query.startsWith("intent://") || query.startsWith("jpdict://") || query.startsWith("jp-native://")) {
             try {
                 Uri nested = Uri.parse(query);
                 String nestedQuery = nested.getQueryParameter("q");

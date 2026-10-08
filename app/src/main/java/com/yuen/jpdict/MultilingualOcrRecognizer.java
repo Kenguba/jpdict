@@ -1,4 +1,4 @@
-package com.yuen.nativejpocr;
+package com.yuen.jpdict;
 
 import android.graphics.Bitmap;
 

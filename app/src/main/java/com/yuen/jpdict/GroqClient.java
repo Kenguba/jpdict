@@ -1,4 +1,4 @@
-package com.yuen.nativejpocr;
+package com.yuen.jpdict;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

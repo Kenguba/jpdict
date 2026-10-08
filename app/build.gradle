@@ -11,11 +11,11 @@ def quoteBuildConfig = { String value ->
 }
 
 android {
-    namespace 'com.yuen.nativejpocr'
+    namespace 'com.yuen.jpdict'
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.yuen.nativejpocr"
+        applicationId "com.yuen.jpdict"
         minSdk 23
         targetSdk 35
         versionCode ciVersionCode ? ciVersionCode.toInteger() : 4

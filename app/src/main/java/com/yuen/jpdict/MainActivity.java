@@ -1,4 +1,4 @@
-package com.yuen.nativejpocr;
+package com.yuen.jpdict;
 
 import android.Manifest;
 import android.app.*;
@@ -344,7 +344,7 @@ public class MainActivity extends Activity {
     public static class ScreenCaptureService extends Service {
         static final String CH="ocr_capture", ACT_OCR="ocr_now", ACT_STOP="ocr_stop";
         public static final String ACT_OCR_REGION="ocr_region";
-        public static final String ACTION_RESULT="com.yuen.nativejpocr.OCR_RESULT";
+        public static final String ACTION_RESULT="com.yuen.jpdict.OCR_RESULT";
         public static volatile boolean READY=false;
         MediaProjection projection; ImageReader reader; VirtualDisplay vd; int w,h,dpi;
         MultilingualOcrRecognizer ocrRecognizer;

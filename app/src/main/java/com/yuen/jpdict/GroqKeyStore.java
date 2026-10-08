@@ -1,4 +1,4 @@
-package com.yuen.nativejpocr;
+package com.yuen.jpdict;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -25,7 +25,7 @@ import javax.crypto.spec.GCMParameterSpec;
 
 public final class GroqKeyStore {
     private static final String PREFS = "groq_secure";
-    private static final String ALIAS = "jp_native_groq_api_key";
+    private static final String ALIAS = "jpdict_groq_api_key";
     private static final String KEY_CIPHER = "ciphertext";
     private static final String KEY_IV = "iv";
 

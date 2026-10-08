@@ -1,4 +1,4 @@
-package com.yuen.nativejpocr;
+package com.yuen.jpdict;
 
 import android.app.*;
 import android.content.*;
@@ -30,19 +30,19 @@ import java.util.concurrent.Executors;
 public class FloatingService extends Service {
     private static final String CH = "floating_lookup";
     private static final int NOTIFY_ID = 51;
-    public static final String ACTION_SHOW_SEARCH = "com.yuen.nativejpocr.SHOW_FLOATING_SEARCH";
+    public static final String ACTION_SHOW_SEARCH = "com.yuen.jpdict.SHOW_FLOATING_SEARCH";
     public static final String ACTION_SHOW_LOOKUP_OVERLAY =
-            "com.yuen.nativejpocr.SHOW_LOOKUP_OVERLAY";
+            "com.yuen.jpdict.SHOW_LOOKUP_OVERLAY";
     public static final String ACTION_LOOKUP_BACK =
-            "com.yuen.nativejpocr.LOOKUP_BACK";
+            "com.yuen.jpdict.LOOKUP_BACK";
     public static final String ACTION_LOOKUP_DISMISS =
-            "com.yuen.nativejpocr.LOOKUP_DISMISS";
+            "com.yuen.jpdict.LOOKUP_DISMISS";
     public static final String EXTRA_LOOKUP_HOSTED = "lookup_hosted";
     public static final String EXTRA_HOST_SEARCH = "host_search";
     public static final String ACTION_LOOKUP_HOST_FINISH =
-            "com.yuen.nativejpocr.LOOKUP_HOST_FINISH";
+            "com.yuen.jpdict.LOOKUP_HOST_FINISH";
     public static final String ACTION_LOOKUP_HOST_SEARCH =
-            "com.yuen.nativejpocr.LOOKUP_HOST_SEARCH";
+            "com.yuen.jpdict.LOOKUP_HOST_SEARCH";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
     public static final String EXTRA_LOOKUP_QUERY = "lookup_query";
     public static final String EXTRA_LOOKUP_MODE = "lookup_mode";
@@ -1316,7 +1316,7 @@ public class FloatingService extends Service {
         String value = rawQuery == null ? "" : rawQuery.trim();
         if (value.isEmpty()) return "";
 
-        if (value.startsWith("intent://") || value.startsWith("jp-native://")) {
+        if (value.startsWith("intent://") || value.startsWith("jpdict://") || value.startsWith("jp-native://")) {
             try {
                 android.net.Uri uri = android.net.Uri.parse(value);
                 String nested = uri.getQueryParameter("q");
@@ -1732,7 +1732,7 @@ public class FloatingService extends Service {
         footer.setBackgroundColor(Color.WHITE);
         footer.setContentDescription("拖动调整查词浮层大小");
 
-        TextView copyright = lookupText("© JP Native Android", 12, 0xff777b80);
+        TextView copyright = lookupText("© jpdict", 12, 0xff777b80);
         copyright.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         copyright.setIncludeFontPadding(false);
         footer.addView(copyright, new LinearLayout.LayoutParams(0, dp(30), 1));

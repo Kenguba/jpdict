@@ -1,4 +1,4 @@
-# JP Native Android
+# jpdict
 
 这是支持中文、英文、日文、韩文 OCR 和 Groq 多语种查询的原生 Android 应用。
 
@@ -239,7 +239,7 @@ APK 文件名固定格式：
 - 有悬浮窗权限时，OCR、Intent（Deep Link / PROCESS_TEXT / SEND）与悬浮搜索选词复用 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY` 的同一查词卡片。这些入口统一默认大小、位置、标题拖动、底部版权栏缩放和持久化窗口设置，并都带全屏 Mask；入口差异只影响关闭后是否恢复搜索。没有悬浮窗权限时，PROCESS_TEXT / SEND 可回退到独立 Activity。
 - OCR 查词 WindowManager 浮层以用户提供的视频1词典页为 UI 基准：紧凑白色圆角卡片、词头 + 收藏图标、独立发音行、40dp 左右的浅灰词典分区头、白色词条内容区、底部工具栏和版权栏；工具图标使用黑色描边资源，禁止使用 Unicode 字符冒充主要工具栏图标。参考视频中的灰色圆点属于触摸指示器，不得做成可见抓手。顶部标题区可拖动窗口；底部版权栏整条区域作为隐形缩放热区，横向拖动改变宽度、纵向拖动改变高度，左上角保持锚定，并持久化窗口 x/y/宽/高
 - OCR、Intent 与搜索查词小窗必须自己消费左右返回手势、系统返回和实体返回键，统一调用 `handleLookupBack()`，一次返回直接关闭整个小窗；编辑态和查询历史都不得拦截为“退出编辑”或“上一词”。收起键盘并移除 Mask 后，底层应用保持原页面；搜索入口可恢复原搜索查询。蓝色悬浮球始终位于查词浮层最上层。
-- 对外查询 Deep Link 固定为 `jp-native://lookup?q=<URL编码后的查询内容>`；由无界面的 `LookupLinkActivity` 接收后转发到 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，Deep Link 本身不得渲染或切换到查词 Activity 页面
+- 对外查询 Deep Link 固定为 `jpdict://lookup?q=<URL编码后的查询内容>`（旧链接 `jp-native://lookup` 仍兼容接收）；由无界面的 `LookupLinkActivity` 接收后转发到 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，Deep Link 本身不得渲染或切换到查词 Activity 页面
 - Deep Link 继续接受 `mode=fullscreen` 与 `mode=float`，两者在 Intent 入口都采用同一可拖动、可缩放小窗和全屏 Mask；不再因入口或 mode 改变卡片大小和交互。词典卡片仍是 `TYPE_APPLICATION_OVERLAY`；透明、无预览、无动画、空 taskAffinity 的 `LookupLinkActivity` 只承载 Mask 和系统返回，不渲染词典页面，并在小窗关闭时 finish。OCR 入口仍通过显式 Intent 将识别原文直接交给 Service，由 Service 复用该透明宿主；返回关闭后保持原桌面或应用，不恢复搜索层。
 - OCR、Intent 与搜索的 WindowManager 根层覆盖整个显示区域并允许布局进入刘海区域。卡片外点击通过独立 Mask 点击层调用关闭方法；系统返回键、Android 13+ 返回回调和左右边缘返回手势统一调用 `handleLookupBack()`。
 - 全屏黑色 Mask 使用约 42% 不透明度，由透明 `LookupLinkActivity` 的独立全屏 View 绘制，覆盖底部、状态栏和导航栏；系统栏透明且关闭系统额外 contrast scrim，关闭宿主后恢复调用方系统栏。`TYPE_APPLICATION_OVERLAY` 根层保留独立的卡片外点击层，宿主已绘制 Mask 时此层不重复着色，避免双重变暗；没有宿主时由 Overlay 自己绘制 Mask。不能仅依赖悬浮窗口扩大范围或半透明 Root background 保证系统栏遮罩。
@@ -292,7 +292,7 @@ APK 文件名固定格式：
 
 正式 APK 使用固定 Release 证书。公开证书保存在：
 
-`signing/jp-native-android-release-cert.pem`
+`signing/jpdict-release-cert.pem`
 
 证书 SHA-256：
 

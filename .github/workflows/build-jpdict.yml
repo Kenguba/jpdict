@@ -1,4 +1,4 @@
-name: Build JP Native Android APK
+name: Build jpdict APK
 
 on:
   push:
@@ -25,7 +25,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: jp-native-android-versioned-build
+  group: jpdict-versioned-build
   cancel-in-progress: false
 
 jobs:
@@ -117,8 +117,8 @@ jobs:
         run: |
           if [[ -n "$KEYSTORE_B64" && -n "$STORE_PASS" && -n "$KEY_ALIAS" && -n "$KEY_PASS" ]]; then
             echo "HAS_SIGNING=true" >> "$GITHUB_ENV"
-            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/jp-native-android-release.jks"
-            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/jp-native-android-release.jks" >> "$GITHUB_ENV"
+            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/jpdict-release.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/jpdict-release.jks" >> "$GITHUB_ENV"
           else
             echo "HAS_SIGNING=false" >> "$GITHUB_ENV"
             echo "::warning::Release signing secrets are not configured. Building debug artifacts only; no GitHub Release will be published."
@@ -153,18 +153,18 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/arm/release/app-arm-release.apk "dist/jp-native-android-${VERSION_NAME}-arm.apk"
-          cp app/build/outputs/apk/arm64/release/app-arm64-release.apk "dist/jp-native-android-${VERSION_NAME}-arm64-v8a.apk"
-          cp app/build/outputs/apk/armv7/release/app-armv7-release.apk "dist/jp-native-android-${VERSION_NAME}-armeabi-v7a.apk"
+          cp app/build/outputs/apk/arm/release/app-arm-release.apk "dist/jpdict-${VERSION_NAME}-arm.apk"
+          cp app/build/outputs/apk/arm64/release/app-arm64-release.apk "dist/jpdict-${VERSION_NAME}-arm64-v8a.apk"
+          cp app/build/outputs/apk/armv7/release/app-armv7-release.apk "dist/jpdict-${VERSION_NAME}-armeabi-v7a.apk"
 
       - name: Prepare fallback debug APK files
         if: env.HAS_SIGNING != 'true'
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/arm/debug/app-arm-debug.apk "dist/jp-native-android-${VERSION_NAME}-arm-UNSIGNED-DEBUG.apk"
-          cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk "dist/jp-native-android-${VERSION_NAME}-arm64-v8a-UNSIGNED-DEBUG.apk"
-          cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk "dist/jp-native-android-${VERSION_NAME}-armeabi-v7a-UNSIGNED-DEBUG.apk"
+          cp app/build/outputs/apk/arm/debug/app-arm-debug.apk "dist/jpdict-${VERSION_NAME}-arm-UNSIGNED-DEBUG.apk"
+          cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk "dist/jpdict-${VERSION_NAME}-arm64-v8a-UNSIGNED-DEBUG.apk"
+          cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk "dist/jpdict-${VERSION_NAME}-armeabi-v7a-UNSIGNED-DEBUG.apk"
 
       - name: Enforce APK size budget
         shell: bash
@@ -206,7 +206,7 @@ jobs:
         if: env.HAS_SIGNING == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: jp-native-android-signed-build-${{ github.run_number }}
+          name: jpdict-signed-build-${{ github.run_number }}
           path: |
             dist/*.apk
             dist/SHA256SUMS.txt
@@ -215,7 +215,7 @@ jobs:
         if: env.HAS_SIGNING != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: jp-native-android-unsigned-debug-build-${{ github.run_number }}
+          name: jpdict-unsigned-debug-build-${{ github.run_number }}
           path: |
             dist/*.apk
             dist/SHA256SUMS.txt
@@ -245,9 +245,9 @@ jobs:
 
           ## 下载哪个 APK
 
-          - **jp-native-android-<版本>-arm64-v8a.apk**：只包含 `arm64-v8a`，推荐现在绝大多数 Android 手机使用。
-          - **jp-native-android-<版本>-armeabi-v7a.apk**：只包含 `armeabi-v7a`，适合老旧 32 位 ARM 手机和平板。
-          - **jp-native-android-<版本>-arm.apk**：包含 `arm64-v8a + armeabi-v7a`，手机通用集合版。
+          - **jpdict-<版本>-arm64-v8a.apk**：只包含 `arm64-v8a`，推荐现在绝大多数 Android 手机使用。
+          - **jpdict-<版本>-armeabi-v7a.apk**：只包含 `armeabi-v7a`，适合老旧 32 位 ARM 手机和平板。
+          - **jpdict-<版本>-arm.apk**：包含 `arm64-v8a + armeabi-v7a`，手机通用集合版。
 
           为遵守单 APK 不超过 30 MB 的硬限制，当前不发布 universal APK。x86 / x86_64 如需支持，应改为分架构产物，不能通过超大 universal APK 绕过体积限制。
 
@@ -272,13 +272,13 @@ jobs:
               --clobber
 
             gh release edit "$TAG" \
-              --title "JP Native Android $VERSION_NAME" \
+              --title "jpdict $VERSION_NAME" \
               --notes-file release-notes.md
           else
             gh release create "$TAG" \
               dist/*.apk \
               dist/SHA256SUMS.txt \
               --target "$GITHUB_SHA" \
-              --title "JP Native Android $VERSION_NAME" \
+              --title "jpdict $VERSION_NAME" \
               --notes-file release-notes.md
           fi

@@ -1,4 +1,4 @@
-package com.yuen.nativejpocr;
+package com.yuen.jpdict;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -229,7 +229,7 @@ public class QuickLookupActivity extends Activity {
 
         content.addView(aiCard, cardLp);
 
-        TextView footer = text("JP Native Android · 本地词典 + Groq AI", 14, 0xff777d84);
+        TextView footer = text("jpdict · 本地词典 + Groq AI", 14, 0xff777d84);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(12), dp(18), dp(12), dp(6));
         content.addView(footer);
