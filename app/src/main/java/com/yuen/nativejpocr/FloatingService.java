@@ -17,7 +17,6 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -36,6 +35,9 @@ public class FloatingService extends Service {
             "com.yuen.nativejpocr.SHOW_LOOKUP_OVERLAY";
     public static final String ACTION_LOOKUP_BACK =
             "com.yuen.nativejpocr.LOOKUP_BACK";
+    public static final String ACTION_LOOKUP_DISMISS =
+            "com.yuen.nativejpocr.LOOKUP_DISMISS";
+    public static final String EXTRA_LOOKUP_HOSTED = "lookup_hosted";
     public static final String ACTION_LOOKUP_HOST_FINISH =
             "com.yuen.nativejpocr.LOOKUP_HOST_FINISH";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
@@ -46,11 +48,6 @@ public class FloatingService extends Service {
     public static final String LOOKUP_MODE_FLOAT = "float";
     public static final String LOOKUP_MODE_FULLSCREEN = "fullscreen";
 
-    private static final String LOOKUP_WINDOW_PREFS = "lookup_overlay_window";
-    private static final String LOOKUP_WIDTH = "width";
-    private static final String LOOKUP_HEIGHT = "height";
-    private static final String LOOKUP_X = "x";
-    private static final String LOOKUP_Y = "y";
     private static final ExecutorService LOOKUP_AI_EXECUTOR =
             Executors.newSingleThreadExecutor();
     private static final Map<String, String> LOOKUP_AI_CACHE =
@@ -70,22 +67,11 @@ public class FloatingService extends Service {
     private String lookupOverlayQuery = "";
     private String lookupOverlayMode = LOOKUP_MODE_FLOAT;
     private boolean lookupOverlayReturnToSearch;
+    private boolean lookupOverlayHosted;
+    private LookupOverlayWindow lookupWindow;
     private View bubbleTopProxy;
     private WindowManager.LayoutParams bubbleTopProxyLp;
 
-    private static final class LookupRoute {
-        final String query;
-        final String mode;
-        final boolean returnToSearch;
-
-        LookupRoute(String query, String mode, boolean returnToSearch) {
-            this.query = query;
-            this.mode = mode;
-            this.returnToSearch = returnToSearch;
-        }
-    }
-
-    private final ArrayDeque<LookupRoute> lookupRouteStack = new ArrayDeque<>();
     private String currentSearchQuery = "";
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
@@ -314,6 +300,22 @@ public class FloatingService extends Service {
         }
     }
 
+    // This app intentionally uses platform widgets without AppCompat.
+    @android.annotation.SuppressLint("AppCompatCustomView")
+    private final class LookupEditor extends EditText {
+        LookupEditor(Context context) { super(context); }
+
+        @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
+                    handleLookupBack();
+                }
+                return true;
+            }
+            return super.onKeyPreIme(keyCode, event);
+        }
+    }
+
     private final class LookupOverlayFrameLayout extends FrameLayout {
         private float edgeDownX;
         private float edgeDownY;
@@ -352,6 +354,9 @@ public class FloatingService extends Service {
         }
 
         @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+            // A hosted lookup uses the system's single Back gesture owner.
+            // Running a second recognizer here can close the caller as well.
+            if (lookupOverlayHosted) return super.onInterceptTouchEvent(event);
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     edgeDownX = event.getX();
@@ -386,9 +391,9 @@ public class FloatingService extends Service {
                 backConsumed = true;
             }
 
-            if (backConsumed &&
-                    (event.getActionMasked() == MotionEvent.ACTION_UP ||
-                     event.getActionMasked() == MotionEvent.ACTION_MOVE)) {
+            // Commit only on UP. System Back steals the stream with CANCEL;
+            // closing on MOVE would also send that same gesture to the caller.
+            if (backConsumed && event.getActionMasked() == MotionEvent.ACTION_UP) {
                 markAction("LOOKUP_EDGE_BACK");
                 handleLookupBack();
                 trackingEdgeBack = false;
@@ -1160,7 +1165,19 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
-        dispatchLookupOverlay(q, true);
+        String value = q == null ? "" : q.trim();
+        if (value.isEmpty()) return;
+        Intent host = new Intent(this, LookupLinkActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                .putExtra(EXTRA_LOOKUP_QUERY, value)
+                .putExtra(EXTRA_RETURN_TO_SEARCH, true)
+                .putExtra(EXTRA_SEARCH_QUERY, currentSearchQuery);
+        try {
+            startActivity(host);
+        } catch (Throwable error) {
+            recordHandledCrash("openLookupHost", error);
+            safeToast("查词小窗启动失败");
+        }
     }
 
     private void openOcrLookupPopup(String q) {
@@ -1285,7 +1302,7 @@ public class FloatingService extends Service {
                                 handleLookupBack();
                             };
                             dispatcher.registerOnBackInvokedCallback(
-                                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                                    android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                                     callback);
                             lookupEditBackDispatcher = dispatcher;
                             lookupEditBackCallback = callback;
@@ -1301,25 +1318,13 @@ public class FloatingService extends Service {
         }
     }
 
-    private void showLookupOverlay(String rawQuery, boolean returnToSearch) {
-        showLookupOverlay(rawQuery, returnToSearch, LOOKUP_MODE_FLOAT, true);
-    }
-
     private void showLookupOverlay(
             String rawQuery,
             boolean returnToSearch,
             String rawMode) {
-        showLookupOverlay(rawQuery, returnToSearch, rawMode, true);
-    }
-
-    private void showLookupOverlay(
-            String rawQuery,
-            boolean returnToSearch,
-            String rawMode,
-            boolean pushCurrentRoute) {
         // This is the single result-card renderer for floating search,
         // PROCESS_TEXT/SEND and Deep Link lookup. Mode changes only the window
-        // shell (float bounds versus fullscreen mask), never the card layout.
+        // shell and Back host, never the card layout or saved card bounds.
         if (!Settings.canDrawOverlays(this) || wm == null) {
             safeToast("没有悬浮窗权限，无法显示查词浮层");
             return;
@@ -1328,22 +1333,6 @@ public class FloatingService extends Service {
         String q = normalizeLookupQuery(rawQuery);
         String mode = normalizeLookupMode(rawMode);
         if (q.isEmpty()) return;
-
-        String previousQuery = lookupOverlayQuery == null
-                ? ""
-                : lookupOverlayQuery.trim();
-        if (pushCurrentRoute &&
-                lookupOverlay != null &&
-                !previousQuery.isEmpty() &&
-                (!previousQuery.equals(q) || !lookupOverlayMode.equals(mode))) {
-            lookupRouteStack.addLast(new LookupRoute(
-                    previousQuery,
-                    lookupOverlayMode,
-                    lookupOverlayReturnToSearch));
-            while (lookupRouteStack.size() > 32) {
-                lookupRouteStack.removeFirst();
-            }
-        }
 
         removeLookupOverlay(false);
         removeSearchPanel();
@@ -1355,14 +1344,16 @@ public class FloatingService extends Service {
         saveLookupHistory(q);
 
         LookupOverlayFrameLayout root = new LookupOverlayFrameLayout(this);
-        boolean fullscreen = LOOKUP_MODE_FULLSCREEN.equals(mode);
+        boolean fullscreen = lookupOverlayHosted || LOOKUP_MODE_FULLSCREEN.equals(mode);
         root.setBackgroundColor(Color.TRANSPARENT);
 
         View fullscreenMask = null;
         if (fullscreen) {
             fullscreenMask = new View(this);
             fullscreenMask.setBackgroundColor(Color.BLACK);
-            fullscreenMask.setAlpha(0.42f);
+            // The Activity supplies the pixels, including both system bars.
+            // Keep one touch target here without doubling the mask opacity.
+            fullscreenMask.setAlpha(lookupOverlayHosted ? 0f : 0.42f);
             fullscreenMask.setClickable(true);
             fullscreenMask.setFocusable(false);
             fullscreenMask.setContentDescription("点击关闭查词浮层");
@@ -1411,7 +1402,7 @@ public class FloatingService extends Service {
 
         replay.setOnClickListener(v -> {
             LOOKUP_AI_CACHE.remove(q);
-            showLookupOverlay(q, returnToSearch, mode, false);
+            showLookupOverlay(q, returnToSearch, mode);
         });
 
         LinearLayout editHeader = new LinearLayout(this);
@@ -1421,7 +1412,7 @@ public class FloatingService extends Service {
         editHeader.setBackgroundColor(Color.WHITE);
         editHeader.setVisibility(View.GONE);
 
-        EditText editor = new EditText(this);
+        EditText editor = new LookupEditor(this);
         editor.setSingleLine(true);
         editor.setText(q);
         editor.setTextSize(18);
@@ -1492,7 +1483,7 @@ public class FloatingService extends Service {
                 editHeader.setVisibility(View.GONE);
                 setLookupOverlayFocusable(false);
             } else {
-                showLookupOverlay(next, returnToSearch, mode, true);
+                showLookupOverlay(next, returnToSearch, mode);
             }
         };
 
@@ -1665,73 +1656,52 @@ public class FloatingService extends Service {
 
         panel.setClickable(true);
 
-        if (fullscreen) {
-            FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT);
-            panelLp.leftMargin = dp(8);
-            panelLp.rightMargin = dp(8);
-            panelLp.topMargin = topSystemBarInset() + dp(56);
-            panelLp.bottomMargin = dp(38);
-            root.addView(panel, panelLp);
-        } else {
-            root.addView(panel, new FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT));
-        }
+        root.addView(panel, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
 
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        SharedPreferences prefs = getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE);
-
-        int minWidth = dp(250);
-        int minHeight = dp(300);
-        int maxWidth = Math.max(minWidth, dm.widthPixels - dp(8));
-        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(48));
-
-        int defaultWidth = Math.min(maxWidth, dm.widthPixels - dp(16));
-        int defaultHeight = Math.min(maxHeight, Math.round(dm.heightPixels * 0.72f));
-
-        int width = fullscreen
-                ? WindowManager.LayoutParams.MATCH_PARENT
-                : clampLookup(prefs.getInt(LOOKUP_WIDTH, defaultWidth), minWidth, maxWidth);
-        int height = fullscreen
-                ? WindowManager.LayoutParams.MATCH_PARENT
-                : clampLookup(prefs.getInt(LOOKUP_HEIGHT, defaultHeight), minHeight, maxHeight);
-
-        int defaultX = Math.max(dp(4), (dm.widthPixels - defaultWidth) / 2);
-        int defaultY = dp(52);
-
-        int lookupWindowFlags =
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+        int lookupWindowFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
         if (fullscreen) {
-            // The separate mask must include the status bar too. Opt out of
-            // system-bar fitting where supported and lay out in screen coords.
             lookupWindowFlags |= WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
         }
-
         lookupOverlayLp = new WindowManager.LayoutParams(
-                width,
-                height,
-                overlayType(),
-                lookupWindowFlags,
-                PixelFormat.TRANSLUCENT);
-        if (fullscreen && Build.VERSION.SDK_INT >= 29) {
-            lookupOverlayLp.setFitInsetsTypes(0);
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                overlayType(), lookupWindowFlags, PixelFormat.TRANSLUCENT);
+        if (fullscreen) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                lookupOverlayLp.layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+                lookupOverlayLp.setFitInsetsTypes(0);
+            } else if (Build.VERSION.SDK_INT >= 28) {
+                lookupOverlayLp.layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            }
         }
         lookupOverlayLp.gravity = Gravity.TOP | Gravity.START;
-        lookupOverlayLp.softInputMode =
-                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+        lookupOverlayLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
-        lookupOverlayLp.x = fullscreen ? 0 : prefs.getInt(LOOKUP_X, defaultX);
-        lookupOverlayLp.y = fullscreen ? 0 : prefs.getInt(LOOKUP_Y, defaultY);
-        if (!fullscreen) {
-            clampLookupBounds(lookupOverlayLp, dm.widthPixels, dm.heightPixels);
-        }
-
         lookupOverlay = root;
-        installLookupOverlayGestures(header, title, footer, fullscreen);
+        lookupWindow = new LookupOverlayWindow(this, wm, root, panel, lookupOverlayLp,
+                fullscreen, topSystemBarInset());
+        lookupWindow.installGestures(header, title, footer);
+        if (fullscreen) {
+            LookupOverlayWindow bounds = lookupWindow;
+            root.setOnApplyWindowInsetsListener((view, insets) -> {
+                int top = insets.getSystemWindowInsetTop();
+                int bottom = insets.getSystemWindowInsetBottom();
+                if (Build.VERSION.SDK_INT >= 30) {
+                    android.graphics.Insets bars = insets.getInsetsIgnoringVisibility(
+                            WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                    top = bars.top;
+                    bottom = bars.bottom;
+                }
+                bounds.fitSystemBars(top, bottom);
+                return insets;
+            });
+        }
 
         try {
             wm.addView(root, lookupOverlayLp);
@@ -1744,6 +1714,7 @@ public class FloatingService extends Service {
             lookupOverlayLp = null;
             recordHandledCrash("showLookupOverlay.addView", e);
             safeToast("查词浮层打开失败：" + e.getClass().getSimpleName());
+            closeLookupOverlay();
             return;
         }
 
@@ -1852,142 +1823,6 @@ public class FloatingService extends Service {
         });
     }
 
-    private void installLookupOverlayGestures(
-            View header,
-            View title,
-            View resizeFooter,
-            boolean fullscreen) {
-        if (fullscreen) {
-            return;
-        }
-        View.OnTouchListener drag = new View.OnTouchListener() {
-            float downRawX;
-            float downRawY;
-            int startX;
-            int startY;
-
-            @Override public boolean onTouch(View v, MotionEvent e) {
-                if (lookupOverlay == null || lookupOverlayLp == null) return false;
-
-                switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        downRawX = e.getRawX();
-                        downRawY = e.getRawY();
-                        startX = lookupOverlayLp.x;
-                        startY = lookupOverlayLp.y;
-                        return true;
-
-                    case MotionEvent.ACTION_MOVE:
-                        DisplayMetrics dm = getResources().getDisplayMetrics();
-                        lookupOverlayLp.x =
-                                startX + Math.round(e.getRawX() - downRawX);
-                        lookupOverlayLp.y =
-                                startY + Math.round(e.getRawY() - downRawY);
-                        clampLookupBounds(
-                                lookupOverlayLp, dm.widthPixels, dm.heightPixels);
-                        try {
-                            wm.updateViewLayout(lookupOverlay, lookupOverlayLp);
-                        } catch (Exception ignored) {}
-                        return true;
-
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        saveLookupOverlayBounds();
-                        return true;
-
-                    default:
-                        return true;
-                }
-            }
-        };
-
-        header.setOnTouchListener(drag);
-        title.setOnTouchListener(drag);
-
-        resizeFooter.setOnTouchListener(new View.OnTouchListener() {
-            float downRawX;
-            float downRawY;
-            int startWidth;
-            int startHeight;
-
-            @Override public boolean onTouch(View v, MotionEvent e) {
-                if (lookupOverlay == null || lookupOverlayLp == null) return false;
-
-                switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        downRawX = e.getRawX();
-                        downRawY = e.getRawY();
-                        startWidth = lookupOverlayLp.width;
-                        startHeight = lookupOverlayLp.height;
-                        return true;
-
-                    case MotionEvent.ACTION_MOVE:
-                        DisplayMetrics dm = getResources().getDisplayMetrics();
-                        int minWidth = dp(250);
-                        int minHeight = dp(300);
-                        int maxWidth = Math.max(minWidth, dm.widthPixels - dp(8));
-                        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(48));
-
-                        // The bottom strip behaves like the reference popup:
-                        // dragging left/right changes width, up/down changes height,
-                        // while the top-left corner remains anchored.
-                        lookupOverlayLp.width = clampLookup(
-                                startWidth + Math.round(e.getRawX() - downRawX),
-                                minWidth,
-                                maxWidth);
-                        lookupOverlayLp.height = clampLookup(
-                                startHeight + Math.round(e.getRawY() - downRawY),
-                                minHeight,
-                                maxHeight);
-                        clampLookupBounds(
-                                lookupOverlayLp, dm.widthPixels, dm.heightPixels);
-
-                        try {
-                            wm.updateViewLayout(lookupOverlay, lookupOverlayLp);
-                        } catch (Exception ignored) {}
-                        return true;
-
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        saveLookupOverlayBounds();
-                        return true;
-
-                    default:
-                        return true;
-                }
-            }
-        });
-    }
-
-    private int clampLookup(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
-    }
-
-    private void clampLookupBounds(
-            WindowManager.LayoutParams lp,
-            int screenWidth,
-            int screenHeight) {
-        int margin = dp(8);
-        int maxX = Math.max(margin, screenWidth - lp.width - margin);
-        int maxY = Math.max(margin, screenHeight - lp.height - margin);
-        lp.x = clampLookup(lp.x, margin, maxX);
-        lp.y = clampLookup(lp.y, margin, maxY);
-    }
-
-    private void saveLookupOverlayBounds() {
-        if (lookupOverlayLp == null) return;
-        if (LOOKUP_MODE_FULLSCREEN.equals(lookupOverlayMode)) return;
-        if (lookupOverlayLp.width <= 0 || lookupOverlayLp.height <= 0) return;
-
-        getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE)
-                .edit()
-                .putInt(LOOKUP_WIDTH, lookupOverlayLp.width)
-                .putInt(LOOKUP_HEIGHT, lookupOverlayLp.height)
-                .putInt(LOOKUP_X, lookupOverlayLp.x)
-                .putInt(LOOKUP_Y, lookupOverlayLp.y)
-                .apply();
-    }
-
     private void saveLookupHistory(String raw) {
         if (raw == null) return;
         String value = raw.replace('\n', ' ').replace('\r', ' ').trim();
@@ -2055,34 +1890,15 @@ public class FloatingService extends Service {
 
     private boolean handleLookupBack() {
         if (lookupOverlay == null) return false;
-
-        // Match video 2: while editing the headword, Back exits edit mode
-        // and hides the IME first. It does not close/navigate the lookup yet.
-        if (lookupEditor != null) {
-            markAction("LOOKUP_BACK_EXIT_EDIT");
-            exitLookupEditMode();
-            return true;
-        }
-
-        if (!lookupRouteStack.isEmpty()) {
-            LookupRoute previous = lookupRouteStack.removeLast();
-            markAction("LOOKUP_ROUTE_BACK:" + previous.query);
-            showLookupOverlay(
-                    previous.query,
-                    previous.returnToSearch,
-                    previous.mode,
-                    false);
-        } else {
-            markAction("LOOKUP_ROUTE_EMPTY_CLOSE");
-            closeLookupOverlay();
-        }
+        markAction("LOOKUP_BACK_CLOSE");
+        closeLookupOverlay();
         return true;
     }
 
     private void closeLookupOverlay() {
         boolean restoreSearch = lookupOverlayReturnToSearch;
-        lookupRouteStack.clear();
         removeLookupOverlay(false);
+        lookupOverlayHosted = false;
         notifyLookupHostFinish();
 
         if (restoreSearch) {
@@ -2095,7 +1911,8 @@ public class FloatingService extends Service {
     }
 
     private void removeLookupOverlay(boolean clearRestoreState) {
-        saveLookupOverlayBounds();
+        if (lookupWindow != null) lookupWindow.save();
+        if (lookupEditor != null) exitLookupEditMode();
         clearLookupEditBackCallback();
 
         if (lookupOverlay != null && wm != null) {
@@ -2106,6 +1923,7 @@ public class FloatingService extends Service {
 
         lookupOverlay = null;
         lookupOverlayLp = null;
+        lookupWindow = null;
         lookupOverlayQuery = "";
         lookupOverlayMode = LOOKUP_MODE_FLOAT;
         lookupEditor = null;
@@ -2115,7 +1933,6 @@ public class FloatingService extends Service {
 
         if (clearRestoreState) {
             lookupOverlayReturnToSearch = false;
-            lookupRouteStack.clear();
         }
     }
 
@@ -2235,8 +2052,13 @@ public class FloatingService extends Service {
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 
             if (!q.isEmpty()) {
+                lookupOverlayHosted = intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false);
                 showLookupOverlay(q, returnToSearch, mode);
             }
+        }
+
+        if (intent != null && ACTION_LOOKUP_DISMISS.equals(intent.getAction())) {
+            closeLookupOverlay();
         }
 
         if (intent != null && ACTION_LOOKUP_BACK.equals(intent.getAction())) {

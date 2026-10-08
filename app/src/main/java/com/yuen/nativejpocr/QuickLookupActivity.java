@@ -7,6 +7,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -67,9 +68,18 @@ public class QuickLookupActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         popupMode = getIntent() != null &&
                 getIntent().getBooleanExtra(FloatingService.EXTRA_POPUP_MODE, false);
-        if (popupMode) setTheme(R.style.Theme_JpQuickLookup_Popup);
+        boolean useOverlay = Settings.canDrawOverlays(this);
+        if (useOverlay) setTheme(R.style.Theme_LookupLinkBridge);
+        else if (popupMode) setTheme(R.style.Theme_JpQuickLookup_Popup);
 
         super.onCreate(savedInstanceState);
+        if (useOverlay) {
+            startActivity(new Intent(getIntent()).setClass(this, LookupLinkActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION));
+            finish();
+            overridePendingTransition(0, 0);
+            return;
+        }
 
         String incoming = readQuery(getIntent());
         query = incoming == null ? "" : incoming.trim();

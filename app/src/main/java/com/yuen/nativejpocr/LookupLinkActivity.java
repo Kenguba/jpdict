@@ -9,6 +9,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
@@ -16,11 +17,11 @@ import android.view.WindowManager;
 import android.widget.Toast;
 
 /**
- * Invisible Back host for external lookup links.
+ * Transparent Back and mask host for the shared lookup overlay.
  *
  * Visible dictionary UI remains a WindowManager TYPE_APPLICATION_OVERLAY.
- * This transparent Activity exists only so Android / OriginOS has a real
- * application window to target for system Back gestures.
+ * This Activity supplies the full-display scrim and gives Android / OriginOS
+ * a real application window to target for system Back gestures.
  */
 public final class LookupLinkActivity extends Activity {
     private android.window.OnBackInvokedCallback backCallback;
@@ -39,7 +40,7 @@ public final class LookupLinkActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         currentMode = extractMode(getIntent());
-        configureTransparentHost(currentMode);
+        configureTransparentHost();
         registerFinishReceiver();
         forward(getIntent());
     }
@@ -48,7 +49,7 @@ public final class LookupLinkActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         currentMode = extractMode(intent);
-        configureTransparentHost(currentMode);
+        configureTransparentHost();
         forward(intent);
     }
 
@@ -60,6 +61,14 @@ public final class LookupLinkActivity extends Activity {
         markHostAction("HOST_RESUMED:" + currentMode);
     }
 
+    @Override protected void onStop() {
+        super.onStop();
+        // Do not leave a modal overlay behind after its mask/Back host is hidden.
+        if (!isFinishing() && !isChangingConfigurations()) {
+            sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS);
+        }
+    }
+
     @Override public void onBackPressed() {
         markHostAction("HOST_ON_BACK_PRESSED");
         requestLookupBack();
@@ -68,7 +77,7 @@ public final class LookupLinkActivity extends Activity {
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_UP &&
-                    event.getRepeatCount() == 0) {
+                    event.getRepeatCount() == 0 && !event.isCanceled()) {
                 markHostAction("HOST_KEY_BACK");
                 requestLookupBack();
             }
@@ -133,47 +142,46 @@ public final class LookupLinkActivity extends Activity {
         } catch (Throwable ignored) {}
     }
 
-    private void configureTransparentHost(String mode) {
+    private void configureTransparentHost() {
         try {
             Window w = getWindow();
             w.setBackgroundDrawableResource(android.R.color.transparent);
             w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             w.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
 
-            if (FloatingService.LOOKUP_MODE_FULLSCREEN.equals(mode)) {
-                // Important for vivo/OriginOS: a FLAG_NOT_TOUCHABLE Activity
-                // can be skipped by the vendor edge-back target resolver.
-                // The real full-screen overlay sits above this host and still
-                // receives ordinary taps, so keeping the host touchable does
-                // not expose an extra visible page.
-                w.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
-
-                // Let the WindowManager mask remain visible behind both
-                // system bars. The transparent Activity is still only a Back
-                // host; the caller's content and the overlay supply the pixels
-                // underneath the status/navigation icons.
-                w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-                w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS |
-                        WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
-                w.setStatusBarColor(Color.TRANSPARENT);
-                w.setNavigationBarColor(Color.TRANSPARENT);
-                if (Build.VERSION.SDK_INT >= 30) {
-                    w.setDecorFitsSystemWindows(false);
-                }
-                w.getDecorView().setSystemUiVisibility(
-                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-            } else {
-                // Small floating lookup must let taps outside the overlay
-                // continue through to the original application.
-                w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
-                w.getDecorView().setSystemUiVisibility(0);
-                if (Build.VERSION.SDK_INT >= 30) {
-                    w.setDecorFitsSystemWindows(true);
-                }
-                w.clearFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            // Both entry points are modal. A touchable Activity is also needed
+            // for OriginOS to choose this window as the edge-Back target.
+            w.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+            w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS |
+                    WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+            w.setStatusBarColor(Color.TRANSPARENT);
+            w.setNavigationBarColor(Color.TRANSPARENT);
+            if (Build.VERSION.SDK_INT >= 29) {
+                w.setStatusBarContrastEnforced(false);
+                w.setNavigationBarContrastEnforced(false);
             }
+            if (Build.VERSION.SDK_INT >= 30) w.setDecorFitsSystemWindows(false);
+            if (Build.VERSION.SDK_INT >= 28) {
+                WindowManager.LayoutParams attributes = w.getAttributes();
+                attributes.layoutInDisplayCutoutMode = Build.VERSION.SDK_INT >= 30
+                        ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                        : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                w.setAttributes(attributes);
+            }
+            w.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+
+            // TYPE_APPLICATION_OVERLAY is below critical system windows and
+            // can be cropped by OEM policy. The Activity owns one edge-to-edge
+            // mask; the overlay owns the dictionary card and mask hit target.
+            View mask = new View(this);
+            mask.setBackgroundColor(0x6b000000);
+            mask.setContentDescription("点击关闭查词小窗");
+            mask.setOnClickListener(v -> sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS));
+            setContentView(mask);
 
             overridePendingTransition(0, 0);
         } catch (Throwable ignored) {}
@@ -181,8 +189,11 @@ public final class LookupLinkActivity extends Activity {
 
     private void requestLookupBack() {
         markHostAction("HOST_SEND_LOOKUP_BACK");
-        Intent back = new Intent(this, FloatingService.class)
-                .setAction(FloatingService.ACTION_LOOKUP_BACK);
+        sendLookupAction(FloatingService.ACTION_LOOKUP_BACK);
+    }
+
+    private void sendLookupAction(String action) {
+        Intent back = new Intent(this, FloatingService.class).setAction(action);
         try {
             if (Build.VERSION.SDK_INT >= 26) {
                 startForegroundService(back);
@@ -220,6 +231,16 @@ public final class LookupLinkActivity extends Activity {
         if (query.isEmpty()) {
             String extra = source.getStringExtra(FloatingService.EXTRA_LOOKUP_QUERY);
             if (extra != null) query = extra.trim();
+        }
+
+        if (query.isEmpty()) {
+            String extra = source.getStringExtra("query");
+            if (extra != null) query = extra.trim();
+        }
+
+        if (query.isEmpty()) {
+            CharSequence text = source.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT);
+            if (text != null) query = text.toString().trim();
         }
 
         if (query.isEmpty()) {
@@ -272,11 +293,22 @@ public final class LookupLinkActivity extends Activity {
             return;
         }
 
+        if (!Settings.canDrawOverlays(this)) {
+            startActivity(new Intent(this, QuickLookupActivity.class)
+                    .putExtra("query", query));
+            finishBridge();
+            return;
+        }
+
         Intent show = new Intent(this, FloatingService.class)
                 .setAction(FloatingService.ACTION_SHOW_LOOKUP_OVERLAY)
                 .putExtra(FloatingService.EXTRA_LOOKUP_QUERY, query)
                 .putExtra(FloatingService.EXTRA_LOOKUP_MODE, mode)
-                .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false);
+                .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
+                .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,
+                        source.getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false))
+                .putExtra(FloatingService.EXTRA_SEARCH_QUERY,
+                        source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY));
 
         try {
             if (Build.VERSION.SDK_INT >= 26) {
