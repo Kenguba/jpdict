@@ -70,6 +70,13 @@
             android:theme="@style/Theme.LookupLinkBridge"/>
 
         <activity
+            android:name=".BubbleImagePickerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.LookupLinkBridge"/>
+
+        <activity
             android:name=".LookupLinkActivity"
             android:exported="true"
             android:excludeFromRecents="true"

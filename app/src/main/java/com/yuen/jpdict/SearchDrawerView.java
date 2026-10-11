@@ -105,22 +105,23 @@ public final class SearchDrawerView extends LinearLayout {
         utilities.setBackground(shape(0xffffffff, 22));
         utilities.setClipToOutline(true);
         addUtility(utilities, SearchIconView.Kind.TASK, "自动化任务", true);
-        addUtility(utilities, SearchIconView.Kind.IMAGE, "照片库", true);
-        addUtility(utilities, SearchIconView.Kind.PROJECT, "项目", true);
-        addUtility(utilities, SearchIconView.Kind.BOT, "AI 助手", false);
+        addUtility(utilities, SearchIconView.Kind.IMAGE, "照片库", false);
+        // 暂时隐藏，待功能接入后恢复。
+        // addUtility(utilities, SearchIconView.Kind.PROJECT, "项目", true);
+        // addUtility(utilities, SearchIconView.Kind.BOT, "AI 助手", false);
         body.addView(utilities, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout banner = horizontal();
         banner.setPadding(dp(15), dp(13), dp(12), dp(13));
         banner.setBackground(ripple(0xff1748e9, 30));
-        banner.setContentDescription("Groq AI，本机查询服务，管理 Key");
+        banner.setContentDescription("悬浮按钮设置，调整大小、样式和透明度");
         banner.addView(icon(SearchIconView.Kind.LIGHTNING, 0xffffffff),
                 new LayoutParams(dp(25), dp(25)));
         LinearLayout bannerText = new LinearLayout(context);
         bannerText.setOrientation(VERTICAL);
         bannerText.setPadding(dp(11), 0, dp(4), 0);
-        TextView backendName = text("Groq AI", 17, 0xffffffff);
+        TextView backendName = text("悬浮按钮", 17, 0xffffffff);
         backendName.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         backendName.setSingleLine();
         backendName.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -131,7 +132,7 @@ public final class SearchDrawerView extends LinearLayout {
         backendStatus.setPadding(0, dp(2), 0, 0);
         bannerText.addView(backendStatus);
         banner.addView(bannerText, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView manage = text("管理", 12, 0xffffffff);
+        TextView manage = text("调整", 12, 0xffffffff);
         manage.setGravity(Gravity.CENTER);
         GradientDrawable manageShape = shape(0x142fffff, 18);
         manageShape.setStroke(dp(1), 0x55ffffff);
@@ -197,8 +198,7 @@ public final class SearchDrawerView extends LinearLayout {
         history.getLayoutParams().height = ViewGroup.LayoutParams.WRAP_CONTENT;
         history.setAlpha(1);
         history.setVisibility(expanded ? VISIBLE : GONE);
-        backendStatus.setText(GroqKeyStore.hasKey(getContext())
-                ? "本机 Key 已配置" : "配置 Key 即可查询");
+        backendStatus.setText("大小 · 样式 · 透明度");
         List<String> queries = privateMode ? Collections.emptyList() : readHistory();
         if (queries.isEmpty()) {
             TextView empty = text(privateMode ? "私密模式不显示查询历史" : "暂无查询历史", 13, MUTED);
