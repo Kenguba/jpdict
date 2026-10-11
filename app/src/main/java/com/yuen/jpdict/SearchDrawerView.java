@@ -8,6 +8,12 @@ import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -15,19 +21,18 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.EditText;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 /** Drawer content. Its host owns the drawer's position, dimming, and swipe gesture. */
 public final class SearchDrawerView extends LinearLayout {
     public interface Callback {
         void onNewChat();
         void onHistorySelected(String query);
-        void onSearch();
+        void onEditingChanged();
+        void onBack();
+        void onFiles(String id);
         void onSettings();
         void onBubbleSettings();
         void onClose();
@@ -41,6 +46,15 @@ public final class SearchDrawerView extends LinearLayout {
     private final LinearLayout history;
     private final SearchIconView historyChevron;
     private final TextView backendStatus;
+    private final LinearLayout utilities;
+    private final LinearLayout banner;
+    private final LinearLayout historyHeading;
+    private final EditText searchInput;
+    private final View settingsButton;
+    private final View newChatButton;
+    private final SearchIconView clearSearch;
+    private final DrawerSearchController searchController;
+    private boolean searching;
     private boolean expanded = true;
     private boolean privateMode;
     private ValueAnimator collapseAnimator;
@@ -48,6 +62,7 @@ public final class SearchDrawerView extends LinearLayout {
     public SearchDrawerView(Context context, Callback callback) {
         super(context);
         this.callback = callback;
+        searchController = new DrawerSearchController(context, this::showResults);
         setOrientation(VERTICAL);
         setBackgroundColor(SURFACE);
         setPadding(dp(16), dp(6), dp(16), dp(12));
@@ -103,19 +118,20 @@ public final class SearchDrawerView extends LinearLayout {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         addView(scroll, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        LinearLayout utilities = new LinearLayout(context);
+        utilities = new LinearLayout(context);
         utilities.setOrientation(VERTICAL);
         utilities.setBackground(shape(0xffffffff, 22));
         utilities.setClipToOutline(true);
         addUtility(utilities, SearchIconView.Kind.TASK, "自动化任务", true);
         addUtility(utilities, SearchIconView.Kind.IMAGE, "照片库", false);
+        addUtility(utilities, SearchIconView.Kind.FILE, "本地文件", false);
         // 暂时隐藏，待功能接入后恢复。
         // addUtility(utilities, SearchIconView.Kind.PROJECT, "项目", true);
         // addUtility(utilities, SearchIconView.Kind.BOT, "AI 助手", false);
         body.addView(utilities, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        LinearLayout banner = horizontal();
+        banner = horizontal();
         banner.setPadding(dp(15), dp(13), dp(12), dp(13));
         banner.setBackground(ripple(0xff1748e9, 30));
         banner.setContentDescription("悬浮按钮设置，调整大小、样式和透明度");
@@ -147,7 +163,7 @@ public final class SearchDrawerView extends LinearLayout {
         bannerParams.topMargin = dp(16);
         body.addView(banner, bannerParams);
 
-        LinearLayout historyHeading = horizontal();
+        historyHeading = horizontal();
         historyHeading.setPadding(dp(1), dp(18), dp(4), dp(10));
         historyHeading.setMinimumHeight(dp(52));
         historyHeading.setBackground(ripple(SURFACE, 12));
@@ -173,14 +189,45 @@ public final class SearchDrawerView extends LinearLayout {
         search.setBackground(ripple(0xffffffff, 25));
         search.addView(icon(SearchIconView.Kind.SEARCH, MUTED),
                 new LayoutParams(dp(23), dp(23)));
-        TextView searchText = text("搜索", 15, MUTED);
-        searchText.setPadding(dp(10), 0, 0, 0);
-        search.addView(searchText);
-        search.setContentDescription("搜索");
-        search.setOnClickListener(v -> callback.onSearch());
+        searchInput = new DrawerEditor(context);
+        searchInput.setTextSize(15);
+        searchInput.setTextColor(INK);
+        searchInput.setHintTextColor(MUTED);
+        searchInput.setSingleLine(true);
+        searchInput.setHint("搜索");
+        searchInput.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        searchInput.setPadding(dp(10), 0, 0, 0);
+        searchInput.setFocusableInTouchMode(false);
+        searchInput.setFocusable(false);
+        searchInput.setContentDescription("搜索记录和文件");
+        searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        search.addView(searchInput, new LayoutParams(0, -1, 1));
+        searchInput.setOnTouchListener((v, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN && !searching) beginSearch();
+            return false;
+        });
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (searching) refreshHistory();
+            }
+            @Override public void afterTextChanged(Editable s) { }
+        });
+        search.setOnClickListener(v -> beginSearch());
+        clearSearch = icon(SearchIconView.Kind.CLOSE, MUTED);
+        clearSearch.setPadding(dp(10), dp(10), dp(10), dp(10));
+        clearSearch.setContentDescription("结束侧栏搜索");
+        clearSearch.setVisibility(GONE);
+        clearSearch.setOnClickListener(v -> {
+            InputMethodManager ime = (InputMethodManager)context.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (ime != null) ime.hideSoftInputFromWindow(getWindowToken(), 0);
+            endSearch();
+        });
+        search.addView(clearSearch, new LayoutParams(dp(40), dp(40)));
+        search.setContentDescription("搜索记录和文件");
         tools.addView(search, new LayoutParams(0, dp(44), 1));
-        addTool(tools, SearchIconView.Kind.SETTINGS, "设置", callback::onSettings);
-        addTool(tools, SearchIconView.Kind.NEW_CHAT, "新对话", callback::onNewChat);
+        settingsButton = addTool(tools, SearchIconView.Kind.SETTINGS, "设置", callback::onSettings);
+        newChatButton = addTool(tools, SearchIconView.Kind.NEW_CHAT, "新对话", callback::onNewChat);
         addView(tools, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         refreshHistory();
@@ -189,27 +236,74 @@ public final class SearchDrawerView extends LinearLayout {
     public void setPrivateMode(boolean privateMode) {
         if (this.privateMode == privateMode) return;
         this.privateMode = privateMode;
+        searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                | (privateMode && android.os.Build.VERSION.SDK_INT >= 26
+                        ? EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING : 0));
         refreshHistory();
     }
 
     public void refreshHistory() {
-        if (collapseAnimator != null) {
-            collapseAnimator.cancel();
-            collapseAnimator = null;
-        }
+        backendStatus.setText("大小 · 样式 · 透明度");
+        boolean filtered = hasSearchQuery();
+        utilities.setVisibility(filtered ? GONE : VISIBLE);
+        banner.setVisibility(filtered ? GONE : VISIBLE);
+        historyHeading.setVisibility(filtered ? GONE : VISIBLE);
+        searchController.search(filtered ? searchInput.getText().toString() : "", privateMode, filtered);
+    }
+
+    private void beginSearch() {
+        if (searching) return;
+        searching = true;
+        settingsButton.setVisibility(GONE);
+        newChatButton.setVisibility(GONE);
+        clearSearch.setVisibility(VISIBLE);
+        history.setVisibility(VISIBLE);
+        searchInput.setHint("搜索记录和文件");
+        searchInput.setFocusableInTouchMode(true);
+        callback.onEditingChanged();
+        searchInput.requestFocus();
+        searchInput.post(() -> {
+            if (!searching) return;
+            InputMethodManager ime = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (ime != null) ime.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT);
+        });
+        refreshHistory();
+    }
+
+    boolean isSearching() { return searching; }
+
+    private boolean hasSearchQuery() {
+        return searching && !searchInput.getText().toString().trim().isEmpty();
+    }
+
+    void endSearch() {
+        if (!searching) return;
+        searching = false;
+        searchInput.clearFocus();
+        searchInput.setText("");
+        searchInput.setHint("搜索");
+        searchInput.setFocusable(false);
+        utilities.setVisibility(VISIBLE);
+        banner.setVisibility(VISIBLE);
+        historyHeading.setVisibility(VISIBLE);
+        settingsButton.setVisibility(VISIBLE);
+        newChatButton.setVisibility(VISIBLE);
+        clearSearch.setVisibility(GONE);
+        refreshHistory();
+    }
+
+    private void showResults(List<String> queries,
+            List<DrawerSearchFileRepository.SearchResult> files) {
+        boolean filtered = hasSearchQuery();
+        if (collapseAnimator != null) { collapseAnimator.cancel(); collapseAnimator = null; }
         history.removeAllViews();
         history.getLayoutParams().height = ViewGroup.LayoutParams.WRAP_CONTENT;
-        history.setAlpha(1);
-        history.setVisibility(expanded ? VISIBLE : GONE);
-        backendStatus.setText("大小 · 样式 · 透明度");
-        List<String> queries = privateMode ? Collections.emptyList() : readHistory();
-        if (queries.isEmpty()) {
-            TextView empty = text(privateMode ? "私密模式不显示查询历史" : "暂无查询历史", 13, MUTED);
-            empty.setPadding(dp(2), dp(13), dp(2), dp(22));
-            history.addView(empty);
-            return;
-        }
-        for (String query : queries) {
+        history.setVisibility(filtered || expanded ? VISIBLE : GONE);
+        historyChevron.setRotation(expanded ? 180 : 0);
+        if (filtered && !queries.isEmpty()) addResultLabel("查询记录");
+        int count = filtered ? queries.size() : Math.min(12, queries.size());
+        for (int i = 0; i < count; i++) {
+            String query = queries.get(i);
             LinearLayout row = horizontal();
             row.setPadding(dp(2), dp(11), dp(4), dp(11));
             row.setMinimumHeight(dp(54));
@@ -217,40 +311,80 @@ public final class SearchDrawerView extends LinearLayout {
             TextView label = text(query, 16, INK);
             label.setMaxLines(2);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            row.addView(label, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            row.addView(label, new LayoutParams(0, -2, 1));
             SearchIconView clock = icon(SearchIconView.Kind.CLOCK, MUTED);
             LayoutParams iconParams = new LayoutParams(dp(17), dp(17));
             iconParams.leftMargin = dp(12);
             row.addView(clock, iconParams);
             row.setContentDescription("重新查询：" + query);
             row.setOnClickListener(v -> callback.onHistorySelected(query));
-            history.addView(row, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT));
+            history.addView(row, new LayoutParams(-1, -2));
+        }
+        if (filtered) {
+            if (!files.isEmpty()) addResultLabel("文件");
+            for (DrawerSearchFileRepository.SearchResult result : files) {
+                LinearLayout row = horizontal();
+                row.setPadding(dp(2), dp(10), dp(4), dp(10));
+                row.setBackground(ripple(SURFACE, 12));
+                row.addView(icon(SearchIconView.Kind.FILE, MUTED), new LayoutParams(dp(20), dp(20)));
+                LinearLayout labels = new LinearLayout(getContext());
+                labels.setOrientation(VERTICAL);
+                labels.setPadding(dp(10), 0, 0, 0);
+                TextView name = text(result.document.name, 15, INK);
+                name.setMaxLines(1);
+                name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                labels.addView(name);
+                TextView excerpt = text(result.preview, 12, MUTED);
+                excerpt.setMaxLines(2);
+                excerpt.setPadding(0, dp(4), 0, 0);
+                labels.addView(excerpt);
+                row.addView(labels, new LayoutParams(0, -2, 1));
+                row.setContentDescription("文本文件：" + result.document.name);
+                row.setOnClickListener(v -> callback.onFiles(result.document.id));
+                history.addView(row, new LayoutParams(-1, -2));
+            }
+        }
+        if (queries.isEmpty() && files.isEmpty()) {
+            TextView empty = text(filtered ? "没有匹配的记录或文件"
+                    : privateMode ? "私密模式不显示查询历史" : "暂无查询历史", 13, MUTED);
+            empty.setPadding(dp(2), dp(13), dp(2), dp(22));
+            history.addView(empty);
+        }
+        if (filtered) {
+            TextView add = text("添加或管理本地文件", 13, 0xff008fd1);
+            add.setPadding(dp(2), dp(16), dp(2), dp(16));
+            add.setOnClickListener(v -> callback.onFiles(null));
+            history.addView(add);
         }
     }
 
-    private List<String> readHistory() {
-        LinkedHashSet<String> queries = new LinkedHashSet<>();
-        String saved = getContext().getSharedPreferences("lookup_history", Context.MODE_PRIVATE)
-                .getString("items", "");
-        if (saved != null) {
-            for (String line : saved.split("\\n")) {
-                if (!line.trim().isEmpty()) queries.add(line.trim());
+    private void addResultLabel(String label) {
+        TextView heading = text(label, 13, MUTED);
+        heading.setPadding(dp(2), dp(12), 0, dp(6));
+        history.addView(heading);
+    }
+
+    void dispose() { searchController.dispose(); }
+
+    // Platform widgets match the rest of this native overlay without AppCompat theming.
+    @android.annotation.SuppressLint("AppCompatCustomView")
+    private final class DrawerEditor extends EditText {
+        DrawerEditor(Context context) { super(context); }
+        @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) callback.onBack();
+                return true;
             }
+            return super.onKeyPreIme(keyCode, event);
         }
-        // Older search clients used a StringSet. Read it without changing its storage format.
-        Set<String> legacy = getContext().getSharedPreferences("search_history", Context.MODE_PRIVATE)
-                .getStringSet("history", Collections.emptySet());
-        if (legacy != null) {
-            List<String> sorted = new ArrayList<>();
-            for (String query : legacy) {
-                if (query != null && !query.trim().isEmpty()) sorted.add(query.trim());
-            }
-            Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
-            queries.addAll(sorted);
+        @Override public void onWindowFocusChanged(boolean focused) {
+            super.onWindowFocusChanged(focused);
+            if (focused && isFocused()) post(() -> {
+                if (!searching || !hasWindowFocus()) return;
+                InputMethodManager ime = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (ime != null) ime.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+            });
         }
-        List<String> result = new ArrayList<>(queries);
-        return result.size() > 12 ? new ArrayList<>(result.subList(0, 12)) : result;
     }
 
     private void toggleHistory() {
@@ -312,10 +446,13 @@ public final class SearchDrawerView extends LinearLayout {
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         title.setPadding(dp(13), 0, dp(4), 0);
         row.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView status = text("未接入", 10, MUTED);
+        TextView status = text(kind == SearchIconView.Kind.FILE ? "管理" : "未接入", 10, MUTED);
         row.addView(status);
-        row.setContentDescription(label + "，尚未接入");
-        row.setOnClickListener(v -> callback.onUnavailable(label));
+        row.setContentDescription(kind == SearchIconView.Kind.FILE ? "本地文件" : label + "，尚未接入");
+        row.setOnClickListener(v -> {
+            if (kind == SearchIconView.Kind.FILE) callback.onFiles(null);
+            else callback.onUnavailable(label);
+        });
         group.addView(row, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(55)));
         if (divider) {
             View line = new View(getContext());
@@ -324,7 +461,7 @@ public final class SearchDrawerView extends LinearLayout {
         }
     }
 
-    private void addTool(LinearLayout tools, SearchIconView.Kind kind,
+    private View addTool(LinearLayout tools, SearchIconView.Kind kind,
             String description, Runnable action) {
         LinearLayout button = horizontal();
         button.setGravity(Gravity.CENTER);
@@ -335,6 +472,7 @@ public final class SearchDrawerView extends LinearLayout {
         LayoutParams params = new LayoutParams(dp(44), dp(44));
         params.leftMargin = dp(6);
         tools.addView(button, params);
+        return button;
     }
 
     private SearchIconView icon(SearchIconView.Kind kind, int color) {

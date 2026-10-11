@@ -13,7 +13,6 @@ import androidx.core.content.ContextCompat;
 final class FloatingSearchRoutes {
     static final String ACTION_OPEN_PAGE = "com.yuen.jpdict.OPEN_FLOATING_SEARCH_PAGE";
     static final String ACTION_HOST_OPEN_PAGE = "com.yuen.jpdict.HOST_OPEN_FLOATING_SEARCH_PAGE";
-    static final String ACTION_HOST_SHOW_LOOKUP = "com.yuen.jpdict.HOST_SHOW_LOOKUP_FROM_PAGE";
     static final String ACTION_CLEAR_PAGE_SESSION = "com.yuen.jpdict.CLEAR_FLOATING_SEARCH_PAGE_SESSION";
     static final String EXTRA_PAGE = "floating_search_page";
     static final String EXTRA_RETURN_QUERY = "floating_search_return_query";
@@ -24,7 +23,8 @@ final class FloatingSearchRoutes {
 
     static final String PAGE_SETTINGS = "settings";
     static final String PAGE_BUBBLE_SETTINGS = "bubble_settings";
-    static final String PAGE_DRAWER_SEARCH = "drawer_search";
+    static final String PAGE_FILES = "files";
+    static final String EXTRA_FILE_ID = "drawer_file_id";
 
     private FloatingSearchRoutes() {}
 
@@ -37,33 +37,25 @@ final class FloatingSearchRoutes {
     }
 
     static Intent pageIntent(Context context, String page, String query,
-            boolean restoreSearch, boolean returnToSettings) {
-        return pageIntent(context, page, query, restoreSearch, returnToSettings, false, false);
-    }
-
-    static Intent pageIntent(Context context, String page, String query,
-            boolean restoreSearch, boolean returnToSettings, boolean privateMode) {
-        return pageIntent(context, page, query, restoreSearch, returnToSettings, privateMode, false);
-    }
-
-    static Intent pageIntent(Context context, String page, String query,
             boolean restoreSearch, boolean returnToSettings, boolean privateMode,
             boolean hostedSearch) {
         Class<?> destination;
         if (PAGE_BUBBLE_SETTINGS.equals(page)) {
             destination = FloatingBubbleSettingsActivity.class;
-        } else if (PAGE_DRAWER_SEARCH.equals(page)) {
-            destination = SearchDrawerActivity.class;
+        } else if (PAGE_FILES.equals(page) || (page != null && page.startsWith(PAGE_FILES + "/"))) {
+            destination = DrawerFilesActivity.class;
         } else {
             destination = SearchSettingsActivity.class;
         }
         return new Intent(context, destination)
+                .putExtra(EXTRA_FILE_ID, page != null && page.startsWith(PAGE_FILES + "/")
+                        ? page.substring(PAGE_FILES.length() + 1) : "")
                 .putExtra(EXTRA_RETURN_QUERY, query == null ? "" : query)
                 .putExtra(EXTRA_RESTORE_SEARCH, restoreSearch)
                 .putExtra(EXTRA_RETURN_TO_SETTINGS, returnToSettings)
                 .putExtra(EXTRA_PRIVATE_MODE, privateMode)
                 .putExtra(EXTRA_HOSTED_SEARCH, hostedSearch)
-                .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                .addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION);
     }
 
     static void openFromActivity(Activity activity, String page, boolean returnToSettings) {
@@ -75,33 +67,7 @@ final class FloatingSearchRoutes {
                 current != null && current.getBooleanExtra(EXTRA_PRIVATE_MODE, false),
                 current != null && current.getBooleanExtra(EXTRA_HOSTED_SEARCH, false));
         activity.startActivity(next);
-        activity.overridePendingTransition(0, 0);
-    }
-
-    static void openLookupFromPage(Activity activity, String query) {
-        Intent source = activity.getIntent();
-        String restoreQuery = source == null ? "" : source.getStringExtra(EXTRA_RETURN_QUERY);
-        boolean privateMode = source != null
-                && source.getBooleanExtra(EXTRA_PRIVATE_MODE, false);
-        boolean hostedSearch = source != null
-                && source.getBooleanExtra(EXTRA_HOSTED_SEARCH, false);
-        if (hostedSearch) {
-            activity.sendBroadcast(new Intent(ACTION_HOST_SHOW_LOOKUP)
-                    .setPackage(activity.getPackageName()));
-        }
-        Intent lookup = new Intent(activity, FloatingService.class)
-                .setAction(FloatingService.ACTION_SHOW_LOOKUP_OVERLAY)
-                .putExtra(FloatingService.EXTRA_LOOKUP_QUERY, query)
-                .putExtra(FloatingService.EXTRA_LOOKUP_MODE, FloatingService.LOOKUP_MODE_FULLSCREEN)
-                .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, hostedSearch)
-                .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, true)
-                .putExtra(FloatingService.EXTRA_LOOKUP_PRIVATE, privateMode);
-        if (!privateMode) {
-            lookup.putExtra(FloatingService.EXTRA_SEARCH_QUERY, restoreQuery == null ? "" : restoreQuery);
-        }
-        startService(activity, lookup);
-        activity.finish();
-        activity.overridePendingTransition(0, 0);
+        activity.overridePendingTransition(R.anim.page_enter, R.anim.page_hold);
     }
 
     static void finishPage(Activity activity) {
@@ -117,7 +83,8 @@ final class FloatingSearchRoutes {
         if (!returnToSettings && restoreSearch) {
             Intent search = new Intent(activity, FloatingService.class)
                     .setAction(FloatingService.ACTION_SHOW_SEARCH)
-                    .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
+                    .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED,
+                            source.getBooleanExtra(EXTRA_HOSTED_SEARCH, false))
                     .putExtra(EXTRA_PRIVATE_MODE, privateMode);
             if (!privateMode) {
                 search.putExtra(FloatingService.EXTRA_SEARCH_QUERY, query == null ? "" : query);
@@ -125,7 +92,7 @@ final class FloatingSearchRoutes {
             startService(activity, search);
         }
         activity.finish();
-        activity.overridePendingTransition(0, 0);
+        activity.overridePendingTransition(R.anim.page_hold, R.anim.page_exit);
     }
 
     static void onPageBackground(Activity activity) {

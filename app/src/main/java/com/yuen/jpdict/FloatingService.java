@@ -39,6 +39,7 @@ public class FloatingService extends Service {
     public static final String ACTION_LOOKUP_DISMISS =
             "com.yuen.jpdict.LOOKUP_DISMISS";
     public static final String EXTRA_LOOKUP_HOSTED = "lookup_hosted";
+    public static final String EXTRA_HOST_SESSION = "lookup_host_session";
     public static final String EXTRA_LOOKUP_PRIVATE = "lookup_private";
     public static final String EXTRA_HOST_SEARCH = "host_search";
     public static final String ACTION_LOOKUP_HOST_FINISH =
@@ -69,6 +70,7 @@ public class FloatingService extends Service {
     private View searchPanel;
     private WindowManager.LayoutParams searchPanelLp;
     private boolean searchPanelHosted;
+    private String activeHostSession = "";
     private boolean searchPrivateMode;
     private boolean searchKeyboardRequested;
     private boolean lookupPrivateMode;
@@ -404,8 +406,10 @@ public class FloatingService extends Service {
         bubbleLp = new WindowManager.LayoutParams(
                 bubbleSize, bubbleSize, overlayType(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS |
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
+        configureBubbleWindow(bubbleLp);
         bubbleLp.gravity = Gravity.TOP | Gravity.START;
 
         SharedPreferences sp = getSharedPreferences("float_pos", MODE_PRIVATE);
@@ -745,8 +749,10 @@ public class FloatingService extends Service {
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 bubbleLp.width, bubbleLp.height, overlayType(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS |
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
+        configureBubbleWindow(lp);
         lp.gravity = Gravity.TOP | Gravity.START;
         lp.x = bubbleLp.x;
         lp.y = bubbleLp.y;
@@ -847,6 +853,15 @@ public class FloatingService extends Service {
         else bubbleLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         try { wm.updateViewLayout(bubble, bubbleLp); }
         catch (Exception ignored) {}
+    }
+
+    private void configureBubbleWindow(WindowManager.LayoutParams params) {
+        // The bubble uses display coordinates, independent of the IME viewport.
+        params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING;
+        if (Build.VERSION.SDK_INT >= 30) {
+            params.setFitInsetsTypes(0);
+            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        }
     }
 
     private void applyBubbleAppearance() {
@@ -1120,12 +1135,14 @@ public class FloatingService extends Service {
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackground(outline(0x16000000, 1, Color.WHITE, 16));
+        // Full-width child rows share the same outer edge as the rounded fill.
+        // A stroked background insets its outline and leaves alternating seams.
+        panel.setBackground(bg(Color.WHITE, 16));
         panel.setClipToOutline(true);
         panel.setClipChildren(true);
         panel.setElevation(dp(12));
 
-        // Reference proportions: 48dp title, 46dp pronunciation and toolbar
+        // Reference proportions: 48dp title, 46dp pronunciation
         // rows, 40dp dictionary headers, and a plain 30dp copyright footer.
         FrameLayout headerHost = new FrameLayout(this);
 
@@ -1477,7 +1494,7 @@ public class FloatingService extends Service {
             return;
         }
 
-        speakLookup(q);
+        if (LookupSpeechSettings.autoplay(this)) speakLookup(q);
         loadLookupAi(q, root, progress, aiBody);
     }
 
@@ -1750,9 +1767,11 @@ public class FloatingService extends Service {
     }
 
     private void notifyLookupHostFinish() {
+        if (activeHostSession.isEmpty()) return;
         try {
             Intent done = new Intent(ACTION_LOOKUP_HOST_FINISH)
-                    .setPackage(getPackageName());
+                    .setPackage(getPackageName())
+                    .putExtra(EXTRA_HOST_SESSION, activeHostSession);
             sendBroadcast(done);
         } catch (Throwable ignored) {}
     }
@@ -1771,7 +1790,8 @@ public class FloatingService extends Service {
         lookupOverlayHosted = false;
         lookupOverlayReturnToSearch = false;
         if (keepHost) {
-            sendBroadcast(new Intent(ACTION_LOOKUP_HOST_SEARCH).setPackage(getPackageName()));
+            sendBroadcast(new Intent(ACTION_LOOKUP_HOST_SEARCH).setPackage(getPackageName())
+                    .putExtra(EXTRA_HOST_SESSION, activeHostSession));
         } else {
             notifyLookupHostFinish();
             if (restoreSearch) main.postDelayed(this::openSearchHost, 80);
@@ -1779,6 +1799,11 @@ public class FloatingService extends Service {
     }
 
     private void removeLookupOverlay(boolean clearRestoreState) {
+        pendingPronunciation = null;
+        if (textToSpeech != null) {
+            try { textToSpeech.stop(); }
+            catch (RuntimeException ignored) {}
+        }
         if (lookupWindow != null) lookupWindow.save();
         if (lookupEditor != null) exitLookupEditMode();
         if (lookupKeyEditing && lookupOverlay != null) {
@@ -1957,6 +1982,16 @@ public class FloatingService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && intent.hasExtra(EXTRA_HOST_SESSION)) {
+            String session = intent.getStringExtra(EXTRA_HOST_SESSION);
+            boolean closing = ACTION_LOOKUP_DISMISS.equals(intent.getAction())
+                    || ACTION_LOOKUP_BACK.equals(intent.getAction());
+            if (closing && !activeHostSession.equals(session)) return START_STICKY;
+            if ((ACTION_SHOW_SEARCH.equals(intent.getAction())
+                    || ACTION_SHOW_LOOKUP_OVERLAY.equals(intent.getAction()))
+                    && intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)
+                    && session != null) activeHostSession = session;
+        }
         if (bubble == null && Settings.canDrawOverlays(this)) showBubble();
 
         if (intent != null && FloatingSearchRoutes.ACTION_OPEN_PAGE.equals(intent.getAction())) {
@@ -1969,6 +2004,7 @@ public class FloatingService extends Service {
                 removeSearchPanel(false);
                 Intent open = new Intent(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE)
                         .setPackage(getPackageName())
+                        .putExtra(EXTRA_HOST_SESSION, activeHostSession)
                         .putExtra(FloatingSearchRoutes.EXTRA_PAGE, page)
                         .putExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY, query)
                         .putExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, true)
@@ -1985,6 +2021,11 @@ public class FloatingService extends Service {
         }
 
         if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())) {
+            // Search replaces the result surface, including its mask hit target
+            // and Back callback. Never leave both modal overlays mounted.
+            removeLookupOverlay(true);
+            lookupOverlayHosted = false;
+            lookupPrivateMode = false;
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
             if (restoredQuery != null && searchPanel == null) currentSearchQuery = restoredQuery;
             if (intent.hasExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE)) {

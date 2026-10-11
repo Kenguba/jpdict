@@ -24,9 +24,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
-/** App-private text-file index used by the drawer's local search page. */
+/** Local query history and app-private UTF-8 file index for drawer search. */
 final class DrawerSearchFileRepository {
     private static final String PREFS = "drawer_search_files";
     private static final String INDEX = "index";
@@ -66,7 +68,8 @@ final class DrawerSearchFileRepository {
         List<Document> result = new ArrayList<>();
         try {
             JSONArray index = new JSONArray(raw);
-            for (int i = 0; i < index.length(); i++) {
+            for (int i = 0; i < index.length() && result.size() < MAX_FILES; i++) {
+                if (Thread.currentThread().isInterrupted()) break;
                 JSONObject item = index.optJSONObject(i);
                 if (item == null) continue;
                 String id = item.optString("id", "");
@@ -80,7 +83,33 @@ final class DrawerSearchFileRepository {
         return result;
     }
 
-    static String importDocument(Context context, Uri uri) throws IOException {
+    static List<String> history(Context context, String query, boolean privateMode) {
+        if (privateMode) return Collections.emptyList();
+        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        LinkedHashSet<String> entries = new LinkedHashSet<>();
+        String saved = context.getSharedPreferences("lookup_history", Context.MODE_PRIVATE)
+                .getString("items", "");
+        if (saved != null) {
+            for (String item : saved.split("\\n")) {
+                String value = item.trim();
+                if (!value.isEmpty() && value.toLowerCase(Locale.ROOT).contains(needle)) entries.add(value);
+            }
+        }
+        Set<String> legacy = context.getSharedPreferences("search_history", Context.MODE_PRIVATE)
+                .getStringSet("history", Collections.emptySet());
+        if (legacy != null) {
+            List<String> sorted = new ArrayList<>();
+            for (String item : legacy) {
+                if (item != null && !item.trim().isEmpty()
+                        && item.toLowerCase(Locale.ROOT).contains(needle)) sorted.add(item.trim());
+            }
+            Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
+            entries.addAll(sorted);
+        }
+        return new ArrayList<>(entries);
+    }
+
+    static synchronized String importDocument(Context context, Uri uri) throws IOException {
         if (uri == null) throw new IOException("没有选择文件");
         List<Document> current = load(context);
         if (current.size() >= MAX_FILES) throw new IOException("最多保存 " + MAX_FILES + " 个文件");
@@ -167,6 +196,19 @@ final class DrawerSearchFileRepository {
             matches.add(new SearchResult(document, preview));
         }
         return matches;
+    }
+
+    static synchronized boolean delete(Context context, String id) {
+        if (id == null || !id.matches("[a-f0-9-]{36}")) return false;
+        JSONArray original = readIndex(context), remaining = new JSONArray();
+        for (int i = 0; i < original.length(); i++) {
+            JSONObject item = original.optJSONObject(i);
+            if (item != null && !id.equals(item.optString("id"))) remaining.put(item);
+        }
+        boolean saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(INDEX, remaining.toString()).commit();
+        if (saved) new File(directory(context), id + ".txt").delete();
+        return saved;
     }
 
     private static JSONArray readIndex(Context context) {

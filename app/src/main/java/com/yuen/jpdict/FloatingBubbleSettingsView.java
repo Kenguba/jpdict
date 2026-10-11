@@ -53,10 +53,10 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         shape = config.shape;
         lastValidColor = config.color;
         setOrientation(VERTICAL);
-        setPadding(dp(22), dp(12), dp(22), dp(20));
-        setBackground(background(SOFT, 24));
-        TextView note = text("调整大小、样式和透明度", 13, MUTED, false);
-        note.setPadding(0, 0, 0, dp(10));
+        setPadding(dp(16), dp(4), dp(16), dp(16));
+        setBackgroundColor(0xfff2f2f2);
+        TextView note = text("预览", 12, MUTED, false);
+        note.setPadding(dp(4), 0, 0, dp(8));
         addView(note);
 
         FrameLayout previewArea = new FrameLayout(context);
@@ -64,18 +64,26 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         preview = new FrameLayout(context);
         previewArea.addView(preview, new FrameLayout.LayoutParams(config.sizePx(context),
                 config.sizePx(context), Gravity.CENTER));
-        addView(previewArea, new LayoutParams(-1, dp(132)));
+        addView(previewArea, new LayoutParams(-1, dp(88)));
 
-        sizeValue = addSettingLabel("大小");
-        size = slider(FloatingBubbleAppearance.MAX_SIZE_DP - FloatingBubbleAppearance.MIN_SIZE_DP,
+        LinearLayout adjustments = new LinearLayout(context);
+        adjustments.setOrientation(VERTICAL);
+        adjustments.setPadding(dp(14), dp(2), dp(14), dp(4));
+        adjustments.setBackground(background(0xffffffff, 18));
+        LayoutParams adjustmentParams = new LayoutParams(-1, -2);
+        adjustmentParams.topMargin = dp(8);
+        addView(adjustments, adjustmentParams);
+        sizeValue = addSettingLabel(adjustments, "大小");
+        size = slider(adjustments, FloatingBubbleAppearance.MAX_SIZE_DP - FloatingBubbleAppearance.MIN_SIZE_DP,
                 config.sizeDp - FloatingBubbleAppearance.MIN_SIZE_DP);
-        opacityValue = addSettingLabel("透明度");
-        opacity = slider(100 - FloatingBubbleAppearance.MIN_OPACITY,
+        opacityValue = addSettingLabel(adjustments, "透明度");
+        opacity = slider(adjustments, 100 - FloatingBubbleAppearance.MIN_OPACITY,
                 config.opacityPercent - FloatingBubbleAppearance.MIN_OPACITY);
 
         addSectionLabel("图标样式");
         LinearLayout styles = row();
-        String[] labels = {"当前样式", "简洁搜索", "自定义", "图片"};
+        decorateChoices(styles);
+        String[] labels = {"默认", "搜索", "文字", "图片"};
         for (int i = 0; i < labels.length; i++) {
             final int selected = i;
             TextView button = choice(labels[i]);
@@ -96,6 +104,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
 
         customFields = new LinearLayout(context);
         customFields.setOrientation(VERTICAL);
+        customFields.setPadding(dp(12), 0, dp(12), dp(12));
+        customFields.setBackground(background(0xffffffff, 18));
         customText = editor("图标文字（最多 4 个字符）", config.text, 8);
         customText.setFilters(new InputFilter[]{(source, start, end, destination, replaceStart, replaceEnd) -> {
             String remaining = destination.subSequence(0, replaceStart).toString()
@@ -140,6 +150,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
 
         addSectionLabel("按钮形状");
         LinearLayout shapes = row();
+        decorateChoices(shapes);
         String[] shapeLabels = {"圆形", "圆角方形"};
         for (int i = 0; i < shapeLabels.length; i++) {
             final int selected = i;
@@ -150,8 +161,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         addView(shapes);
 
         LinearLayout actions = row();
-        LayoutParams actionsLayout = new LayoutParams(-1, dp(48));
-        actionsLayout.topMargin = dp(20);
+        LayoutParams actionsLayout = new LayoutParams(-1, dp(44));
+        actionsLayout.topMargin = dp(16);
         TextView reset = choice("恢复默认");
         reset.setOnClickListener(v -> resetDefaults());
         addChoice(actions, reset, 0);
@@ -297,31 +308,31 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         return field;
     }
 
-    private TextView addSettingLabel(String label) {
+    private TextView addSettingLabel(LinearLayout parent, String label) {
         LinearLayout line = row();
         LayoutParams lineLayout = new LayoutParams(-1, -2);
-        lineLayout.topMargin = dp(16);
+        lineLayout.topMargin = dp(12);
         line.addView(text(label, 14, INK, true), new LayoutParams(0, -2, 1));
         TextView value = text("", 13, MUTED, false);
         line.addView(value);
-        addView(line, lineLayout);
+        parent.addView(line, lineLayout);
         return value;
     }
 
-    private SeekBar slider(int max, int progress) {
+    private SeekBar slider(LinearLayout parent, int max, int progress) {
         SeekBar slider = new SeekBar(getContext());
         slider.setMax(max);
         slider.setProgress(progress);
         slider.setProgressTintList(ColorStateList.valueOf(BLUE));
         slider.setThumbTintList(ColorStateList.valueOf(BLUE));
         slider.setPadding(dp(4), 0, dp(4), 0);
-        addView(slider, new LayoutParams(-1, dp(40)));
+        parent.addView(slider, new LayoutParams(-1, dp(36)));
         return slider;
     }
 
     private void addSectionLabel(String label) {
-        TextView section = text(label, 14, INK, true);
-        section.setPadding(0, dp(16), 0, dp(10));
+        TextView section = text(label, 12, MUTED, false);
+        section.setPadding(dp(4), dp(14), 0, dp(8));
         addView(section);
     }
 
@@ -330,6 +341,11 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         line.setOrientation(HORIZONTAL);
         line.setGravity(Gravity.CENTER_VERTICAL);
         return line;
+    }
+
+    private void decorateChoices(LinearLayout row) {
+        row.setPadding(dp(6), dp(6), dp(6), dp(6));
+        row.setBackground(background(0xffffffff, 18));
     }
 
     private TextView choice(String label) {
