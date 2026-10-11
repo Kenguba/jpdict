@@ -33,6 +33,7 @@ import java.util.concurrent.Executors;
 public class QuickLookupActivity extends Activity {
     private static final ExecutorService AI_EXECUTOR = Executors.newSingleThreadExecutor();
     private static final Map<String, String> AI_CACHE = new ConcurrentHashMap<>();
+    private static long aiCacheKeyRevision = -1L;
     private static final String POPUP_WINDOW_PREFS = "quick_lookup_popup_window";
     private static final String POPUP_WIDTH = "width";
     private static final String POPUP_HEIGHT = "height";
@@ -45,6 +46,9 @@ public class QuickLookupActivity extends Activity {
     private String query;
     private boolean closing;
     private boolean popupMode;
+    private long observedKeyRevision = -1L;
+    private int aiRequestGeneration;
+    private final Runnable groqKeyChanged = this::refreshKeyState;
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
@@ -205,27 +209,7 @@ public class QuickLookupActivity extends Activity {
         keyLp.topMargin = dp(12);
         aiCard.addView(aiKeyButton, keyLp);
 
-        aiKeyButton.setOnClickListener(v ->
-                GroqKeyStore.showEditor(this, () -> {
-                    aiKeyButton.setText(GroqKeyStore.hasKey(this)
-                            ? "更换 Groq Key"
-                            : "配置 Groq Key");
-                    AI_CACHE.clear();
-
-                    if (query == null || query.trim().isEmpty()) {
-                        aiProgress.setVisibility(View.GONE);
-                        aiBody.setText("没有查询内容。");
-                        return;
-                    }
-
-                    if (GroqKeyStore.hasKey(this)) {
-                        aiProgress.setVisibility(View.VISIBLE);
-                        aiBody.setText("正在查询 AI…");
-                        loadAi(query);
-                    } else {
-                        showAi("Groq AI 尚未配置。\n\n点击下面的“配置 Groq Key”，Key 会加密保存在本机。");
-                    }
-                }));
+        aiKeyButton.setOnClickListener(v -> openKeySettings());
 
         content.addView(aiCard, cardLp);
 
@@ -257,9 +241,42 @@ public class QuickLookupActivity extends Activity {
             setContentView(panel);
         }
 
+        observedKeyRevision = GroqKeyStore.revision(this);
         if (query.isEmpty()) {
             aiProgress.setVisibility(View.GONE);
             aiBody.setText("没有查询内容。");
+        } else {
+            loadAi(query);
+        }
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        if (aiBody != null) {
+            GroqKeyStore.addChangeListener(groqKeyChanged);
+            refreshKeyState();
+        }
+    }
+
+    @Override protected void onStop() {
+        GroqKeyStore.removeChangeListener(groqKeyChanged);
+        super.onStop();
+    }
+
+    private void openKeySettings() {
+        GroqKeyStore.showEditor(this, this::refreshKeyState);
+    }
+
+    private void refreshKeyState() {
+        if (aiBody == null || closing || isFinishing()) return;
+        aiKeyButton.setText(GroqKeyStore.hasKey(this) ? "更换 Groq Key" : "配置 Groq Key");
+        long revision = GroqKeyStore.revision(this);
+        if (observedKeyRevision == revision) return;
+        observedKeyRevision = revision;
+        AI_CACHE.clear();
+        if (query == null || query.trim().isEmpty()) {
+            aiRequestGeneration++;
+            showAi("没有查询内容。");
         } else {
             loadAi(query);
         }
@@ -523,41 +540,65 @@ public class QuickLookupActivity extends Activity {
     }
 
     private void loadAi(String q) {
+        final int requestGeneration = ++aiRequestGeneration;
+        final long keyRevision = GroqKeyStore.revision(this);
+        if (aiCacheKeyRevision != keyRevision) {
+            AI_CACHE.clear();
+            aiCacheKeyRevision = keyRevision;
+        }
+        String apiKey = GroqKeyStore.load(this);
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            showKeyPrompt(false);
+            return;
+        }
+
         String cached = AI_CACHE.get(q);
         if (cached != null) {
             showAi(cached);
             return;
         }
 
-        String apiKey = GroqKeyStore.load(this);
-        if (apiKey == null || apiKey.trim().isEmpty()) {
-            showAi("Groq AI 尚未配置。\n\n点击下面的“配置 Groq Key”，Key 会使用 Android Keystore 加密后保存在本机。");
-            return;
-        }
-
+        aiProgress.setVisibility(View.VISIBLE);
+        GroqKeySettings.setContent(aiBody, "正在查询 AI…");
         final String requestKey = apiKey.trim();
         AI_EXECUTOR.execute(() -> {
             try {
                 String answer = callGroq(q, requestKey);
-                AI_CACHE.put(q, answer);
-                runOnUiThread(() -> showAi(answer));
+                runOnUiThread(() -> {
+                    if (!currentRequest(requestGeneration, keyRevision)) return;
+                    AI_CACHE.put(q, answer);
+                    showAi(answer);
+                });
             } catch (Exception e) {
                 String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 runOnUiThread(() -> {
+                    if (!currentRequest(requestGeneration, keyRevision)) return;
                     if (msg.contains("HTTP 401") || msg.contains("HTTP 403")) {
-                        showAi("Groq Key 无效或没有权限。\n\n请点击“更换 Groq Key”重新输入。");
+                        showKeyPrompt(true);
                     } else {
-                        showAi("AI 查询失败：\n" + msg);
+                        showAi("AI 查询失败，请检查网络后重试。");
                     }
                 });
             }
         });
     }
 
+    private boolean currentRequest(int generation, long keyRevision) {
+        return !closing && !isFinishing() && !isDestroyed()
+                && aiRequestGeneration == generation
+                && GroqKeyStore.revision(this) == keyRevision;
+    }
+
+    private void showKeyPrompt(boolean invalid) {
+        if (closing || isFinishing() || isDestroyed()) return;
+        aiProgress.setVisibility(View.GONE);
+        GroqKeySettings.bindConfigurationPrompt(aiBody, invalid, this::openKeySettings);
+    }
+
     private void showAi(String value) {
         if (isFinishing() || isDestroyed()) return;
         aiProgress.setVisibility(View.GONE);
-        aiBody.setText(value);
+        GroqKeySettings.setContent(aiBody, value);
     }
 
     private String callGroq(String q, String apiKey) throws Exception {
