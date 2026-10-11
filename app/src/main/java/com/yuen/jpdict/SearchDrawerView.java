@@ -203,7 +203,7 @@ public final class SearchDrawerView extends LinearLayout {
         searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         search.addView(searchInput, new LayoutParams(0, -1, 1));
         searchInput.setOnTouchListener((v, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN && !searching) beginSearch();
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) beginSearch();
             return false;
         });
         searchInput.addTextChangedListener(new TextWatcher() {
@@ -252,13 +252,18 @@ public final class SearchDrawerView extends LinearLayout {
     }
 
     private void beginSearch() {
-        if (searching) return;
-        searching = true;
-        settingsButton.setVisibility(GONE);
-        newChatButton.setVisibility(GONE);
-        clearSearch.setVisibility(VISIBLE);
-        history.setVisibility(VISIBLE);
-        searchInput.setHint("搜索记录和文件");
+        if (!searching) {
+            searching = true;
+            settingsButton.setVisibility(GONE);
+            newChatButton.setVisibility(GONE);
+            clearSearch.setVisibility(VISIBLE);
+            history.setVisibility(VISIBLE);
+            searchInput.setHint("搜索记录和文件");
+            refreshHistory();
+        }
+        // Hiding IME releases the overlay's window focus while retaining the filter.
+        // Every new tap must reacquire it, including an already active search.
+        searchInput.setFocusable(true);
         searchInput.setFocusableInTouchMode(true);
         callback.onEditingChanged();
         searchInput.requestFocus();
@@ -267,7 +272,6 @@ public final class SearchDrawerView extends LinearLayout {
             InputMethodManager ime = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
             if (ime != null) ime.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT);
         });
-        refreshHistory();
     }
 
     boolean isSearching() { return searching; }

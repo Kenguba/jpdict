@@ -1,7 +1,6 @@
 package com.yuen.jpdict;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
@@ -31,16 +30,19 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private final FrameLayout preview;
     private final TextView sizeValue;
     private final TextView opacityValue;
+    private final TextView shapeValue;
     private final SeekBar size;
     private final SeekBar opacity;
+    private final SeekBar roundness;
     private final TextView[] styleButtons = new TextView[4];
-    private final TextView[] shapeButtons = new TextView[2];
     private final LinearLayout customFields;
+    private final LinearLayout colorFields;
     private final LinearLayout imageFields;
     private final EditText customText;
     private final EditText customColor;
+    private final View colorPreview;
+    private final BubbleColorPickerView colorPicker;
     private int style;
-    private int shape;
     private int lastValidColor;
 
     public FloatingBubbleSettingsView(Context context, Runnable onChanged,
@@ -50,7 +52,6 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         this.onEditing = onEditing;
         FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.load(context);
         style = config.style;
-        shape = config.shape;
         lastValidColor = config.color;
         setOrientation(VERTICAL);
         setPadding(dp(16), dp(4), dp(16), dp(16));
@@ -68,7 +69,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
 
         LinearLayout adjustments = new LinearLayout(context);
         adjustments.setOrientation(VERTICAL);
-        adjustments.setPadding(dp(14), dp(2), dp(14), dp(4));
+        adjustments.setPadding(dp(14), dp(2), dp(14), dp(10));
         adjustments.setBackground(background(0xffffffff, 18));
         LayoutParams adjustmentParams = new LayoutParams(-1, -2);
         adjustmentParams.topMargin = dp(8);
@@ -79,6 +80,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         opacityValue = addSettingLabel(adjustments, "透明度");
         opacity = slider(adjustments, 100 - FloatingBubbleAppearance.MIN_OPACITY,
                 config.opacityPercent - FloatingBubbleAppearance.MIN_OPACITY);
+        shapeValue = addSettingLabel(adjustments, "按钮形状");
+        roundness = slider(adjustments, 100, 100 - config.roundnessPercent);
 
         addSectionLabel("图标样式");
         LinearLayout styles = row();
@@ -104,8 +107,9 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
 
         customFields = new LinearLayout(context);
         customFields.setOrientation(VERTICAL);
-        customFields.setPadding(dp(12), 0, dp(12), dp(12));
+        customFields.setPadding(dp(12), dp(12), dp(12), dp(12));
         customFields.setBackground(background(0xffffffff, 18));
+        customFields.addView(text("图标文字", 12, MUTED, false));
         customText = editor("图标文字（最多 4 个字符）", config.text, 8);
         customText.setFilters(new InputFilter[]{(source, start, end, destination, replaceStart, replaceEnd) -> {
             String remaining = destination.subSequence(0, replaceStart).toString()
@@ -116,25 +120,50 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
             return available <= 0 ? "" : inserted.substring(0, inserted.offsetByCodePoints(0, available));
         }});
         customFields.addView(customText, fieldLayout());
+        LayoutParams fieldsLayout = new LayoutParams(-1, -2);
+        fieldsLayout.topMargin = dp(8);
+        addView(customFields, fieldsLayout);
+
+        colorFields = new LinearLayout(context);
+        colorFields.setOrientation(VERTICAL);
+        colorFields.setPadding(dp(12), dp(12), dp(12), dp(12));
+        colorFields.setBackground(background(0xffffffff, 18));
+        colorFields.addView(text("按钮颜色", 12, MUTED, false));
+        LinearLayout colorRow = row();
+        colorPreview = new View(context);
+        colorRow.addView(colorPreview, new LayoutParams(dp(40), dp(40)));
         customColor = editor("颜色，例如 #168AF2", formatColor(config.color), 7);
         customColor.setInputType(android.text.InputType.TYPE_CLASS_TEXT
                 | android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
                 | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        customFields.addView(customColor, fieldLayout());
+        LayoutParams hexLayout = new LayoutParams(0, -1, 1);
+        hexLayout.leftMargin = dp(10);
+        colorRow.addView(customColor, hexLayout);
+        colorFields.addView(colorRow, fieldLayout());
+        colorPicker = new BubbleColorPickerView(context);
+        LayoutParams pickerLayout = new LayoutParams(-1, -2);
+        pickerLayout.topMargin = dp(8);
+        colorFields.addView(colorPicker, pickerLayout);
+        colorPicker.setColor(config.color);
+        colorPicker.setListener(color -> customColor.setText(formatColor(color)));
         LinearLayout colors = row();
+        colors.setPadding(0, dp(8), 0, 0);
         int[] palette = {0xff168af2, 0xff171819, 0xff745be8, 0xffd75b97,
                 0xffdf704b, 0xff429580};
-        for (int color : palette) {
+        for (int i = 0; i < palette.length; i++) {
+            final int color = palette[i];
             TextView swatch = choice("");
             swatch.setBackground(background(color, 14));
             swatch.setContentDescription("颜色 " + formatColor(color));
-            LayoutParams colorLayout = new LayoutParams(0, dp(36), 1);
-            colorLayout.setMargins(0, dp(10), dp(7), 0);
+            LayoutParams colorLayout = new LayoutParams(0, dp(44), 1);
+            if (i > 0) colorLayout.leftMargin = dp(7);
             colors.addView(swatch, colorLayout);
             swatch.setOnClickListener(v -> customColor.setText(formatColor(color)));
         }
-        customFields.addView(colors);
-        addView(customFields);
+        colorFields.addView(colors, new LayoutParams(-1, -2));
+        LayoutParams colorFieldsLayout = new LayoutParams(-1, -2);
+        colorFieldsLayout.topMargin = dp(8);
+        addView(colorFields, colorFieldsLayout);
 
         imageFields = new LinearLayout(context);
         imageFields.setOrientation(VERTICAL);
@@ -147,18 +176,6 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         choose.setOnClickListener(v -> chooseImage());
         imageFields.addView(choose, new LayoutParams(-1, dp(44)));
         addView(imageFields);
-
-        addSectionLabel("按钮形状");
-        LinearLayout shapes = row();
-        decorateChoices(shapes);
-        String[] shapeLabels = {"圆形", "圆角方形"};
-        for (int i = 0; i < shapeLabels.length; i++) {
-            final int selected = i;
-            shapeButtons[i] = choice(shapeLabels[i]);
-            addChoice(shapes, shapeButtons[i], i);
-            shapeButtons[i].setOnClickListener(v -> { shape = selected; refreshPreview(); });
-        }
-        addView(shapes);
 
         LinearLayout actions = row();
         LayoutParams actionsLayout = new LayoutParams(-1, dp(44));
@@ -186,6 +203,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         };
         size.setOnSeekBarChangeListener(listener);
         opacity.setOnSeekBarChangeListener(listener);
+        roundness.setOnSeekBarChangeListener(listener);
         TextWatcher watcher = new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
@@ -204,21 +222,29 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         return new FloatingBubbleAppearance.Config(
                 size.getProgress() + FloatingBubbleAppearance.MIN_SIZE_DP,
                 opacity.getProgress() + FloatingBubbleAppearance.MIN_OPACITY,
-                style, shape, customText.getText().toString(), lastValidColor);
+                style, 100 - roundness.getProgress(), customText.getText().toString(), lastValidColor);
     }
 
     private void refreshPreview() {
         FloatingBubbleAppearance.Config config = draft();
         sizeValue.setText(config.sizeDp + " dp");
         opacityValue.setText(config.opacityPercent + "%");
+        shapeValue.setText(config.roundnessPercent == 100 ? "圆形"
+                : config.roundnessPercent == 0 ? "方形" : "圆角 " + config.roundnessPercent + "%");
         preview.setLayoutParams(new FrameLayout.LayoutParams(config.sizePx(getContext()),
                 config.sizePx(getContext()), Gravity.CENTER));
         FloatingBubbleAppearance.applyVisual(preview, config);
         preview.setAlpha(config.alpha());
         customFields.setVisibility(style == FloatingBubbleAppearance.STYLE_CUSTOM ? VISIBLE : GONE);
+        colorFields.setVisibility(style == FloatingBubbleAppearance.STYLE_IMAGE ? GONE : VISIBLE);
         imageFields.setVisibility(style == FloatingBubbleAppearance.STYLE_IMAGE ? VISIBLE : GONE);
+        GradientDrawable swatch = background(config.color, 12);
+        swatch.setStroke(dp(1), 0xffdedfe1);
+        colorPreview.setBackground(swatch);
+        colorPreview.setContentDescription("当前颜色 " + formatColor(config.color));
+        colorPicker.setColor(config.color);
+        if (parseColor(customColor.getText().toString()) != null) customColor.setError(null);
         for (int i = 0; i < styleButtons.length; i++) setSelected(styleButtons[i], i == style);
-        for (int i = 0; i < shapeButtons.length; i++) setSelected(shapeButtons[i], i == shape);
     }
 
     private boolean saveDraft() {
@@ -227,10 +253,11 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
                 customText.setError("请输入图标文字");
                 return false;
             }
-            if (parseColor(customColor.getText().toString()) == null) {
-                customColor.setError("使用 # 加 6 位颜色，例如 #168AF2");
-                return false;
-            }
+        }
+        if (style != FloatingBubbleAppearance.STYLE_IMAGE
+                && parseColor(customColor.getText().toString()) == null) {
+            customColor.setError("使用 # 加 6 位颜色，例如 #168AF2");
+            return false;
         }
         if (!FloatingBubbleAppearance.save(getContext(), draft())) {
             Toast.makeText(getContext(), "设置保存失败，请重试", Toast.LENGTH_SHORT).show();
@@ -243,10 +270,10 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     public void reloadSavedSettings() {
         FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.load(getContext());
         style = config.style;
-        shape = config.shape;
         lastValidColor = config.color;
         size.setProgress(config.sizeDp - FloatingBubbleAppearance.MIN_SIZE_DP);
         opacity.setProgress(config.opacityPercent - FloatingBubbleAppearance.MIN_OPACITY);
+        roundness.setProgress(100 - config.roundnessPercent);
         customText.setText(config.text);
         customColor.setText(formatColor(config.color));
         refreshPreview();
@@ -261,9 +288,9 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private void resetDefaults() {
         FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.defaults();
         style = config.style;
-        shape = config.shape;
         size.setProgress(config.sizeDp - FloatingBubbleAppearance.MIN_SIZE_DP);
         opacity.setProgress(config.opacityPercent - FloatingBubbleAppearance.MIN_OPACITY);
+        roundness.setProgress(100 - config.roundnessPercent);
         customText.setText(config.text);
         customColor.setText(formatColor(config.color));
         refreshPreview();
@@ -292,7 +319,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         field.setText(value);
         field.setFilters(new InputFilter[]{new InputFilter.LengthFilter(maxLength)});
         field.setPadding(dp(12), 0, dp(12), 0);
-        field.setBackground(background(0xffffffff, 14));
+        field.setBackground(background(SOFT, 14));
         field.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE
                 | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
                 | android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN);
@@ -323,10 +350,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         SeekBar slider = new SeekBar(getContext());
         slider.setMax(max);
         slider.setProgress(progress);
-        slider.setProgressTintList(ColorStateList.valueOf(BLUE));
-        slider.setThumbTintList(ColorStateList.valueOf(BLUE));
-        slider.setPadding(dp(4), 0, dp(4), 0);
-        parent.addView(slider, new LayoutParams(-1, dp(36)));
+        BubbleSliderStyle.apply(slider);
+        parent.addView(slider, new LayoutParams(-1, dp(40)));
         return slider;
     }
 

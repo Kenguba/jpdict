@@ -29,7 +29,7 @@ public final class FloatingBubbleAppearance {
     public static final int SHAPE_ROUNDED = 1;
     public static final int MIN_SIZE_DP = 32;
     public static final int MAX_SIZE_DP = 88;
-    public static final int MIN_OPACITY = 25;
+    public static final int MIN_OPACITY = 0;
     public static final int DEFAULT_COLOR = 0xff168af2;
     private static final String PREFS = "floating_bubble_appearance";
     private static final String IMAGE_FILE = "floating-bubble-image.png";
@@ -43,16 +43,17 @@ public final class FloatingBubbleAppearance {
         public final int sizeDp;
         public final int opacityPercent;
         public final int style;
-        public final int shape;
+        /** 0 is square, 100 is circular; values between interpolate the corner radius. */
+        public final int roundnessPercent;
         public final String text;
         public final int color;
 
-        public Config(int sizeDp, int opacityPercent, int style, int shape,
+        public Config(int sizeDp, int opacityPercent, int style, int roundnessPercent,
                 String text, int color) {
             this.sizeDp = Math.max(MIN_SIZE_DP, Math.min(MAX_SIZE_DP, sizeDp));
             this.opacityPercent = Math.max(MIN_OPACITY, Math.min(100, opacityPercent));
             this.style = style >= STYLE_DEFAULT && style <= STYLE_IMAGE ? style : STYLE_DEFAULT;
-            this.shape = shape == SHAPE_ROUNDED ? SHAPE_ROUNDED : SHAPE_CIRCLE;
+            this.roundnessPercent = Math.max(0, Math.min(100, roundnessPercent));
             String label = text == null ? "" : text.trim();
             int count = label.codePointCount(0, label.length());
             this.text = label.isEmpty() ? "あ" : count <= 4 ? label
@@ -67,12 +68,12 @@ public final class FloatingBubbleAppearance {
         }
 
         public Config withStyle(int style) {
-            return new Config(sizeDp, opacityPercent, style, shape, text, color);
+            return new Config(sizeDp, opacityPercent, style, roundnessPercent, text, color);
         }
     }
 
     public static Config defaults() {
-        return new Config(54, 100, STYLE_DEFAULT, SHAPE_CIRCLE, "あ", DEFAULT_COLOR);
+        return new Config(54, 100, STYLE_DEFAULT, 100, "あ", DEFAULT_COLOR);
     }
 
     public static Config load(Context context) {
@@ -80,7 +81,8 @@ public final class FloatingBubbleAppearance {
         return new Config(preferences.getInt("size_dp", 54),
                 preferences.getInt("opacity_percent", 100),
                 preferences.getInt("style", STYLE_DEFAULT),
-                preferences.getInt("shape", SHAPE_CIRCLE),
+                preferences.getInt("roundness_percent",
+                        preferences.getInt("shape", SHAPE_CIRCLE) == SHAPE_ROUNDED ? 56 : 100),
                 preferences.getString("text", "あ"),
                 preferences.getInt("color", DEFAULT_COLOR));
     }
@@ -90,7 +92,8 @@ public final class FloatingBubbleAppearance {
                 .putInt("size_dp", config.sizeDp)
                 .putInt("opacity_percent", config.opacityPercent)
                 .putInt("style", config.style)
-                .putInt("shape", config.shape)
+                .putInt("roundness_percent", config.roundnessPercent)
+                .remove("shape")
                 .putString("text", config.text)
                 .putInt("color", config.color).commit();
         if (saved) context.sendBroadcast(new Intent(ACTION_APPEARANCE_CHANGED)
@@ -113,20 +116,17 @@ public final class FloatingBubbleAppearance {
         visual.setElevation(dp(context, 12));
         visual.setClipToOutline(config.style == STYLE_IMAGE);
         visual.setContentDescription("悬浮搜索按钮");
-        if (config.style == STYLE_CUSTOM) {
+        if (config.style == STYLE_CUSTOM || config.color != DEFAULT_COLOR) {
             GradientDrawable background = new GradientDrawable();
             background.setColor(config.color);
-            if (config.shape == SHAPE_CIRCLE) background.setShape(GradientDrawable.OVAL);
-            else background.setCornerRadius(dp(context, config.sizeDp * 0.28f));
+            background.setCornerRadius(config.sizePx(context) * config.roundnessPercent / 200f);
             background.setStroke(dp(context, 1), 0x55ffffff);
             visual.setBackground(background);
         } else {
             GradientDrawable background = (GradientDrawable) context.getDrawable(
                     R.drawable.floating_bubble_bg).mutate();
-            if (config.shape == SHAPE_ROUNDED) {
-                background.setShape(GradientDrawable.RECTANGLE);
-                background.setCornerRadius(dp(context, config.sizeDp * 0.28f));
-            }
+            background.setShape(GradientDrawable.RECTANGLE);
+            background.setCornerRadius(config.sizePx(context) * config.roundnessPercent / 200f);
             visual.setBackground(background);
         }
         if (config.style == STYLE_IMAGE) {
