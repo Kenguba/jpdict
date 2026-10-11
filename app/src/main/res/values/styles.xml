@@ -25,4 +25,14 @@
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:colorAccent">#0AA3FF</item>
     </style>
+
+    <style name="Theme.Jpdict.Page" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">#F4F5F6</item>
+        <item name="android:statusBarColor">#F4F5F6</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">#008FD1</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
 </resources>

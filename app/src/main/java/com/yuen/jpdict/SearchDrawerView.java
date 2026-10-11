@@ -29,6 +29,7 @@ public final class SearchDrawerView extends LinearLayout {
         void onHistorySelected(String query);
         void onSearch();
         void onSettings();
+        void onBubbleSettings();
         void onClose();
         void onUnavailable(String feature);
     }
@@ -60,6 +61,8 @@ public final class SearchDrawerView extends LinearLayout {
         avatar.setGravity(Gravity.CENTER);
         avatar.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         avatar.setBackground(shape(0xff008d80, 24));
+        avatar.setContentDescription("设置");
+        avatar.setOnClickListener(v -> callback.onSettings());
         account.addView(avatar, new LayoutParams(dp(44), dp(44)));
         LinearLayout identity = new LinearLayout(context);
         identity.setOrientation(VERTICAL);
@@ -138,7 +141,7 @@ public final class SearchDrawerView extends LinearLayout {
         manageShape.setStroke(dp(1), 0x55ffffff);
         manage.setBackground(manageShape);
         banner.addView(manage, new LayoutParams(dp(48), dp(31)));
-        banner.setOnClickListener(v -> callback.onSettings());
+        banner.setOnClickListener(v -> callback.onBubbleSettings());
         LayoutParams bannerParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         bannerParams.topMargin = dp(16);
@@ -175,7 +178,7 @@ public final class SearchDrawerView extends LinearLayout {
         search.addView(searchText);
         search.setContentDescription("搜索");
         search.setOnClickListener(v -> callback.onSearch());
-        tools.addView(search, new LayoutParams(0, dp(48), 1));
+        tools.addView(search, new LayoutParams(0, dp(44), 1));
         addTool(tools, SearchIconView.Kind.SETTINGS, "设置", callback::onSettings);
         addTool(tools, SearchIconView.Kind.NEW_CHAT, "新对话", callback::onNewChat);
         addView(tools, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -329,8 +332,8 @@ public final class SearchDrawerView extends LinearLayout {
         button.addView(icon(kind, INK), new LayoutParams(dp(24), dp(24)));
         button.setContentDescription(description);
         button.setOnClickListener(v -> action.run());
-        LayoutParams params = new LayoutParams(dp(48), dp(48));
-        params.leftMargin = dp(8);
+        LayoutParams params = new LayoutParams(dp(44), dp(44));
+        params.leftMargin = dp(6);
         tools.addView(button, params);
     }
 

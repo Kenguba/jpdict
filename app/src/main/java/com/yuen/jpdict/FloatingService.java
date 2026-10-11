@@ -11,6 +11,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.*;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
 import android.util.DisplayMetrics;
 import android.view.*;
 import android.view.inputmethod.EditorInfo;
@@ -70,9 +71,6 @@ public class FloatingService extends Service {
     private boolean searchPanelHosted;
     private boolean searchPrivateMode;
     private boolean searchKeyboardRequested;
-    private boolean searchBubbleSettingsRequested;
-    private final Rect searchComposerBounds = new Rect();
-    private boolean searchKeyboardVisible;
     private boolean lookupPrivateMode;
     private View resultCard;
     private View lookupOverlay;
@@ -96,6 +94,9 @@ public class FloatingService extends Service {
     private int lookupAiRequestGeneration;
     private View lookupHeaderNormal;
     private View lookupHeaderEdit;
+    private TextToSpeech textToSpeech;
+    private boolean pronunciationReady;
+    private String pendingPronunciation;
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -650,8 +651,8 @@ public class FloatingService extends Service {
                 openQuickLookup(query);
             }
             @Override public void onEditingChanged(boolean editing) { setSearchFocusable(editing); }
-            @Override public void onComposerBoundsChanged(Rect bounds, boolean keyboardVisible) {
-                keepSearchBubbleClearOfComposer(bounds, keyboardVisible);
+            @Override public void onOpenPage(String page, boolean privateMode) {
+                FloatingSearchRoutes.openFromSearch(FloatingService.this, page, privateMode);
             }
             @Override public void onClose() { removeSearchPanel(); }
         });
@@ -677,13 +678,7 @@ public class FloatingService extends Service {
             root.requestFocus();
             if (!searchPanelHosted) registerSearchBackCallback();
             bringBubbleToFront();
-            if (searchBubbleSettingsRequested) {
-                searchBubbleSettingsRequested = false;
-                searchKeyboardRequested = false;
-                root.post(() -> {
-                    if (searchPanel == root) root.openBubbleSettings();
-                });
-            } else if (searchKeyboardRequested) {
+            if (searchKeyboardRequested) {
                 searchKeyboardRequested = false;
                 root.post(() -> {
                     if (searchPanel == root) root.focusInput();
@@ -720,30 +715,6 @@ public class FloatingService extends Service {
         return Build.VERSION.SDK_INT >= 30
                 ? WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
                 : WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
-    }
-
-    private void keepSearchBubbleClearOfComposer(Rect composerBounds, boolean keyboardVisible) {
-        searchComposerBounds.set(composerBounds);
-        searchKeyboardVisible = keyboardVisible;
-        if (bubbleTopProxy == null || bubbleTopProxyLp == null || bubbleLp == null || wm == null) return;
-        int[] position = new int[2];
-        bubbleTopProxy.getLocationOnScreen(position);
-        int parentX = position[0] - bubbleTopProxyLp.x;
-        int parentY = position[1] - bubbleTopProxyLp.y;
-        Rect savedBounds = new Rect(bubbleLp.x + parentX, bubbleLp.y + parentY,
-                bubbleLp.x + parentX + bubbleTopProxyLp.width,
-                bubbleLp.y + parentY + bubbleTopProxyLp.height);
-        int y = bubbleLp.y;
-        if (keyboardVisible && Rect.intersects(savedBounds, composerBounds)) {
-            y = Math.max(0, composerBounds.top - parentY - bubbleTopProxyLp.height - dp(12));
-        }
-        if (bubbleTopProxyLp.y == y && bubbleTopProxyLp.x == bubbleLp.x) return;
-        // Move only the visible proxy; the mounted original keeps its saved
-        // position and is restored when this temporary layer is removed.
-        bubbleTopProxyLp.x = bubbleLp.x;
-        bubbleTopProxyLp.y = y;
-        try { wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp); }
-        catch (Exception ignored) {}
     }
 
     private void handleSearchBack() {
@@ -900,9 +871,6 @@ public class FloatingService extends Service {
             bubbleTopProxyLp.y = bubbleLp.y;
             try { wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp); }
             catch (Exception ignored) {}
-            if (searchPanel != null && !searchComposerBounds.isEmpty()) {
-                keepSearchBubbleClearOfComposer(searchComposerBounds, searchKeyboardVisible);
-            }
         }
         updateTargetBox();
     }
@@ -1152,7 +1120,9 @@ public class FloatingService extends Service {
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackground(outline(0x16000000, 1, Color.WHITE, 10));
+        panel.setBackground(outline(0x16000000, 1, Color.WHITE, 16));
+        panel.setClipToOutline(true);
+        panel.setClipChildren(true);
         panel.setElevation(dp(12));
 
         // Reference proportions: 48dp title, 46dp pronunciation and toolbar
@@ -1182,7 +1152,13 @@ public class FloatingService extends Service {
         ImageView more = lookupIcon(
                 R.drawable.ic_lookup_plus, "更多", 0xff242629);
 
-        header.addView(favorite, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        LinearLayout headerActions = new LinearLayout(this);
+        headerActions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        for (ImageView action : new ImageView[]{replay, list, more}) {
+            headerActions.addView(action, new LinearLayout.LayoutParams(dp(42), dp(48)));
+        }
+        headerActions.addView(favorite, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        header.addView(headerActions, new LinearLayout.LayoutParams(-2, dp(48)));
 
         replay.setOnClickListener(v -> {
             LOOKUP_AI_CACHE.remove(q);
@@ -1302,6 +1278,8 @@ public class FloatingService extends Service {
                 R.drawable.ic_lookup_speaker, "发音", 0xff00a7eb);
         speaker.setPadding(dp(2), dp(10), dp(8), dp(10));
         pronunciation.addView(speaker, new LinearLayout.LayoutParams(dp(34), dp(46)));
+        speaker.setClickable(true);
+        speaker.setOnClickListener(v -> speakLookup(q));
 
         String pronunciationText = local == null
                 ? "发音"
@@ -1311,6 +1289,8 @@ public class FloatingService extends Service {
         pronounceLabel.setIncludeFontPadding(false);
         pronunciation.addView(pronounceLabel, new LinearLayout.LayoutParams(
                 0, dp(46), 1));
+        pronounceLabel.setOnClickListener(v -> speakLookup(q));
+        pronounceLabel.setContentDescription("播放日语发音");
 
         panel.addView(pronunciation, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
@@ -1401,17 +1381,6 @@ public class FloatingService extends Service {
 
         panel.addView(scroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
-
-        LinearLayout bottomActions = new LinearLayout(this);
-        bottomActions.setOrientation(LinearLayout.HORIZONTAL);
-        bottomActions.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-        bottomActions.setPadding(dp(8), 0, dp(8), 0);
-        bottomActions.setBackgroundColor(Color.WHITE);
-        for (ImageView action : new ImageView[]{replay, list, more}) {
-            bottomActions.addView(action, new LinearLayout.LayoutParams(dp(46), dp(46)));
-        }
-        panel.addView(bottomActions, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
 
         // The reference has no visible resize handle. The footer itself is
         // the resize hit target, while still looking like a normal footer.
@@ -1508,7 +1477,47 @@ public class FloatingService extends Service {
             return;
         }
 
+        speakLookup(q);
         loadLookupAi(q, root, progress, aiBody);
+    }
+
+    private void speakLookup(String value) {
+        String word = value == null ? "" : value.trim();
+        if (word.isEmpty()) return;
+        pendingPronunciation = word;
+        if (textToSpeech == null) {
+            try {
+                textToSpeech = new TextToSpeech(getApplicationContext(), status ->
+                        main.post(() -> onPronunciationReady(status)));
+            } catch (RuntimeException ignored) {
+                textToSpeech = null;
+            }
+            return;
+        }
+        if (pronunciationReady) speakPendingPronunciation();
+    }
+
+    private void onPronunciationReady(int status) {
+        TextToSpeech engine = textToSpeech;
+        if (engine == null || status != TextToSpeech.SUCCESS) return;
+        int language = engine.setLanguage(Locale.JAPAN);
+        if (language < TextToSpeech.LANG_AVAILABLE) {
+            language = engine.setLanguage(Locale.getDefault());
+        }
+        if (language < TextToSpeech.LANG_AVAILABLE) return;
+        engine.setSpeechRate(0.94f);
+        pronunciationReady = true;
+        speakPendingPronunciation();
+    }
+
+    private void speakPendingPronunciation() {
+        if (!pronunciationReady || textToSpeech == null || pendingPronunciation == null) return;
+        String word = pendingPronunciation;
+        pendingPronunciation = null;
+        try {
+            textToSpeech.speak(word, TextToSpeech.QUEUE_FLUSH, null,
+                    "jpdict-pronunciation-" + System.nanoTime());
+        } catch (RuntimeException ignored) {}
     }
 
     private void addLookupSection(
@@ -1916,11 +1925,8 @@ public class FloatingService extends Service {
         }
         searchPanelLp = null;
         searchPanelHosted = false;
-        searchComposerBounds.setEmpty();
-        searchKeyboardVisible = false;
         if (finishHost) {
             searchKeyboardRequested = false;
-            searchBubbleSettingsRequested = false;
             if (searchPrivateMode) currentSearchQuery = "";
             searchPrivateMode = false;
             if (hosted) notifyLookupHostFinish();
@@ -1953,16 +1959,37 @@ public class FloatingService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (bubble == null && Settings.canDrawOverlays(this)) showBubble();
 
+        if (intent != null && FloatingSearchRoutes.ACTION_OPEN_PAGE.equals(intent.getAction())) {
+            String page = intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE);
+            boolean privateMode = intent.getBooleanExtra(
+                    FloatingSearchRoutes.EXTRA_PRIVATE_MODE, searchPrivateMode);
+            if (searchPanel != null && searchPanelHosted) {
+                String query = privateMode ? "" : currentSearchQuery;
+                searchKeyboardRequested = false;
+                removeSearchPanel(false);
+                Intent open = new Intent(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE)
+                        .setPackage(getPackageName())
+                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE, page)
+                        .putExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY, query)
+                        .putExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, true)
+                        .putExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE, privateMode);
+                sendBroadcast(open);
+            } else if (page != null) {
+                Intent open = FloatingSearchRoutes.pageIntent(this, page,
+                        privateMode ? "" : currentSearchQuery,
+                        searchPanel != null, false, privateMode, false)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try { startActivity(open); }
+                catch (RuntimeException error) { safeToast("无法打开设置页面"); }
+            }
+        }
+
         if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())) {
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
             if (restoredQuery != null && searchPanel == null) currentSearchQuery = restoredQuery;
-            if (intent.getBooleanExtra(BubbleImagePickerActivity.EXTRA_OPEN_BUBBLE_SETTINGS, false)) {
-                searchKeyboardRequested = false;
-                searchBubbleSettingsRequested = true;
-                if (searchPanel instanceof FloatingSearchView) {
-                    searchBubbleSettingsRequested = false;
-                    ((FloatingSearchView)searchPanel).openBubbleSettings();
-                }
+            if (intent.hasExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE)) {
+                searchPrivateMode = intent.getBooleanExtra(
+                        FloatingSearchRoutes.EXTRA_PRIVATE_MODE, false);
             }
 
             if (Settings.canDrawOverlays(this) && searchPanel == null) {
@@ -2050,6 +2077,14 @@ public class FloatingService extends Service {
                 wm.removeView(bubble);
             } catch (Exception ignored) {}
             bubble = null;
+        }
+
+        if (textToSpeech != null) {
+            try { textToSpeech.stop(); textToSpeech.shutdown(); }
+            catch (RuntimeException ignored) {}
+            textToSpeech = null;
+            pronunciationReady = false;
+            pendingPronunciation = null;
         }
 
         super.onDestroy();

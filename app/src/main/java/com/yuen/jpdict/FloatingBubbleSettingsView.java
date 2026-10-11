@@ -53,11 +53,10 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         shape = config.shape;
         lastValidColor = config.color;
         setOrientation(VERTICAL);
-        setPadding(dp(22), dp(20), dp(22), dp(20));
+        setPadding(dp(22), dp(12), dp(22), dp(20));
         setBackground(background(SOFT, 24));
-        addView(text("悬浮按钮", 21, INK, true));
         TextView note = text("调整大小、样式和透明度", 13, MUTED, false);
-        note.setPadding(0, dp(8), 0, dp(16));
+        note.setPadding(0, 0, 0, dp(10));
         addView(note);
 
         FrameLayout previewArea = new FrameLayout(context);
@@ -228,6 +227,18 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         }
         if (onChanged != null) onChanged.run();
         return true;
+    }
+
+    public void reloadSavedSettings() {
+        FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.load(getContext());
+        style = config.style;
+        shape = config.shape;
+        lastValidColor = config.color;
+        size.setProgress(config.sizeDp - FloatingBubbleAppearance.MIN_SIZE_DP);
+        opacity.setProgress(config.opacityPercent - FloatingBubbleAppearance.MIN_OPACITY);
+        customText.setText(config.text);
+        customColor.setText(formatColor(config.color));
+        refreshPreview();
     }
 
     private void chooseImage() {

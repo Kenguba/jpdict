@@ -20,8 +20,6 @@ import java.io.InputStream;
 
 /** Permission-free system image picker that retains only a small private copy. */
 public final class BubbleImagePickerActivity extends Activity {
-    public static final String EXTRA_OPEN_BUBBLE_SETTINGS =
-            "com.yuen.jpdict.extra.OPEN_BUBBLE_SETTINGS";
     private static final int REQUEST_IMAGE = 1;
     private static final String STATE_IMAGE_URI = "image_uri";
     private Uri selectedImage;
@@ -29,8 +27,10 @@ public final class BubbleImagePickerActivity extends Activity {
 
     public static void launch(Context context) {
         try {
-            context.startActivity(new Intent(context, BubbleImagePickerActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+            Intent picker = new Intent(context, BubbleImagePickerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            if (!(context instanceof Activity)) picker.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(picker);
         } catch (ActivityNotFoundException exception) {
             Toast.makeText(context, "无法打开图片选择器", Toast.LENGTH_SHORT).show();
         }
@@ -56,7 +56,7 @@ public final class BubbleImagePickerActivity extends Activity {
             startActivityForResult(document, REQUEST_IMAGE);
         } catch (ActivityNotFoundException exception) {
             Toast.makeText(this, "此设备没有可用的图片选择器", Toast.LENGTH_LONG).show();
-            returnToSettings();
+            returnToAppearancePage();
         }
     }
 
@@ -69,7 +69,7 @@ public final class BubbleImagePickerActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_IMAGE) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-            returnToSettings();
+            returnToAppearancePage();
             return;
         }
         selectedImage = data.getData();
@@ -96,7 +96,7 @@ public final class BubbleImagePickerActivity extends Activity {
                 if (isFinishing() || isDestroyed()) return;
                 Toast.makeText(this, completed ? "悬浮按钮图片已更新"
                         : "图片无法读取或保存，请选择另一张图片", Toast.LENGTH_LONG).show();
-                returnToSettings();
+                returnToAppearancePage();
             });
         }, "BubbleImageImport").start();
     }
@@ -177,18 +177,12 @@ public final class BubbleImagePickerActivity extends Activity {
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
     }
 
-    private void returnToSettings() {
+    private void returnToAppearancePage() {
         if (returning) return;
         returning = true;
-        Intent search = new Intent(this, LookupLinkActivity.class)
-                .putExtra(FloatingService.EXTRA_HOST_SEARCH, true)
-                .putExtra(EXTRA_OPEN_BUBBLE_SETTINGS, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        | Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        startActivity(search);
         finish();
         overridePendingTransition(0, 0);
     }
 
-    @Override public void onBackPressed() { returnToSettings(); }
+    @Override public void onBackPressed() { returnToAppearancePage(); }
 }

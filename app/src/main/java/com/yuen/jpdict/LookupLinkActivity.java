@@ -32,6 +32,7 @@ public final class LookupLinkActivity extends Activity {
     private String currentMode = FloatingService.LOOKUP_MODE_FULLSCREEN;
     private boolean showingSearch;
     private boolean hostVisible;
+    private boolean pageInFront;
 
     private final BroadcastReceiver finishReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -43,6 +44,34 @@ public final class LookupLinkActivity extends Activity {
                 showingSearch = true;
                 configureTransparentHost();
                 forwardSearch(getIntent());
+            } else if (FloatingSearchRoutes.ACTION_HOST_SHOW_LOOKUP.equals(intent.getAction())) {
+                if (!pageInFront || isFinishing()) return;
+                showingSearch = false;
+                configureTransparentHost();
+            } else if (FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE.equals(intent.getAction())) {
+                if (!hostVisible || isFinishing()) return;
+                pageInFront = true;
+                boolean privateMode = intent.getBooleanExtra(
+                        FloatingSearchRoutes.EXTRA_PRIVATE_MODE, false);
+                Intent hostIntent = getIntent();
+                if (hostIntent != null) {
+                    if (privateMode) {
+                        hostIntent.removeExtra(FloatingService.EXTRA_SEARCH_QUERY);
+                    } else {
+                        hostIntent.putExtra(FloatingService.EXTRA_SEARCH_QUERY,
+                                intent.getStringExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY));
+                    }
+                    setIntent(hostIntent);
+                }
+                Intent page = FloatingSearchRoutes.pageIntent(LookupLinkActivity.this,
+                        intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE),
+                        intent.getStringExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY),
+                        intent.getBooleanExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, false),
+                        false,
+                        privateMode,
+                        true);
+                startActivity(page);
+                overridePendingTransition(0, 0);
             }
         }
     };
@@ -54,6 +83,7 @@ public final class LookupLinkActivity extends Activity {
                 ? state.getBoolean(STATE_SHOWING_SEARCH,
                         getIntent().getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false))
                 : getIntent().getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false);
+        pageInFront = state != null && state.getBoolean("page_in_front", false);
         configureTransparentHost();
         registerFinishReceiver();
         // A lookup host can switch back to search without a new Activity intent.
@@ -66,6 +96,7 @@ public final class LookupLinkActivity extends Activity {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putBoolean(STATE_SHOWING_SEARCH, showingSearch);
+        state.putBoolean("page_in_front", pageInFront);
         super.onSaveInstanceState(state);
     }
 
@@ -85,6 +116,9 @@ public final class LookupLinkActivity extends Activity {
 
     @Override protected void onPostResume() {
         super.onPostResume();
+        // A settings/search page launched above this bridge protects it from
+        // onStop cleanup. Once the bridge resumes, that page has left the top.
+        pageInFront = false;
         // Register only after the Activity is truly resumed. Some OriginOS
         // versions ignore predictive/system Back callbacks registered too early.
         registerSystemBack();
@@ -95,7 +129,7 @@ public final class LookupLinkActivity extends Activity {
         hostVisible = false;
         super.onStop();
         // Do not leave a modal overlay behind after its mask/Back host is hidden.
-        if (!isFinishing() && !isChangingConfigurations()) {
+        if (!pageInFront && !isFinishing() && !isChangingConfigurations()) {
             sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS);
         }
     }
@@ -164,6 +198,8 @@ public final class LookupLinkActivity extends Activity {
     private void registerFinishReceiver() {
         IntentFilter filter = new IntentFilter(FloatingService.ACTION_LOOKUP_HOST_FINISH);
         filter.addAction(FloatingService.ACTION_LOOKUP_HOST_SEARCH);
+        filter.addAction(FloatingSearchRoutes.ACTION_HOST_SHOW_LOOKUP);
+        filter.addAction(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE);
         try {
             ContextCompat.registerReceiver(this, finishReceiver, filter,
                     ContextCompat.RECEIVER_NOT_EXPORTED);
@@ -369,14 +405,9 @@ public final class LookupLinkActivity extends Activity {
             finishBridge();
             return;
         }
-        boolean openBubbleSettings = source.getBooleanExtra(
-                BubbleImagePickerActivity.EXTRA_OPEN_BUBBLE_SETTINGS, false);
-        source.removeExtra(BubbleImagePickerActivity.EXTRA_OPEN_BUBBLE_SETTINGS);
         Intent show = new Intent(this, FloatingService.class)
                 .setAction(FloatingService.ACTION_SHOW_SEARCH)
                 .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
-                .putExtra(BubbleImagePickerActivity.EXTRA_OPEN_BUBBLE_SETTINGS,
-                        openBubbleSettings)
                 .putExtra(FloatingService.EXTRA_SEARCH_QUERY,
                         source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY));
         try {
