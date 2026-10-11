@@ -1,5 +1,6 @@
 package com.yuen.jpdict;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -7,6 +8,7 @@ import android.widget.ScrollView;
 /** Dedicated appearance page for the draggable lookup bubble. */
 public final class FloatingBubbleSettingsActivity extends FloatingSearchPageActivity {
     private FloatingBubbleSettingsView settingsView;
+    private boolean previewing;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -17,8 +19,13 @@ public final class FloatingBubbleSettingsActivity extends FloatingSearchPageActi
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setClipToPadding(false);
         scroll.setPadding(0, 0, 0, 0);
-        settingsView = new FloatingBubbleSettingsView(
-                this, null, editing -> {});
+        Bundle draftState = state == null ? null : state.getBundle("bubble_draft");
+        FloatingBubbleAppearance.Config initial = draftState == null
+                ? FloatingBubbleAppearance.load(this) : FloatingBubbleAppearance.fromBundle(draftState);
+        settingsView = new FloatingBubbleSettingsView(this, initial, config -> {
+            if (previewing) FloatingBubbleAppearance.preview(this, this, config);
+        }, () -> BubbleImagePickerActivity.launch(this));
+        settingsView.restoreEditorState(draftState);
         scroll.addView(settingsView, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -27,7 +34,33 @@ public final class FloatingBubbleSettingsActivity extends FloatingSearchPageActi
 
     @Override protected void onResume() {
         super.onResume();
-        if (settingsView != null) settingsView.reloadSavedSettings();
+        previewing = true;
+        if (settingsView != null) FloatingBubbleAppearance.preview(this, this, settingsView.draft());
+    }
+
+    @Override protected void onPause() {
+        previewing = false;
+        FloatingBubbleAppearance.endPreview(this, this);
+        super.onPause();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        if (settingsView != null) state.putBundle("bubble_draft", settingsView.saveDraftState());
+        super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == BubbleImagePickerActivity.REQUEST_PICK_IMAGE
+                && resultCode == RESULT_OK && data != null && settingsView != null) {
+            settingsView.setDraftImage(data.getStringExtra(BubbleImagePickerActivity.EXTRA_IMAGE_NAME));
+        }
+    }
+
+    @Override protected void onDestroy() {
+        FloatingBubbleAppearance.endPreview(this, this);
+        if (isFinishing()) FloatingBubbleAppearance.cleanupImages(this, null);
+        super.onDestroy();
     }
 
     @Override public void onBackPressed() {
