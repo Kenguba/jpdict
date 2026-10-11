@@ -1,22 +1,27 @@
 package com.yuen.jpdict;
 
+import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
-/** Full-page settings hub for the floating search experience. */
+/** Reference settings layout; Appearance and Customize Grok slots host jpdict features. */
 public final class SearchSettingsActivity extends FloatingSearchPageActivity {
     private static final int INK = 0xff171819;
-    private static final int MUTED = 0xff6d747b;
-    private static final int BLUE = 0xff008fd1;
-    private static final int SURFACE = 0xfff4f5f6;
+    private static final int MUTED = 0xff73777a;
+    private static final int BLUE = 0xff006bff;
+    private TextView bubbleSummary;
     private TextView groqSummary;
 
     private int dp(float value) {
@@ -42,113 +47,192 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().setStatusBarColor(SURFACE);
-        getWindow().setNavigationBarColor(Color.WHITE);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(SURFACE);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(12), 0, dp(18), 0);
-        SearchIconView back = new SearchIconView(this, SearchIconView.Kind.BACK);
-        back.setColor(INK);
-        back.setBackground(ripple(Color.WHITE, 22));
-        back.setContentDescription("返回");
-        back.setOnClickListener(v -> FloatingSearchRoutes.finishPage(this));
-        header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(48)));
-        TextView title = text("设置", 19, INK, true);
-        title.setPadding(dp(12), 0, 0, 0);
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        root.addView(header, new LinearLayout.LayoutParams(-1, dp(56)));
-
+        LinearLayout root = createPage("设置", true);
         ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(false);
-        scroll.setPadding(dp(16), dp(4), dp(16), dp(18));
+        scroll.setPadding(dp(12), dp(16), dp(12), dp(20));
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
 
-        TextView intro = text("管理查询服务与悬浮按钮外观", 13, MUTED, false);
-        intro.setPadding(dp(6), dp(8), dp(6), dp(14));
-        content.addView(intro);
+        addIdentityCard(content);
+        addIntroCard(content);
 
-        LinearLayout group = new LinearLayout(this);
-        group.setOrientation(LinearLayout.VERTICAL);
-        group.setBackground(shape(Color.WHITE, 22));
-        group.setClipToOutline(true);
-        addSetting(group, SearchIconView.Kind.LIGHTNING, "Groq Key",
-                GroqKeyStore.hasKey(this) ? "已配置 · 搜索、OCR 和查词共用" : "配置本机加密保存的查询 Key",
-                () -> GroqKeyStore.showEditor(this, this::refreshGroqStatus));
-        addDivider(group);
-        addSetting(group, SearchIconView.Kind.SETTINGS, "悬浮按钮",
-                "调整大小、图标样式、形状和透明度",
+        addSection(content, "应用");
+        LinearLayout app = group();
+        bubbleSummary = addRow(app, SearchIconView.Kind.SETTINGS, "悬浮按钮", "",
                 () -> FloatingSearchRoutes.openFromActivity(
                         this, FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS, true));
-        content.addView(group, new LinearLayout.LayoutParams(-1, -2));
+        addRow(app, SearchIconView.Kind.HAPTICS, "触感反馈", null,
+                () -> openSystemPage(new Intent(Settings.ACTION_SOUND_SETTINGS)));
+        addRow(app, SearchIconView.Kind.WIDGET, "桌面小组件", null,
+                () -> showInfo("桌面小组件", "长按桌面空白处，打开小组件列表，选择 jpdict 搜索小组件。点击小组件即可打开悬浮搜索。"));
+        addRow(app, SearchIconView.Kind.LANGUAGE, "应用语言", null,
+                () -> showInfo("应用语言", "当前界面使用简体中文。词条查询支持中文、英语、日语和韩语。"));
+        addRow(app, SearchIconView.Kind.ADVANCED, "高级设置", null, this::showAdvanced);
+        content.addView(app, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout note = new LinearLayout(this);
-        note.setOrientation(LinearLayout.VERTICAL);
-        note.setPadding(dp(18), dp(16), dp(18), dp(16));
-        note.setBackground(shape(0xffe8f8ff, 18));
-        TextView noteTitle = text("发音", 15, INK, true);
-        note.addView(noteTitle);
-        TextView noteBody = text("查词结果进入时自动播放日语发音，也可点扬声器重播。", 13, MUTED, false);
-        noteBody.setPadding(0, dp(7), 0, 0);
-        noteBody.setLineSpacing(dp(3), 1f);
-        note.addView(noteBody);
-        LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(-1, -2);
-        noteParams.topMargin = dp(16);
-        content.addView(note, noteParams);
+        addSection(content, "Groq");
+        LinearLayout groq = group();
+        groqSummary = addRow(groq, SearchIconView.Kind.SETTINGS, "Groq Key", "",
+                () -> GroqKeyStore.showEditor(this, this::refreshGroqStatus));
+        addRow(groq, SearchIconView.Kind.CONNECTOR, "连接器", null,
+                () -> showInfo("连接器", "此入口尚未接入。当前可以在高级设置中添加本地文本文件，并在抽屉中搜索文件内容。"));
+        addRow(groq, SearchIconView.Kind.SKILLS, "技能", null,
+                () -> showInfo("技能", "此入口尚未接入。当前查询使用词典和 Groq 多语种解释。"));
+        content.addView(groq, new LinearLayout.LayoutParams(-1, -2));
 
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
-        overridePendingTransition(0, 0);
     }
 
-    private void addSetting(LinearLayout group, SearchIconView.Kind iconKind,
+    private void addIdentityCard(LinearLayout content) {
+        LinearLayout card = new LinearLayout(this);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(18), dp(16), dp(18), dp(16));
+        card.setBackground(ripple(Color.WHITE, 20));
+        TextView avatar = text("JP", 25, Color.WHITE, false);
+        avatar.setGravity(Gravity.CENTER);
+        GradientDrawable portrait = shape(0xff526d78, 32);
+        portrait.setStroke(dp(2), 0xffdadcdd);
+        avatar.setBackground(portrait);
+        card.addView(avatar, new LinearLayout.LayoutParams(dp(64), dp(64)));
+        LinearLayout labels = labels("JP Native", "本机查询", 17, true);
+        labels.setPadding(dp(18), 0, 0, 0);
+        card.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        card.setContentDescription("本机查询资料");
+        card.setOnClickListener(v -> showInfo("本机查询", "jpdict 使用本机设置和查询记录，无需账户登录。私密模式不保存查询历史。"));
+        card.setMinimumHeight(dp(108));
+        content.addView(card, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void addIntroCard(LinearLayout content) {
+        LinearLayout card = new LinearLayout(this);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(18), dp(10), dp(16), dp(10));
+        card.setBackground(ripple(Color.WHITE, 20));
+        card.addView(icon(SearchIconView.Kind.MARK), new LinearLayout.LayoutParams(dp(24), dp(24)));
+        LinearLayout labels = labels("jpdict 多语种查询", "OCR · 词典 · AI", 14, true);
+        labels.setPadding(dp(10), 0, dp(8), 0);
+        card.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView action = text("关于", 14, Color.WHITE, true);
+        action.setGravity(Gravity.CENTER);
+        action.setPadding(dp(16), 0, dp(16), 0);
+        action.setBackground(shape(BLUE, 20));
+        card.addView(action, new LinearLayout.LayoutParams(-2, dp(34)));
+        card.setContentDescription("关于 jpdict");
+        card.setOnClickListener(v -> showInfo("jpdict", "版本 " + BuildConfig.VERSION_NAME
+                + "\n原生 Android 多语种 OCR 与词条查询。"));
+        card.setMinimumHeight(dp(68));
+        LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2);
+        layout.topMargin = dp(16);
+        content.addView(card, layout);
+    }
+
+    private TextView addRow(LinearLayout group, SearchIconView.Kind kind,
             String title, String subtitle, Runnable action) {
+        if (group.getChildCount() > 0) {
+            android.view.View divider = new android.view.View(this);
+            divider.setBackgroundColor(0xfff1f1f1);
+            group.addView(divider, new LinearLayout.LayoutParams(-1, Math.max(1, dp(0.5f))));
+        }
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(16), dp(12), dp(14), dp(12));
-        row.setBackground(ripple(Color.WHITE, 18));
-        SearchIconView icon = new SearchIconView(this, iconKind);
-        icon.setColor(BLUE);
-        row.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        row.setPadding(dp(18), dp(10), dp(18), dp(10));
+        row.setBackground(ripple(Color.WHITE, 0));
+        row.addView(icon(kind), new LinearLayout.LayoutParams(dp(23), dp(23)));
+        LinearLayout labels = labels(title, subtitle, 15, false);
+        labels.setPadding(dp(18), 0, dp(8), 0);
+        row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        if (action != null) row.setOnClickListener(v -> action.run());
+        row.setMinimumHeight(dp(subtitle == null ? 52 : 64));
+        group.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        return subtitle == null ? null : (TextView) labels.getChildAt(1);
+    }
+
+    private SearchIconView icon(SearchIconView.Kind kind) {
+        SearchIconView icon = new SearchIconView(this, kind);
+        icon.setColor(MUTED);
+        return icon;
+    }
+
+    private LinearLayout labels(String title, String subtitle, float size, boolean bold) {
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
-        labels.setPadding(dp(13), 0, dp(8), 0);
-        labels.addView(text(title, 16, INK, true));
-        TextView detail = text(subtitle, 12, MUTED, false);
-        if ("Groq Key".equals(title)) groqSummary = detail;
-        detail.setPadding(0, dp(5), 0, 0);
-        labels.addView(detail);
-        row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-        SearchIconView arrow = new SearchIconView(this, SearchIconView.Kind.CHEVRON);
-        arrow.setColor(MUTED);
-        arrow.setRotation(-90);
-        row.addView(arrow, new LinearLayout.LayoutParams(dp(22), dp(22)));
-        row.setContentDescription(title + "，" + subtitle);
-        row.setOnClickListener(v -> action.run());
-        group.addView(row, new LinearLayout.LayoutParams(-1, dp(74)));
+        labels.addView(text(title, size, INK, bold));
+        if (subtitle != null) {
+            TextView detail = text(subtitle, 12, MUTED, false);
+            detail.setPadding(0, dp(5), 0, 0);
+            labels.addView(detail);
+        }
+        return labels;
     }
 
     private void refreshGroqStatus() {
-        if (groqSummary == null) return;
-        groqSummary.setText(GroqKeyStore.hasKey(this)
-                ? "已配置 · 搜索、OCR 和查词共用" : "配置本机加密保存的查询 Key");
+        if (groqSummary != null) groqSummary.setText(GroqKeyStore.hasKey(this) ? "已配置" : "未配置");
     }
 
-    private void addDivider(LinearLayout group) {
-        View line = new View(this);
-        line.setBackgroundColor(SURFACE);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(1));
-        params.leftMargin = dp(56);
-        group.addView(line, params);
+    @Override protected void onResume() {
+        super.onResume();
+        if (bubbleSummary == null) return;
+        FloatingBubbleAppearance.Config saved = FloatingBubbleAppearance.load(this);
+        bubbleSummary.setText(saved.sizeDp + " dp · " + saved.opacityPercent + "% · "
+                + (saved.shape == FloatingBubbleAppearance.SHAPE_CIRCLE ? "圆形" : "圆角方形"));
+        refreshGroqStatus();
+    }
+
+    private void showAdvanced() {
+        boolean autoplay = LookupSpeechSettings.autoplay(this);
+        String[] items = {"自动发音：" + (autoplay ? "开启" : "关闭"), "发音引擎",
+                "本地文件", "悬浮窗权限", "通知设置", "私密查询说明"};
+        new AlertDialog.Builder(this).setTitle("高级设置").setItems(items, (dialog, which) -> {
+            switch (which) {
+                case 0:
+                    LookupSpeechSettings.setAutoplay(this, !autoplay);
+                    Toast.makeText(this, autoplay ? "自动发音已关闭" : "自动发音已开启",
+                            Toast.LENGTH_SHORT).show();
+                    break;
+                case 1: openSystemPage(new Intent("com.android.settings.TTS_SETTINGS")); break;
+                case 2: FloatingSearchRoutes.openFromActivity(this, FloatingSearchRoutes.PAGE_FILES, true); break;
+                case 3: openSystemPage(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()))); break;
+                case 4:
+                    openSystemPage(Build.VERSION.SDK_INT >= 26
+                            ? new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())
+                            : new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:" + getPackageName())));
+                    break;
+                case 5: showInfo("私密查询", "在搜索页点右上角的私密图标启用。私密模式不读取或保存查询历史；离开搜索会清除草稿。Groq 查询仍会把输入发送给查询服务。"); break;
+                default: break;
+            }
+        }).setNegativeButton("关闭", null).show();
+    }
+
+    private void openSystemPage(Intent intent) {
+        try { startActivity(intent); }
+        catch (android.content.ActivityNotFoundException unavailable) {
+            showInfo("系统设置", "当前系统未提供此设置入口，请在系统设置中查找。");
+        }
+    }
+
+    private void showInfo(String title, String message) {
+        new AlertDialog.Builder(this).setTitle(title).setMessage(message)
+                .setPositiveButton("知道了", null).show();
+    }
+
+    private LinearLayout group() {
+        LinearLayout group = new LinearLayout(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.setBackground(shape(Color.WHITE, 20));
+        group.setClipToOutline(true);
+        return group;
+    }
+
+    private void addSection(LinearLayout content, String title) {
+        TextView heading = text(title, 12, MUTED, false);
+        heading.setPadding(dp(18), dp(18), dp(18), dp(12));
+        content.addView(heading);
     }
 
     private android.graphics.drawable.RippleDrawable ripple(int color, int radius) {
@@ -159,5 +243,4 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
     @Override public void onBackPressed() {
         FloatingSearchRoutes.finishPage(this);
     }
-
 }

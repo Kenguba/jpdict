@@ -91,7 +91,7 @@
             android:theme="@style/Theme.Jpdict.Page"/>
 
         <activity
-            android:name=".SearchDrawerActivity"
+            android:name=".DrawerFilesActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""

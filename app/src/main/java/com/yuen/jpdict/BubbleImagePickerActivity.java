@@ -28,7 +28,7 @@ public final class BubbleImagePickerActivity extends Activity {
     public static void launch(Context context) {
         try {
             Intent picker = new Intent(context, BubbleImagePickerActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                    .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION | Intent.FLAG_ACTIVITY_NO_USER_ACTION);
             if (!(context instanceof Activity)) picker.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(picker);
         } catch (ActivityNotFoundException exception) {

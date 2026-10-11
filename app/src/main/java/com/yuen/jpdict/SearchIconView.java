@@ -12,7 +12,7 @@ public final class SearchIconView extends View {
     public enum Kind {
         MENU, PRIVATE, PLUS, LIGHTNING, CHEVRON, MIC, VOICE, SEND, CLOSE, BACK,
         SEARCH, SETTINGS, NEW_CHAT, CLOCK, CAMERA, IMAGE, FILE, SKILLS,
-        CONNECTOR, CHECK, BOT, PROJECT, TASK, MARK, MORE
+        CONNECTOR, CHECK, BOT, PROJECT, TASK, MARK, MORE, HAPTICS, WIDGET, LANGUAGE, ADVANCED
     }
 
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -163,6 +163,25 @@ public final class SearchIconView extends View {
                 arc(canvas, 4, 6, 20, 18, -35, 295);
                 canvas.restore();
                 line(canvas, 3, 21, 21, 3); break;
+            case HAPTICS:
+                roundRect(canvas, 7, 2, 17, 22, 2);
+                circle(canvas, 12, 5, 0.5f);
+                poly(canvas, 3, 7, 2, 10, 4, 13, 2, 16, 3, 19);
+                poly(canvas, 21, 7, 22, 10, 20, 13, 22, 16, 21, 19); break;
+            case WIDGET:
+                roundRect(canvas, 3, 3, 21, 21, 3);
+                roundRect(canvas, 6, 6, 11, 11, 1);
+                line(canvas, 6, 16, 17, 16); break;
+            case LANGUAGE:
+                circle(canvas, 12, 12, 10);
+                canvas.drawOval(7, 2, 17, 22, stroke);
+                line(canvas, 2, 12, 22, 12); break;
+            case ADVANCED:
+                path.moveTo(12, 7); path.cubicTo(5, 0, 0, 5, 7, 12);
+                path.cubicTo(0, 19, 5, 24, 12, 17);
+                path.cubicTo(19, 24, 24, 19, 17, 12);
+                path.cubicTo(24, 5, 19, 0, 12, 7);
+                canvas.drawPath(path, stroke); break;
             case MORE:
                 Paint.Style style = stroke.getStyle(); stroke.setStyle(Paint.Style.FILL);
                 circle(canvas, 12, 5, 1.4f); circle(canvas, 12, 12, 1.4f);

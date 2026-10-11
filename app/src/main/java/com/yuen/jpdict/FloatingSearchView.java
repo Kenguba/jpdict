@@ -1,6 +1,8 @@
 package com.yuen.jpdict;
 
 import android.animation.ValueAnimator;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -108,7 +110,7 @@ final class FloatingSearchView extends FrameLayout {
 
         header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(12), dp(2), dp(12), dp(2));
+        header.setPadding(dp(12), 0, dp(12), 0);
         SearchIconView menu = button(SearchIconView.Kind.MENU, "打开侧栏", SOFT);
         header.addView(menu, new LinearLayout.LayoutParams(dp(44), dp(44)));
         menu.setOnClickListener(v -> setDrawerOpen(true));
@@ -122,7 +124,7 @@ final class FloatingSearchView extends FrameLayout {
         privateButton = button(SearchIconView.Kind.PRIVATE, "切换私密查询", SOFT);
         header.addView(privateButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
         privateButton.setOnClickListener(v -> togglePrivateMode());
-        page.addView(header, new LinearLayout.LayoutParams(-1, dp(52)));
+        page.addView(header, new LinearLayout.LayoutParams(-1, dp(48)));
 
         body = new FrameLayout(context);
         body.setClipChildren(false);
@@ -216,14 +218,17 @@ final class FloatingSearchView extends FrameLayout {
         drawer = new SearchDrawerView(context, new SearchDrawerView.Callback() {
             public void onNewChat() {
                 input.setText("");
-                setDrawerOpen(false);
-                postDelayed(FloatingSearchView.this::focusInput, 270);
+                hideKeyboard();
+                drawer.endSearch();
+                state.setDrawerOpen(false);
+                animateDrawer(0, FloatingSearchView.this::focusInput);
             }
             public void onHistorySelected(String q) { input.setText(q); setDrawerOpen(false); callback.onLookup(q, false); }
-            public void onSearch() {
-                setDrawerOpen(false);
-                callback.onOpenPage(FloatingSearchRoutes.PAGE_DRAWER_SEARCH,
-                        state.isPrivateMode());
+            public void onEditingChanged() { callback.onEditingChanged(true); }
+            public void onBack() { handleBack(); }
+            public void onFiles(String id) {
+                openPage(id == null ? FloatingSearchRoutes.PAGE_FILES
+                        : FloatingSearchRoutes.PAGE_FILES + "/" + id);
             }
             public void onSettings() {
                 setDrawerOpen(false);
@@ -345,7 +350,8 @@ final class FloatingSearchView extends FrameLayout {
         }
         page.setPadding(0, topInset, 0, Math.max(safeBottom, imeBottom));
         updateCompactLayout();
-        drawer.setPadding(drawer.getPaddingLeft(), topInset + dp(6), drawer.getPaddingRight(), safeBottom + dp(12));
+        drawer.setPadding(drawer.getPaddingLeft(), topInset + dp(6), drawer.getPaddingRight(),
+                Math.max(safeBottom, imeBottom) + dp(8));
         positionMenu();
     }
 
@@ -433,6 +439,10 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     void handleBack() {
+        if (state.isDrawerOpen() && drawer.isSearching() && !state.isKeyboardVisible()) {
+            drawer.endSearch();
+            return;
+        }
         switch (state.onBack()) {
             case CLOSE_MENU: closeMenu(); break;
             case HIDE_KEYBOARD: hideKeyboard(); break;
@@ -611,16 +621,28 @@ final class FloatingSearchView extends FrameLayout {
     private void setDrawerOpen(boolean open) {
         closeMenu();
         if (open) { hideKeyboard(); drawer.refreshHistory(); }
+        else { hideKeyboard(); drawer.endSearch(); }
         state.setDrawerOpen(open);
         animateDrawer(open ? 1 : 0);
     }
 
     private void animateDrawer(float target) {
+        animateDrawer(target, null);
+    }
+
+    private void animateDrawer(float target, Runnable after) {
         if (drawerAnimator != null) drawerAnimator.cancel();
         drawerAnimator = ValueAnimator.ofFloat(drawerProgress, target);
         drawerAnimator.setDuration(Math.max(90, (long)(260 * Math.abs(target - drawerProgress))));
         drawerAnimator.setInterpolator(new DecelerateInterpolator(1.6f));
         drawerAnimator.addUpdateListener(a -> applyDrawerProgress((float)a.getAnimatedValue()));
+        drawerAnimator.addListener(new AnimatorListenerAdapter() {
+            private boolean cancelled;
+            @Override public void onAnimationCancel(Animator animation) { cancelled = true; }
+            @Override public void onAnimationEnd(Animator animation) {
+                if (!cancelled && !disposed && after != null) after.run();
+            }
+        });
         drawerAnimator.start();
     }
 
@@ -729,6 +751,7 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     void dispose() {
+        drawer.dispose();
         disposed = true;
         ViewTreeObserver observer = getViewTreeObserver();
         if (observer.isAlive()) {
