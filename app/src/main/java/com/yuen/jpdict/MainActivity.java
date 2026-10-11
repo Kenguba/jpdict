@@ -30,6 +30,9 @@ import java.util.*;
 public class MainActivity extends Activity {
 
     private boolean pendingProjectionSetup=false;
+    private TextView groqStatus;
+    private Button groqKeyButton;
+    private final Runnable groqKeyChanged = this::refreshGroqStatus;
 
     static final Map<String,String[]> WORDS = new LinkedHashMap<>();
     static {
@@ -54,15 +57,12 @@ public class MainActivity extends Activity {
         buildInfo.setTextColor(0xff6f7780);
         root.addView(buildInfo);
 
-        boolean hasGroqKey=GroqKeyStore.hasKey(this);
-        TextView aiStatus=text("Groq AI：" + (hasGroqKey ? "本机 Key 已配置" : "未配置"));
-        aiStatus.setTextSize(14);
-        aiStatus.setTextColor(hasGroqKey ? 0xff118844 : 0xffb00020);
-        root.addView(aiStatus);
-
-        root.addView(button(
-                hasGroqKey ? "🤖 更换 Groq Key" : "🤖 配置 Groq Key",
-                v -> GroqKeyStore.showEditor(this, this::recreate)));
+        groqStatus=text("");
+        groqStatus.setTextSize(14);
+        root.addView(groqStatus);
+        groqKeyButton=button("", v -> GroqKeyStore.showEditor(this, this::refreshGroqStatus));
+        root.addView(groqKeyButton);
+        refreshGroqStatus();
 
         String lastCrash=getSharedPreferences("crash_log",MODE_PRIVATE)
                 .getString("last","");
@@ -153,6 +153,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume(){
         super.onResume();
+        refreshGroqStatus();
         if(Settings.canDrawOverlays(this)){
             startFloatingBubble();
             if(pendingProjectionSetup){
@@ -162,6 +163,24 @@ public class MainActivity extends Activity {
                         Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    @Override protected void onStart(){
+        super.onStart();
+        GroqKeyStore.addChangeListener(groqKeyChanged);
+    }
+
+    @Override protected void onStop(){
+        GroqKeyStore.removeChangeListener(groqKeyChanged);
+        super.onStop();
+    }
+
+    private void refreshGroqStatus(){
+        if(groqStatus==null || groqKeyButton==null) return;
+        boolean configured=GroqKeyStore.hasKey(this);
+        groqStatus.setText("Groq AI：" + (configured ? "Key 已全局配置" : "未配置"));
+        groqStatus.setTextColor(configured ? 0xff118844 : 0xffb00020);
+        groqKeyButton.setText(configured ? "🤖 更换 Groq Key" : "🤖 配置 Groq Key");
     }
 
     void resetCrashDiagnosticsOnUpgrade(){
