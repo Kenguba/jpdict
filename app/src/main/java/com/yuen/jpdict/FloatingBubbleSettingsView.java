@@ -3,15 +3,14 @@ package com.yuen.jpdict;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.TextWatcher;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -19,15 +18,15 @@ import android.widget.Toast;
 
 /** Compact appearance editor matching the search page's gray cards and blue pills. */
 public final class FloatingBubbleSettingsView extends LinearLayout {
-    public interface EditingListener { void onEditingChanged(boolean editing); }
+    public interface PreviewListener { void onPreview(FloatingBubbleAppearance.Config config); }
     private static final int INK = 0xff171819;
     private static final int MUTED = 0xff6d747b;
     private static final int SOFT = 0xfff4f5f6;
     private static final int BLUE = 0xff008fd1;
     private static final int PALE_BLUE = 0xffdef7ff;
-    private final Runnable onChanged;
-    private final EditingListener onEditing;
-    private final FrameLayout preview;
+    private final PreviewListener onPreview;
+    private final Runnable onChooseImage;
+    private final BubbleStyleHistoryView savedStyles;
     private final TextView sizeValue;
     private final TextView opacityValue;
     private final TextView shapeValue;
@@ -44,29 +43,20 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private final BubbleColorPickerView colorPicker;
     private int style;
     private int lastValidColor;
+    private String imageName;
+    private boolean applyingConfig;
 
-    public FloatingBubbleSettingsView(Context context, Runnable onChanged,
-            EditingListener onEditing) {
+    public FloatingBubbleSettingsView(Context context, FloatingBubbleAppearance.Config config,
+            PreviewListener onPreview, Runnable onChooseImage) {
         super(context);
-        this.onChanged = onChanged;
-        this.onEditing = onEditing;
-        FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.load(context);
+        this.onPreview = onPreview;
+        this.onChooseImage = onChooseImage;
+        imageName = config.imageName;
         style = config.style;
         lastValidColor = config.color;
         setOrientation(VERTICAL);
         setPadding(dp(16), dp(4), dp(16), dp(16));
         setBackgroundColor(0xfff2f2f2);
-        TextView note = text("预览", 12, MUTED, false);
-        note.setPadding(dp(4), 0, 0, dp(8));
-        addView(note);
-
-        FrameLayout previewArea = new FrameLayout(context);
-        previewArea.setBackground(background(0xffffffff, 20));
-        preview = new FrameLayout(context);
-        previewArea.addView(preview, new FrameLayout.LayoutParams(config.sizePx(context),
-                config.sizePx(context), Gravity.CENTER));
-        addView(previewArea, new LayoutParams(-1, dp(88)));
-
         LinearLayout adjustments = new LinearLayout(context);
         adjustments.setOrientation(VERTICAL);
         adjustments.setPadding(dp(14), dp(2), dp(14), dp(10));
@@ -94,7 +84,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
             addChoice(styles, button, i);
             button.setOnClickListener(v -> {
                 if (selected == FloatingBubbleAppearance.STYLE_IMAGE
-                        && !FloatingBubbleAppearance.hasCustomImage(context)) {
+                        && !FloatingBubbleAppearance.hasCustomImage(context, draft())) {
                     chooseImage();
                     return;
                 }
@@ -146,21 +136,6 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         colorFields.addView(colorPicker, pickerLayout);
         colorPicker.setColor(config.color);
         colorPicker.setListener(color -> customColor.setText(formatColor(color)));
-        LinearLayout colors = row();
-        colors.setPadding(0, dp(8), 0, 0);
-        int[] palette = {0xff168af2, 0xff171819, 0xff745be8, 0xffd75b97,
-                0xffdf704b, 0xff429580};
-        for (int i = 0; i < palette.length; i++) {
-            final int color = palette[i];
-            TextView swatch = choice("");
-            swatch.setBackground(background(color, 14));
-            swatch.setContentDescription("颜色 " + formatColor(color));
-            LayoutParams colorLayout = new LayoutParams(0, dp(44), 1);
-            if (i > 0) colorLayout.leftMargin = dp(7);
-            colors.addView(swatch, colorLayout);
-            swatch.setOnClickListener(v -> customColor.setText(formatColor(color)));
-        }
-        colorFields.addView(colors, new LayoutParams(-1, -2));
         LayoutParams colorFieldsLayout = new LayoutParams(-1, -2);
         colorFieldsLayout.topMargin = dp(8);
         addView(colorFields, colorFieldsLayout);
@@ -176,6 +151,13 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         choose.setOnClickListener(v -> chooseImage());
         imageFields.addView(choose, new LayoutParams(-1, dp(44)));
         addView(imageFields);
+
+        addSectionLabel("已保存样式 · 最新在左");
+        savedStyles = new BubbleStyleHistoryView(context, configToApply -> {
+            finishEditing();
+            applyConfig(configToApply);
+        });
+        addView(savedStyles, new LayoutParams(-1, dp(64)));
 
         LinearLayout actions = row();
         LayoutParams actionsLayout = new LayoutParams(-1, dp(44));
@@ -216,25 +198,39 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         refreshPreview();
     }
 
-    private FloatingBubbleAppearance.Config draft() {
+    public FloatingBubbleAppearance.Config draft() {
         Integer color = parseColor(customColor.getText().toString());
         if (color != null) lastValidColor = color;
         return new FloatingBubbleAppearance.Config(
                 size.getProgress() + FloatingBubbleAppearance.MIN_SIZE_DP,
                 opacity.getProgress() + FloatingBubbleAppearance.MIN_OPACITY,
-                style, 100 - roundness.getProgress(), customText.getText().toString(), lastValidColor);
+                style, 100 - roundness.getProgress(), customText.getText().toString(), lastValidColor,
+                imageName);
+    }
+
+    public Bundle saveDraftState() {
+        Bundle state = draft().toBundle();
+        state.putString("editor_text", customText.getText().toString());
+        state.putString("editor_color", customColor.getText().toString());
+        return state;
+    }
+
+    public void restoreEditorState(Bundle state) {
+        if (state == null) return;
+        applyingConfig = true;
+        customText.setText(state.getString("editor_text", customText.getText().toString()));
+        customColor.setText(state.getString("editor_color", customColor.getText().toString()));
+        applyingConfig = false;
+        refreshPreview();
     }
 
     private void refreshPreview() {
+        if (applyingConfig) return;
         FloatingBubbleAppearance.Config config = draft();
         sizeValue.setText(config.sizeDp + " dp");
         opacityValue.setText(config.opacityPercent + "%");
         shapeValue.setText(config.roundnessPercent == 100 ? "圆形"
                 : config.roundnessPercent == 0 ? "方形" : "圆角 " + config.roundnessPercent + "%");
-        preview.setLayoutParams(new FrameLayout.LayoutParams(config.sizePx(getContext()),
-                config.sizePx(getContext()), Gravity.CENTER));
-        FloatingBubbleAppearance.applyVisual(preview, config);
-        preview.setAlpha(config.alpha());
         customFields.setVisibility(style == FloatingBubbleAppearance.STYLE_CUSTOM ? VISIBLE : GONE);
         colorFields.setVisibility(style == FloatingBubbleAppearance.STYLE_IMAGE ? GONE : VISIBLE);
         imageFields.setVisibility(style == FloatingBubbleAppearance.STYLE_IMAGE ? VISIBLE : GONE);
@@ -245,6 +241,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         colorPicker.setColor(config.color);
         if (parseColor(customColor.getText().toString()) != null) customColor.setError(null);
         for (int i = 0; i < styleButtons.length; i++) setSelected(styleButtons[i], i == style);
+        savedStyles.setDraft(config);
+        if (onPreview != null) onPreview.onPreview(config);
     }
 
     private boolean saveDraft() {
@@ -263,41 +261,44 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
             Toast.makeText(getContext(), "设置保存失败，请重试", Toast.LENGTH_SHORT).show();
             return false;
         }
-        if (onChanged != null) onChanged.run();
+        savedStyles.reload();
+        refreshPreview();
         return true;
     }
 
-    public void reloadSavedSettings() {
-        FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.load(getContext());
+    private void applyConfig(FloatingBubbleAppearance.Config config) {
+        applyingConfig = true;
         style = config.style;
         lastValidColor = config.color;
+        imageName = config.imageName;
         size.setProgress(config.sizeDp - FloatingBubbleAppearance.MIN_SIZE_DP);
         opacity.setProgress(config.opacityPercent - FloatingBubbleAppearance.MIN_OPACITY);
         roundness.setProgress(100 - config.roundnessPercent);
         customText.setText(config.text);
         customColor.setText(formatColor(config.color));
+        applyingConfig = false;
         refreshPreview();
+    }
+
+    public void setDraftImage(String name) {
+        FloatingBubbleAppearance.Config previous = draft();
+        FloatingBubbleAppearance.Config image = new FloatingBubbleAppearance.Config(previous.sizeDp,
+                previous.opacityPercent, FloatingBubbleAppearance.STYLE_IMAGE,
+                previous.roundnessPercent, previous.text, previous.color, name);
+        if (!FloatingBubbleAppearance.hasCustomImage(getContext(), image)) return;
+        applyConfig(image);
+        FloatingBubbleAppearance.cleanupImages(getContext(), image);
     }
 
     private void chooseImage() {
-        if (!saveDraft()) return;
         finishEditing();
-        BubbleImagePickerActivity.launch(getContext());
+        if (onChooseImage != null) onChooseImage.run();
     }
 
     private void resetDefaults() {
-        FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.defaults();
-        style = config.style;
-        size.setProgress(config.sizeDp - FloatingBubbleAppearance.MIN_SIZE_DP);
-        opacity.setProgress(config.opacityPercent - FloatingBubbleAppearance.MIN_OPACITY);
-        roundness.setProgress(100 - config.roundnessPercent);
-        customText.setText(config.text);
-        customColor.setText(formatColor(config.color));
-        refreshPreview();
-        if (saveDraft()) {
-            finishEditing();
-            Toast.makeText(getContext(), "已恢复默认悬浮按钮", Toast.LENGTH_SHORT).show();
-        }
+        applyConfig(FloatingBubbleAppearance.defaults());
+        finishEditing();
+        Toast.makeText(getContext(), "默认样式已预览，保存后采用", Toast.LENGTH_SHORT).show();
     }
 
     private void finishEditing() {
@@ -306,7 +307,6 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         InputMethodManager manager = (InputMethodManager) getContext().getSystemService(
                 Context.INPUT_METHOD_SERVICE);
         if (manager != null) manager.hideSoftInputFromWindow(getWindowToken(), 0);
-        if (onEditing != null) onEditing.onEditingChanged(false);
     }
 
     private EditText editor(String hint, String value, int maxLength) {
@@ -323,15 +323,6 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         field.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE
                 | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
                 | android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN);
-        field.setOnTouchListener((v, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN && onEditing != null) {
-                onEditing.onEditingChanged(true);
-            }
-            return false;
-        });
-        field.setOnFocusChangeListener((v, focused) -> {
-            if (focused && onEditing != null) onEditing.onEditingChanged(true);
-        });
         return field;
     }
 

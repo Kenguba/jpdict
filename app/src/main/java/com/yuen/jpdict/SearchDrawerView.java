@@ -71,7 +71,7 @@ public final class SearchDrawerView extends LinearLayout {
         setContentDescription("查询侧栏");
 
         LinearLayout account = horizontal();
-        account.setPadding(dp(2), dp(12), 0, dp(18));
+        account.setPadding(dp(2), dp(6), 0, dp(6));
         TextView avatar = text("JP", 17, 0xffffffff);
         avatar.setGravity(Gravity.CENTER);
         avatar.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -91,21 +91,7 @@ public final class SearchDrawerView extends LinearLayout {
         local.setPadding(0, dp(3), 0, 0);
         identity.addView(local);
         account.addView(identity, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        LinearLayout close = horizontal();
-        close.setGravity(Gravity.CENTER);
-        close.setBackground(ripple(0xffffffff, 24));
-        close.setContentDescription("收起侧栏");
-        SearchIconView closeOne = icon(SearchIconView.Kind.CHEVRON, INK);
-        SearchIconView closeTwo = icon(SearchIconView.Kind.CHEVRON, INK);
-        closeOne.setRotation(-90); closeTwo.setRotation(-90);
-        close.addView(closeOne, new LayoutParams(dp(15), dp(22)));
-        LayoutParams second = new LayoutParams(dp(15), dp(22));
-        second.leftMargin = -dp(5);
-        close.addView(closeTwo, second);
-        close.setOnClickListener(v -> callback.onClose());
-        account.addView(close, new LayoutParams(dp(44), dp(44)));
-        addView(account, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        addView(account, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
 
         ScrollView scroll = new ScrollView(context);
         scroll.setFillViewport(true);
@@ -122,7 +108,8 @@ public final class SearchDrawerView extends LinearLayout {
         utilities.setOrientation(VERTICAL);
         utilities.setBackground(shape(0xffffffff, 22));
         utilities.setClipToOutline(true);
-        addUtility(utilities, SearchIconView.Kind.TASK, "自动化任务", true);
+        // 暂时隐藏，待功能接入后恢复。
+        // addUtility(utilities, SearchIconView.Kind.TASK, "自动化任务", true);
         addUtility(utilities, SearchIconView.Kind.IMAGE, "照片库", false);
         addUtility(utilities, SearchIconView.Kind.FILE, "本地文件", false);
         // 暂时隐藏，待功能接入后恢复。

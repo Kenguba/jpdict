@@ -20,17 +20,18 @@ import java.io.InputStream;
 
 /** Permission-free system image picker that retains only a small private copy. */
 public final class BubbleImagePickerActivity extends Activity {
+    public static final int REQUEST_PICK_IMAGE = 41;
+    public static final String EXTRA_IMAGE_NAME = "bubble_image_name";
     private static final int REQUEST_IMAGE = 1;
     private static final String STATE_IMAGE_URI = "image_uri";
     private Uri selectedImage;
     private boolean returning;
 
-    public static void launch(Context context) {
+    public static void launch(Activity context) {
         try {
             Intent picker = new Intent(context, BubbleImagePickerActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION | Intent.FLAG_ACTIVITY_NO_USER_ACTION);
-            if (!(context instanceof Activity)) picker.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(picker);
+            context.startActivityForResult(picker, REQUEST_PICK_IMAGE);
         } catch (ActivityNotFoundException exception) {
             Toast.makeText(context, "无法打开图片选择器", Toast.LENGTH_SHORT).show();
         }
@@ -80,28 +81,29 @@ public final class BubbleImagePickerActivity extends Activity {
         Context context = getApplicationContext();
         Uri uri = selectedImage;
         new Thread(() -> {
-            boolean saved = false;
+            String imageName = null;
             try {
-                importImage(context, uri);
-                FloatingBubbleAppearance.invalidateImage();
-                saved = FloatingBubbleAppearance.save(context,
-                        FloatingBubbleAppearance.load(context).withStyle(
-                                FloatingBubbleAppearance.STYLE_IMAGE));
+                imageName = importImage(context, uri);
             } catch (IOException | RuntimeException | OutOfMemoryError exception) {
                 // A cancelled permission, invalid image or failed write leaves the
                 // previous appearance usable; no provider URI is persisted.
             }
-            final boolean completed = saved;
+            final String imported = imageName;
             runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(this, completed ? "悬浮按钮图片已更新"
+                if (isFinishing() || isDestroyed()) {
+                    if (imported != null) new File(context.getFilesDir(), imported).delete();
+                    return;
+                }
+                if (imported != null) setResult(RESULT_OK,
+                        new Intent().putExtra(EXTRA_IMAGE_NAME, imported));
+                Toast.makeText(this, imported != null ? "图片已预览，保存设置后采用"
                         : "图片无法读取或保存，请选择另一张图片", Toast.LENGTH_LONG).show();
                 returnToAppearancePage();
             });
         }, "BubbleImageImport").start();
     }
 
-    private static void importImage(Context context, Uri uri) throws IOException {
+    private static String importImage(Context context, Uri uri) throws IOException {
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
         try (InputStream input = context.getContentResolver().openInputStream(uri)) {
@@ -134,7 +136,7 @@ public final class BubbleImagePickerActivity extends Activity {
                         Math.max(1, Math.round(bitmap.getHeight() * 256f / max)), true);
                 if (scaled != bitmap) { bitmap.recycle(); bitmap = scaled; }
             }
-            temporary = File.createTempFile("bubble-image-", ".png", context.getFilesDir());
+            temporary = File.createTempFile("floating-bubble-image-", ".png", context.getFilesDir());
             try (FileOutputStream output = new FileOutputStream(temporary)) {
                 if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
                     throw new IOException("Image could not be saved");
@@ -142,9 +144,9 @@ public final class BubbleImagePickerActivity extends Activity {
                 output.flush();
                 output.getFD().sync();
             }
-            if (!temporary.renameTo(FloatingBubbleAppearance.imageFile(context))) {
-                throw new IOException("Image could not be installed");
-            }
+            String name = temporary.getName();
+            temporary = null; // Each immutable copy belongs to its draft or saved style.
+            return name;
         } finally {
             bitmap.recycle();
             if (temporary != null && temporary.exists()) temporary.delete();

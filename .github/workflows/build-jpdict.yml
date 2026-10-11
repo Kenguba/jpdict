@@ -141,6 +141,15 @@ jobs:
             :app:assembleArm64Debug \
             :app:assembleArmv7Debug
 
+      - name: Verify floating bubble configuration and history
+        shell: bash
+        run: |
+          if [[ "$HAS_SIGNING" == 'true' ]]; then
+            sh scripts/test-floating-bubble-config.sh arm64Release
+          else
+            sh scripts/test-floating-bubble-config.sh arm64Debug
+          fi
+
       - name: Prepare signed APK files
         if: env.HAS_SIGNING == 'true'
         shell: bash

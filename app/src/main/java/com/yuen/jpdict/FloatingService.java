@@ -728,7 +728,7 @@ public class FloatingService extends Service {
 
     private FrameLayout createBubbleVisual() {
         FrameLayout visual = FloatingBubbleAppearance.createVisual(this);
-        visual.setAlpha(FloatingBubbleAppearance.load(this).alpha());
+        visual.setAlpha(FloatingBubbleAppearance.current(this).alpha());
         return visual;
     }
 
@@ -845,7 +845,7 @@ public class FloatingService extends Service {
         // Both windows stay mounted. The underlying window is explicitly
         // invisible while the proxy owns drawing and touches.
         bubble.setVisibility(covered ? View.INVISIBLE : View.VISIBLE);
-        bubble.setAlpha(covered ? 0f : FloatingBubbleAppearance.load(this).alpha());
+        bubble.setAlpha(covered ? 0f : FloatingBubbleAppearance.current(this).alpha());
         // InputDispatcher checks the window opacity rather than View.alpha
         // before allowing touches through an untrusted overlay on Android 12+.
         bubbleLp.alpha = covered ? 0f : 1f;
@@ -866,15 +866,17 @@ public class FloatingService extends Service {
 
     private void applyBubbleAppearance() {
         if (bubble == null || bubbleLp == null || wm == null) return;
-        FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.load(this);
-        int size = FloatingBubbleAppearance.sizePx(this);
+        FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.current(this);
+        int size = config.sizePx(this);
         FloatingBubbleAppearance.applyVisual((FrameLayout)bubble, config);
         bubbleLp.width = size;
         bubbleLp.height = size;
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        bubbleLp.x = Math.max(0, Math.min(bubbleLp.x, dm.widthPixels - size));
-        bubbleLp.y = Math.max(0, Math.min(bubbleLp.y, dm.heightPixels - size));
-        getSharedPreferences("float_pos", MODE_PRIVATE).edit()
+        android.content.SharedPreferences position = getSharedPreferences("float_pos", MODE_PRIVATE);
+        // A larger draft may need to fit on screen; retain the user's saved anchor for rollback.
+        bubbleLp.x = Math.max(0, Math.min(position.getInt("x", bubbleLp.x), dm.widthPixels - size));
+        bubbleLp.y = Math.max(0, Math.min(position.getInt("y", bubbleLp.y), dm.heightPixels - size));
+        if (!FloatingBubbleAppearance.isPreviewing()) position.edit()
                 .putInt("x", bubbleLp.x).putInt("y", bubbleLp.y).apply();
         setOriginalBubbleProxyCovered(bubbleTopProxy != null);
         if (bubbleTopProxy != null && bubbleTopProxyLp != null) {
