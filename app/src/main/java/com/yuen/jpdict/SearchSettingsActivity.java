@@ -50,9 +50,10 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
         LinearLayout root = createPage("设置", true);
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
-        scroll.setPadding(dp(12), dp(16), dp(12), dp(20));
+        scroll.setPadding(dp(12), 0, dp(12), 0);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(0, dp(8), 0, dp(20));
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
 
         addIdentityCard(content);
@@ -177,7 +178,8 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
         if (bubbleSummary == null) return;
         FloatingBubbleAppearance.Config saved = FloatingBubbleAppearance.load(this);
         bubbleSummary.setText(saved.sizeDp + " dp · " + saved.opacityPercent + "% · "
-                + (saved.shape == FloatingBubbleAppearance.SHAPE_CIRCLE ? "圆形" : "圆角方形"));
+                + (saved.roundnessPercent == 100 ? "圆形"
+                        : saved.roundnessPercent == 0 ? "方形" : "圆角 " + saved.roundnessPercent + "%"));
         refreshGroqStatus();
     }
 

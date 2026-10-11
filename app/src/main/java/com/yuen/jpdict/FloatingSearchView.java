@@ -28,6 +28,7 @@ import android.view.WindowInsetsAnimation;
 import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputConnection;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -106,6 +107,7 @@ final class FloatingSearchView extends FrameLayout {
         page.setOrientation(LinearLayout.VERTICAL);
         page.setBackgroundColor(PAPER);
         page.setClipChildren(false);
+        page.setClipToPadding(false);
         addView(page, new FrameLayout.LayoutParams(-1, -1));
 
         header = new LinearLayout(context);
@@ -132,6 +134,7 @@ final class FloatingSearchView extends FrameLayout {
         bottom = new LinearLayout(context);
         bottom.setOrientation(LinearLayout.VERTICAL);
         bottom.setClipChildren(false);
+        bottom.setClipToPadding(false);
         bottom.setPadding(0, dp(8), 0, dp(8));
         recommendations = new HorizontalScrollView(context);
         recommendations.setHorizontalScrollBarEnabled(false);
@@ -150,8 +153,8 @@ final class FloatingSearchView extends FrameLayout {
         composer = new LinearLayout(context);
         composer.setOrientation(LinearLayout.VERTICAL);
         composer.setPadding(dp(8), dp(5), dp(8), dp(7));
-        composer.setBackground(shape(PAPER, 26));
-        composer.setElevation(dp(3));
+        composer.setBackground(shape(Color.WHITE, 26));
+        composer.setElevation(dp(4));
         input = new Editor(context);
         input.setTextColor(INK);
         input.setHintTextColor(MUTED);
@@ -164,7 +167,8 @@ final class FloatingSearchView extends FrameLayout {
         input.setMinimumHeight(0);
         input.setGravity(Gravity.TOP);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        input.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        input.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                | EditorInfo.IME_FLAG_NO_FULLSCREEN);
         input.setContentDescription("查询输入框");
         input.setText(query == null ? "" : query);
         input.setSelection(input.length());
@@ -251,9 +255,14 @@ final class FloatingSearchView extends FrameLayout {
             public void afterTextChanged(Editable s) {}
         });
         input.setOnEditorActionListener((v, action, event) -> {
-            if (action == EditorInfo.IME_ACTION_SEARCH || action == EditorInfo.IME_ACTION_SEND ||
-                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_UP)) {
-                submit(); return true;
+            if (event != null) {
+                if (event.getKeyCode() != KeyEvent.KEYCODE_ENTER || event.isShiftPressed()) return false;
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) submit();
+                return true;
+            }
+            if (action == EditorInfo.IME_ACTION_SEARCH || action == EditorInfo.IME_ACTION_SEND) {
+                submit();
+                return true;
             }
             return false;
         });
@@ -390,7 +399,8 @@ final class FloatingSearchView extends FrameLayout {
         privateButton.setBackground(ripple(privacy ? 0xffdedede : SOFT, 24));
         privateButton.setContentDescription(privacy ? "退出私密查询" : "进入私密查询");
         input.setHint(privacy ? "临时对话" : "随便问点什么");
-        input.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI |
+        input.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI |
+                EditorInfo.IME_FLAG_NO_FULLSCREEN |
                 (privacy && Build.VERSION.SDK_INT >= 26 ? EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING : 0));
         if (input.isFocused()) ((InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).restartInput(input);
         recommendations.setVisibility(privacy ? GONE : VISIBLE);
@@ -776,6 +786,13 @@ final class FloatingSearchView extends FrameLayout {
     @android.annotation.SuppressLint("AppCompatCustomView")
     private final class Editor extends EditText {
         Editor(Context context) { super(context); }
+        @Override public InputConnection onCreateInputConnection(EditorInfo info) {
+            InputConnection connection = super.onCreateInputConnection(info);
+            // TextView adds NO_ENTER_ACTION for multiline editors; retain paste/Shift+Enter
+            // support while letting the software keyboard expose the Send action.
+            info.imeOptions &= ~EditorInfo.IME_FLAG_NO_ENTER_ACTION;
+            return connection;
+        }
         @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
             if (keyCode == KeyEvent.KEYCODE_BACK) {
                 if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) handleBack();
