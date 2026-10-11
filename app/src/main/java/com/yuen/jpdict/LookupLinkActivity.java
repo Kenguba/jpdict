@@ -369,9 +369,14 @@ public final class LookupLinkActivity extends Activity {
             finishBridge();
             return;
         }
+        boolean openBubbleSettings = source.getBooleanExtra(
+                BubbleImagePickerActivity.EXTRA_OPEN_BUBBLE_SETTINGS, false);
+        source.removeExtra(BubbleImagePickerActivity.EXTRA_OPEN_BUBBLE_SETTINGS);
         Intent show = new Intent(this, FloatingService.class)
                 .setAction(FloatingService.ACTION_SHOW_SEARCH)
                 .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
+                .putExtra(BubbleImagePickerActivity.EXTRA_OPEN_BUBBLE_SETTINGS,
+                        openBubbleSettings)
                 .putExtra(FloatingService.EXTRA_SEARCH_QUERY,
                         source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY));
         try {

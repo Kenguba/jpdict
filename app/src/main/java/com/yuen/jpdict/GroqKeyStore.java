@@ -1,22 +1,17 @@
 package com.yuen.jpdict;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.graphics.Typeface;
+import android.os.Handler;
+import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
-import android.text.InputType;
 import android.util.Base64;
-import android.widget.CheckBox;
-import android.widget.EditText;
-import android.widget.LinearLayout;
-import android.widget.TextView;
-import android.widget.Toast;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -28,8 +23,38 @@ public final class GroqKeyStore {
     private static final String ALIAS = "jpdict_groq_api_key";
     private static final String KEY_CIPHER = "ciphertext";
     private static final String KEY_IV = "iv";
+    private static final String KEY_REVISION = "revision";
+    private static final CopyOnWriteArraySet<Runnable> CHANGE_LISTENERS =
+            new CopyOnWriteArraySet<>();
 
     private GroqKeyStore() {}
+
+    private static SharedPreferences preferences(Context context) {
+        Context app = context.getApplicationContext();
+        return (app == null ? context : app).getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    /** Every entry point reads the same app-wide encrypted key and revision. */
+    public static long revision(Context context) {
+        return preferences(context).getLong(KEY_REVISION, 0L);
+    }
+
+    public static void addChangeListener(Runnable listener) {
+        if (listener != null) CHANGE_LISTENERS.add(listener);
+    }
+
+    public static void removeChangeListener(Runnable listener) {
+        if (listener != null) CHANGE_LISTENERS.remove(listener);
+    }
+
+    private static void notifyChanged() {
+        Handler main = new Handler(Looper.getMainLooper());
+        for (Runnable listener : CHANGE_LISTENERS) {
+            main.post(() -> {
+                if (CHANGE_LISTENERS.contains(listener)) listener.run();
+            });
+        }
+    }
 
     public static boolean hasKey(Context context) {
         String key = load(context);
@@ -38,7 +63,7 @@ public final class GroqKeyStore {
 
     public static String load(Context context) {
         try {
-            SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            SharedPreferences p = preferences(context);
             String ciphertext = p.getString(KEY_CIPHER, "");
             String iv = p.getString(KEY_IV, "");
             if (ciphertext.isEmpty() || iv.isEmpty()) return "";
@@ -68,25 +93,33 @@ public final class GroqKeyStore {
 
             byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
 
-            return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            SharedPreferences p = preferences(context);
+            boolean saved = p
                     .edit()
                     .putString(KEY_CIPHER,
                             Base64.encodeToString(encrypted, Base64.NO_WRAP))
                     .putString(KEY_IV,
                             Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
+                    .putLong(KEY_REVISION, p.getLong(KEY_REVISION, 0L) + 1L)
                     .commit();
+            if (saved) notifyChanged();
+            return saved;
         } catch (Throwable t) {
             return false;
         }
     }
 
-    public static void clear(Context context) {
+    public static boolean clear(Context context) {
         try {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            SharedPreferences p = preferences(context);
+            boolean cleared = p
                     .edit()
                     .clear()
+                    .putLong(KEY_REVISION, p.getLong(KEY_REVISION, 0L) + 1L)
                     .commit();
-        } catch (Throwable ignored) {}
+            if (cleared) notifyChanged();
+            return cleared;
+        } catch (Throwable ignored) { return false; }
     }
 
     private static SecretKey getOrCreateSecretKey() throws Exception {
@@ -112,85 +145,6 @@ public final class GroqKeyStore {
     }
 
     public static void showEditor(Activity activity, Runnable onChanged) {
-        int pad = Math.round(
-                20 * activity.getResources().getDisplayMetrics().density);
-
-        LinearLayout box = new LinearLayout(activity);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(pad, pad / 2, pad, 0);
-
-        TextView note = new TextView(activity);
-        note.setText(
-                hasKey(activity)
-                        ? "本机已经保存 Groq Key。输入新 Key 可以覆盖；留空不会修改。"
-                        : "请输入自己的 Groq API Key。Key 会使用 Android Keystore 加密后仅保存在本机。");
-        note.setTextSize(15);
-        note.setPadding(0, 0, 0, pad / 2);
-        box.addView(note);
-
-        EditText input = new EditText(activity);
-        input.setSingleLine(true);
-        input.setHint("gsk_...");
-        input.setTypeface(Typeface.MONOSPACE);
-        input.setInputType(
-                InputType.TYPE_CLASS_TEXT |
-                        InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        box.addView(input, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        CheckBox show = new CheckBox(activity);
-        show.setText("显示 Key");
-        show.setOnCheckedChangeListener((button, checked) -> {
-            int pos = input.getSelectionStart();
-            input.setInputType(
-                    InputType.TYPE_CLASS_TEXT |
-                            (checked
-                                    ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-                                    : InputType.TYPE_TEXT_VARIATION_PASSWORD));
-            input.setTypeface(Typeface.MONOSPACE);
-            if (pos >= 0 && pos <= input.length()) input.setSelection(pos);
-        });
-        box.addView(show);
-
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle("Groq AI 设置")
-                .setView(box)
-                .setNegativeButton("取消", null)
-                .setNeutralButton(
-                        hasKey(activity) ? "清除本机 Key" : null,
-                        null)
-                .setPositiveButton("保存", null)
-                .create();
-
-        dialog.setOnShowListener(x -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String value = input.getText().toString().trim();
-                if (value.isEmpty()) {
-                    Toast.makeText(activity, "没有输入 Key，未修改", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-
-                if (!save(activity, value)) {
-                    Toast.makeText(activity, "Key 加密保存失败", Toast.LENGTH_LONG).show();
-                    return;
-                }
-
-                Toast.makeText(activity, "Groq Key 已加密保存在本机", Toast.LENGTH_SHORT).show();
-                dialog.dismiss();
-                if (onChanged != null) onChanged.run();
-            });
-
-            if (hasKey(activity)) {
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
-                    clear(activity);
-                    Toast.makeText(activity, "本机 Groq Key 已清除", Toast.LENGTH_SHORT).show();
-                    dialog.dismiss();
-                    if (onChanged != null) onChanged.run();
-                });
-            }
-        });
-
-        dialog.show();
+        GroqKeySettings.showDialog(activity, onChanged);
     }
 }
