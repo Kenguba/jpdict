@@ -43,7 +43,7 @@ final class FloatingSearchView extends FrameLayout {
         void onLookup(String query, boolean privateMode);
         void onPrivateModeChanged(boolean privateMode);
         void onEditingChanged(boolean editing);
-        void onComposerBoundsChanged(Rect bounds, boolean keyboardVisible);
+        void onOpenPage(String page, boolean privateMode);
         void onClose();
     }
 
@@ -52,7 +52,6 @@ final class FloatingSearchView extends FrameLayout {
     private static final int MUTED = 0xff949698;
     private static final int SOFT = 0xfff2f2f2;
     private final Callback callback;
-    private final Rect composerBounds = new Rect();
     private final Rect legacyVisibleFrame = new Rect();
     private final int[] legacyRootPosition = new int[2];
     private final FloatingSearchState state = new FloatingSearchState();
@@ -73,7 +72,6 @@ final class FloatingSearchView extends FrameLayout {
     private View emptyView;
     private View menuDismiss;
     private LinearLayout menuCard;
-    private View settingsCard;
     private final TextView[] tabLabels = new TextView[3];
     private final View[] tabIndicators = new View[3];
     private MenuScroll menuSurface;
@@ -110,21 +108,21 @@ final class FloatingSearchView extends FrameLayout {
 
         header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(12), dp(6), dp(12), dp(6));
+        header.setPadding(dp(12), dp(2), dp(12), dp(2));
         SearchIconView menu = button(SearchIconView.Kind.MENU, "打开侧栏", SOFT);
         header.addView(menu, new LinearLayout.LayoutParams(dp(44), dp(44)));
         menu.setOnClickListener(v -> setDrawerOpen(true));
         LinearLayout tabs = new LinearLayout(context);
         tabs.setGravity(Gravity.CENTER);
-        addHeaderTab(tabs, "提问", 0, this::closeSettings);
+        addHeaderTab(tabs, "提问", 0, () -> {});
         addHeaderTab(tabs, "图片", 1, () -> unavailable("图片"));
-        addHeaderTab(tabs, "设置", 2, this::showSettings);
+        addHeaderTab(tabs, "设置", 2, () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
         selectSettingsTab(false);
-        header.addView(tabs, new LinearLayout.LayoutParams(0, dp(56), 1));
+        header.addView(tabs, new LinearLayout.LayoutParams(0, dp(44), 1));
         privateButton = button(SearchIconView.Kind.PRIVATE, "切换私密查询", SOFT);
         header.addView(privateButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
         privateButton.setOnClickListener(v -> togglePrivateMode());
-        page.addView(header, new LinearLayout.LayoutParams(-1, dp(68)));
+        page.addView(header, new LinearLayout.LayoutParams(-1, dp(52)));
 
         body = new FrameLayout(context);
         body.setClipChildren(false);
@@ -140,8 +138,10 @@ final class FloatingSearchView extends FrameLayout {
         LinearLayout pills = new LinearLayout(context);
         pills.setGravity(Gravity.CENTER_VERTICAL);
         recommendations.addView(pills, new HorizontalScrollView.LayoutParams(-2, -1));
-        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, 0xffdef7ff, 0xff009bdc, this::showSettings);
-        addPill(pills, "Groq Key", SearchIconView.Kind.MARK, SOFT, INK, this::showKeySettings);
+        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, 0xffdef7ff, 0xff009bdc,
+                () -> openPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS));
+        addPill(pills, "Groq Key", SearchIconView.Kind.MARK, SOFT, INK,
+                () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
         addPill(pills, "多语种查词", SearchIconView.Kind.SEARCH, 0xffe7f5ed, 0xff15996c, this::focusInput);
         bottom.addView(recommendations, new LinearLayout.LayoutParams(-1, dp(50)));
 
@@ -214,10 +214,27 @@ final class FloatingSearchView extends FrameLayout {
         drawerDismiss.setOnClickListener(v -> setDrawerOpen(false));
         addView(drawerDismiss, new FrameLayout.LayoutParams(-1, -1));
         drawer = new SearchDrawerView(context, new SearchDrawerView.Callback() {
-            public void onNewChat() { input.setText(""); closeSettings(); setDrawerOpen(false); }
+            public void onNewChat() {
+                input.setText("");
+                setDrawerOpen(false);
+                postDelayed(FloatingSearchView.this::focusInput, 270);
+            }
             public void onHistorySelected(String q) { input.setText(q); setDrawerOpen(false); callback.onLookup(q, false); }
-            public void onSearch() { closeSettings(); setDrawerOpen(false); postDelayed(FloatingSearchView.this::focusInput, 270); }
-            public void onSettings() { setDrawerOpen(false); showSettings(); }
+            public void onSearch() {
+                setDrawerOpen(false);
+                callback.onOpenPage(FloatingSearchRoutes.PAGE_DRAWER_SEARCH,
+                        state.isPrivateMode());
+            }
+            public void onSettings() {
+                setDrawerOpen(false);
+                callback.onOpenPage(FloatingSearchRoutes.PAGE_SETTINGS,
+                        state.isPrivateMode());
+            }
+            public void onBubbleSettings() {
+                setDrawerOpen(false);
+                callback.onOpenPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS,
+                        state.isPrivateMode());
+            }
             public void onClose() { setDrawerOpen(false); }
             public void onUnavailable(String feature) { unavailable(feature); }
         });
@@ -356,7 +373,7 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private void togglePrivateMode() {
-        closeMenu(); closeSettings();
+        closeMenu();
         state.togglePrivateMode();
         callback.onPrivateModeChanged(state.isPrivateMode());
         applyPrivateMode(true);
@@ -420,9 +437,7 @@ final class FloatingSearchView extends FrameLayout {
             case CLOSE_MENU: closeMenu(); break;
             case HIDE_KEYBOARD: hideKeyboard(); break;
             case CLOSE_DRAWER: setDrawerOpen(false); break;
-            case CLOSE_SEARCH:
-                if (settingsCard != null) closeSettings(); else callback.onClose();
-                break;
+            case CLOSE_SEARCH: callback.onClose(); break;
         }
     }
 
@@ -576,7 +591,7 @@ final class FloatingSearchView extends FrameLayout {
         tabIndicators[index] = indicator;
         tab.setContentDescription(index == 1 ? "图片，尚未接入" : label);
         tab.setOnClickListener(v -> action.run());
-        tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(52), 1));
+        tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(44), 1));
     }
 
     private void selectSettingsTab(boolean settings) {
@@ -587,59 +602,10 @@ final class FloatingSearchView extends FrameLayout {
         }
     }
 
-    void openBubbleSettings() { showSettings(); }
-
-    private void showSettings() {
-        hideKeyboard(); closeMenu(); closeSettings();
-        LinearLayout content = new LinearLayout(getContext());
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.addView(new FloatingBubbleSettingsView(getContext(),
-                () -> drawer.refreshHistory(), callback::onEditingChanged),
-                new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout keyRow = new LinearLayout(getContext());
-        keyRow.setOrientation(LinearLayout.VERTICAL);
-        keyRow.setPadding(dp(22), dp(18), dp(22), dp(18));
-        keyRow.setBackground(ripple(SOFT, 24));
-        keyRow.addView(text("Groq Key", 17, INK, true));
-        TextView keyStatus = text(GroqKeyStore.hasKey(getContext())
-                ? "已配置 · 所有查词入口共用" : "配置 Key", 13, 0xff008fd1, false);
-        keyStatus.setPadding(0, dp(8), 0, 0);
-        keyRow.addView(keyStatus);
-        keyRow.setContentDescription("配置全局 Groq Key");
-        keyRow.setOnClickListener(v -> showKeySettings());
-        LinearLayout.LayoutParams keyLp = new LinearLayout.LayoutParams(-1, -2);
-        keyLp.topMargin = dp(16);
-        content.addView(keyRow, keyLp);
-        showSettingsSurface(content);
-    }
-
-    private void showKeySettings() {
-        hideKeyboard(); closeMenu(); closeSettings();
-        LinearLayout panel = GroqKeySettings.createPanel(getContext(),
-                () -> drawer.refreshHistory(), this::showSettings,
-                () -> callback.onEditingChanged(true), this::handleBack);
-        showSettingsSurface(panel);
-    }
-
-    private void showSettingsSurface(View content) {
-        bottom.setVisibility(GONE);
-        if (emptyView != null) emptyView.setVisibility(GONE);
-        selectSettingsTab(true);
-        ScrollView settingsScroll = new ScrollView(getContext());
-        settingsScroll.setFillViewport(false);
-        settingsScroll.setVerticalScrollBarEnabled(false);
-        settingsScroll.setPadding(dp(20), dp(20), dp(20), dp(20));
-        settingsScroll.addView(content, new ScrollView.LayoutParams(-1, -2));
-        settingsCard = settingsScroll;
-        body.addView(settingsScroll, new FrameLayout.LayoutParams(-1, -1));
-        settingsScroll.setAlpha(0); settingsScroll.animate().alpha(1).setDuration(180).start();
-    }
-
-    private void closeSettings() {
-        if (settingsCard != null) { hideKeyboard(); body.removeView(settingsCard); }
-        settingsCard = null; bottom.setVisibility(VISIBLE);
-        if (emptyView != null) emptyView.setVisibility(VISIBLE);
-        selectSettingsTab(false);
+    private void openPage(String page) {
+        hideKeyboard();
+        closeMenu();
+        callback.onOpenPage(page, state.isPrivateMode());
     }
 
     private void setDrawerOpen(boolean open) {
@@ -693,9 +659,8 @@ final class FloatingSearchView extends FrameLayout {
             composerLp.setMargins(dp(8), dp(tight ? 2 : 10), dp(8), 0);
             composer.setLayoutParams(composerLp);
         }
-        // The input card sits flush with the animated keyboard boundary.
-        // Keep its usual bottom breathing room only while the keyboard is shut.
-        int bottomPadding = state.isKeyboardVisible() ? 0 : dp(8);
+        // Maintain an 8dp gap above the keyboard and the display's lower edge.
+        int bottomPadding = dp(8);
         int topPadding = dp(tight ? 2 : 8);
         if (bottom.getPaddingTop() != topPadding || bottom.getPaddingBottom() != bottomPadding) {
             bottom.setPadding(0, topPadding, 0, bottomPadding);
@@ -760,10 +725,6 @@ final class FloatingSearchView extends FrameLayout {
     @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
         super.onLayout(changed, l, t, r, b);
         if (emptyView != null) emptyView.setVisibility(body.getHeight() >= dp(state.isPrivateMode() ? 230 : 84) ? VISIBLE : INVISIBLE);
-        if (!disposed) {
-            composer.getGlobalVisibleRect(composerBounds);
-            callback.onComposerBoundsChanged(composerBounds, state.isKeyboardVisible());
-        }
         if (changed && menuCard != null) post(this::positionMenu);
     }
 

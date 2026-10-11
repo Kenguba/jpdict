@@ -77,6 +77,27 @@
             android:theme="@style/Theme.LookupLinkBridge"/>
 
         <activity
+            android:name=".SearchSettingsActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Jpdict.Page"/>
+
+        <activity
+            android:name=".FloatingBubbleSettingsActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Jpdict.Page"/>
+
+        <activity
+            android:name=".SearchDrawerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Jpdict.Page"/>
+
+        <activity
             android:name=".LookupLinkActivity"
             android:exported="true"
             android:excludeFromRecents="true"
