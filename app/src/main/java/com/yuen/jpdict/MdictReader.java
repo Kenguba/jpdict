@@ -43,6 +43,7 @@ public final class MdictReader implements Closeable {
     private static final int MAX_MATCHES = 256;
     private static final int CACHE_BYTES = 4 * 1024 * 1024;
     private static final Pattern ATTRIBUTE = Pattern.compile("([A-Za-z][A-Za-z0-9_]*)\\s*=\\s*([\"'])(.*?)\\2", Pattern.DOTALL);
+    private static final Pattern SUMMARY_PUNCTUATION = Pattern.compile("[\\x20-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e]");
 
     public enum Error { UNSUPPORTED, CORRUPT, INACCESSIBLE, CANCELLED, LIMIT }
 
@@ -251,13 +252,19 @@ public final class MdictReader implements Closeable {
             if (attributes.put(matcher.group(1), unescape(matcher.group(3))) != null) throw corrupt("重复文件头属性");
         }
         String version = attributes.get("GeneratedByEngineVersion");
-        if (version == null || !version.matches("[12]\\.[0-9]+")) throw unsupported("仅支持未加密 MDX/MDD v1/v2；当前版本 " + version);
+        if (version == null || !version.matches("[12]\\.[0-9]+")) throw unsupported("仅支持 MDX/MDD v1/v2；当前版本 " + version);
         width = version.startsWith("1.") ? 4 : 8;
         String required = attribute(attributes, "RequiredEngineVersion", version);
         if (!required.matches("[12]\\.[0-9]+")) throw unsupported("不支持所需引擎版本 " + required);
         String encrypted = attribute(attributes, "Encrypted", "0");
-        if (!"0".equals(encrypted) && !"No".equalsIgnoreCase(encrypted)) throw unsupported("加密索引或密码保护词典尚不支持（Encrypted=" + encrypted + "）");
-        if ("Yes".equalsIgnoreCase(attributes.get("Compact")) || "Yes".equalsIgnoreCase(attributes.get("Compat"))) throw unsupported("Compact 样式扩展尚不支持");
+        boolean encodedIndex = "2".equals(encrypted);
+        if (!"0".equals(encrypted) && !"No".equalsIgnoreCase(encrypted) && !encodedIndex) throw unsupported("密码保护或未知加密方式尚不支持（Encrypted=" + encrypted + "）");
+        if (encodedIndex && width != 8) throw unsupported("仅支持 v2 的 Encrypted=2 索引混淆");
+        // Some builders set the compact flag even for ordinary HTML with no style substitutions.
+        if (("Yes".equalsIgnoreCase(attributes.get("Compact")) || "Yes".equalsIgnoreCase(attributes.get("Compat")))
+                && !attribute(attributes, "StyleSheet", "").trim().isEmpty()) {
+            throw unsupported("词库含非空 StyleSheet，Compact 样式替换尚不支持");
+        }
         caseSensitive = !resource && "Yes".equalsIgnoreCase(attributes.get("KeyCaseSensitive"));
         String encoding = resource ? "UTF-16LE" : attribute(attributes, "Encoding", "UTF-8");
         if (encoding.equalsIgnoreCase("UTF16") || encoding.equalsIgnoreCase("UTF-16")) encoding = "UTF-16LE";
@@ -280,7 +287,10 @@ public final class MdictReader implements Closeable {
             position += 4;
         }
         byte[] index = read(position, indexPacked);
-        if (width == 8) index = unpack(index, bounded(indexUnpacked, MAX_INDEX_BYTES, "Key 索引解压"));
+        if (width == 8) {
+            if (encodedIndex) MdictIndexDecoder.decode(index);
+            index = unpack(index, bounded(indexUnpacked, MAX_INDEX_BYTES, "Key 索引解压"));
+        }
         position += indexPacked;
         checkRange(position, keyBytes);
         Cursor ki = new Cursor(index);
@@ -430,7 +440,8 @@ public final class MdictReader implements Closeable {
             result.add(new Key(cursor.zeroString(), offset));
         }
         cursor.end();
-        if (!result.get(0).text.equals(block.first) || !result.get(result.size() - 1).text.equals(block.last)) throw corrupt("Key 首尾词头与索引不符");
+        if (!summaryKey(result.get(0).text).equals(summaryKey(block.first))
+                || !summaryKey(result.get(result.size() - 1).text).equals(summaryKey(block.last))) throw corrupt("Key 首尾词头与索引不符");
         block.min = block.max = normalize(result.get(0).text);
         for (Key key : result) {
             String value = normalize(key.text);
@@ -440,6 +451,13 @@ public final class MdictReader implements Closeable {
         lastKeys = result;
         lastKeyBlock = index;
         return result;
+    }
+
+    // Index summaries may contain publisher-normalized sorting keys. Lookup still uses original keys.
+    private String summaryKey(String value) {
+        String key = normalize(value);
+        String strip = attribute(attributes, "StripKey", attribute(attributes, "Stripkey", "No"));
+        return !resource && "Yes".equalsIgnoreCase(strip) ? SUMMARY_PUNCTUATION.matcher(key).replaceAll("") : key;
     }
 
     private byte[] record(long offset, int length) throws IOException {

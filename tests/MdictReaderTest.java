@@ -55,6 +55,10 @@ public final class MdictReaderTest {
     }
     static byte[] fixture(int width, Charset encoding, int compression, boolean resource,
             String[] keys, byte[][] values) throws IOException {
+        return fixture(width, encoding, compression, resource, keys, values, keys);
+    }
+    private static byte[] fixture(int width, Charset encoding, int compression, boolean resource,
+            String[] keys, byte[][] values, String[] summaries) throws IOException {
         String xml = "<" + (resource ? "Library_Data" : "Dictionary")
                 + " GeneratedByEngineVersion=\"" + (width == 8 ? "2.0" : "1.2")
                 + "\" RequiredEngineVersion=\"" + (width == 8 ? "2.0" : "1.2")
@@ -78,7 +82,7 @@ public final class MdictReaderTest {
             byte[] packed = envelope(k.toByteArray(), compression);
             keyBlocks.add(packed);
             number(index, end - start, width);
-            summary(index, keys[start], encoding, width); summary(index, keys[end - 1], encoding, width);
+            summary(index, summaries[start], encoding, width); summary(index, summaries[end - 1], encoding, width);
             number(index, packed.length, width); number(index, k.size(), width);
         }
         byte[] keyIndex = width == 8 ? envelope(idx.toByteArray(), 2) : idx.toByteArray();
@@ -208,7 +212,7 @@ public final class MdictReaderTest {
     }
     public static void main(String[] args) throws Exception {
         formats(); lzo(); corrupt(); persistentIndex(); sparse();
-        referenceVectors(args[0]); unsupportedHeaders();
+        referenceVectors(args[0]); unsupportedHeaders(); compactHeaders(); normalizedSummaries(); encryptedIndexes();
         System.out.println("MdictReader: " + checks + " assertions passed (v1/v2, MDX/MDD, UTF8/UTF16LE, raw/zlib/LZO, cross-block, duplicates, links, malformed/fuzz)");
     }
     private static void referenceVectors(String directory) throws Exception {
@@ -225,7 +229,7 @@ public final class MdictReaderTest {
             check(Arrays.equals(LzoDecoder.decode(compressed,original.length),original),"Independent LZO 2.10 compressor vector "+v);
         }
     }
-    private static byte[] headerChange(byte[] file,String from,String to)throws Exception {
+    static byte[] headerChange(byte[] file,String from,String to)throws Exception {
         DataInputStream in=new DataInputStream(new ByteArrayInputStream(file));int length=in.readInt();byte[] header=new byte[length];in.readFully(header);in.readInt();
         byte[] changed=new String(header,StandardCharsets.UTF_16LE).replace(from,to).getBytes(StandardCharsets.UTF_16LE);
         ByteArrayOutputStream buffer=new ByteArrayOutputStream();DataOutputStream out=new DataOutputStream(buffer);
@@ -235,15 +239,126 @@ public final class MdictReaderTest {
     private static void unsupportedHeaders()throws Exception {
         byte[] good=fixture(8,StandardCharsets.UTF_8,2,false,new String[]{"a"},new byte[][]{{65}});
         fails(()->reader(headerChange(good,"GeneratedByEngineVersion=\"2.0\"","GeneratedByEngineVersion=\"3.0\"")),MdictReader.Error.UNSUPPORTED);
-        fails(()->reader(headerChange(good,"Encrypted=\"0\"","Encrypted=\"2\"")),MdictReader.Error.UNSUPPORTED);
+        fails(()->reader(headerChange(good,"Encrypted=\"0\"","Encrypted=\"2\"")),MdictReader.Error.CORRUPT);
         fails(()->reader(headerChange(good,"Encrypted=\"0\"","Encrypted=\"1\"")),MdictReader.Error.UNSUPPORTED);
+        fails(()->reader(headerChange(good,"Encrypted=\"0\"","Encrypted=\"3\"")),MdictReader.Error.UNSUPPORTED);
+        fails(()->reader(headerChange(good,"Encrypted=\"0\"","Encrypted=\"4\"")),MdictReader.Error.UNSUPPORTED);
         byte[] mdd=fixture(8,StandardCharsets.UTF_16LE,2,true,new String[]{"\\IMAGE.PNG"},new byte[][]{{1,2,3}});
         try(MdictReader r=reader(headerChange(mdd,"KeyCaseSensitive=\"No\"","KeyCaseSensitive=\"Yes\""))){check(Arrays.equals(r.readResource("image.png"),new byte[]{1,2,3}),"Resource case differences independent of MDX key case policy");}
+    }
+    private static void compactHeaders() throws Exception {
+        for (int width : new int[]{4, 8}) for (Charset encoding : new Charset[]{StandardCharsets.UTF_8, StandardCharsets.UTF_16LE}) {
+            for (int compression = 0; compression <= 2; compression++) {
+                byte[] plain = fixture(width, encoding, compression, false,
+                        new String[]{"alias", "empty", "日本語", "日本語"}, new byte[][]{
+                                bytes("@@@LINK=日本語\r\n", encoding), new byte[0],
+                                bytes("<p>日本語 &amp; English `1`</p>\u0000", encoding), bytes("<b>重複</b>", encoding)});
+                List<String> expected = Arrays.asList("<p>日本語 &amp; English `1`</p>", "<b>重複</b>");
+                for (String flags : new String[]{"Compact=\"Yes\"", "Compat=\"Yes\"", "Compact=\"Yes\" Compat=\"Yes\""}) {
+                    for (String sheet : new String[]{"", " StyleSheet=\"\"", " StyleSheet=\" \r\n\t\""}) {
+                        byte[] compact = headerChange(plain, "/>", " " + flags + sheet + "/>");
+                        try (MdictReader reader = reader(compact)) {
+                            reader.validate((done, total) -> {});
+                            check(reader.lookup("日本語").equals(expected), "Compact flag with no styles preserves cross-block Unicode, HTML and duplicates");
+                            check(reader.lookup("alias").equals(expected), "Compact flag preserves links");
+                            check(reader.lookup("empty").equals(Collections.singletonList("")), "Compact flag preserves empty entries");
+                        }
+                    }
+                    fails(() -> reader(headerChange(plain, "/>", " " + flags + " StyleSheet=\"1\n&lt;b&gt;\n&lt;/b&gt;\"/>")), MdictReader.Error.UNSUPPORTED);
+                }
+            }
+        }
+        byte[] mdd = fixture(8, StandardCharsets.UTF_16LE, 2, true, new String[]{"\\style.css"}, new byte[][]{{0, 1, 2, 3}});
+        try (MdictReader reader = reader(headerChange(mdd, "/>", " Compact=\"Yes\" StyleSheet=\"\"/>"))) {
+            check(Arrays.equals(reader.readResource("style.css"), new byte[]{0, 1, 2, 3}), "Empty compact stylesheet never changes binary resources");
+        }
+    }
+    private static void normalizedSummaries() throws Exception {
+        String[] keys = {"$", "12 a.m", "A-b", "audio book", "日本 語"};
+        String[] summaries = {"", "12am", "ab", "audiobook", "日本語"};
+        for (int width : new int[]{4, 8}) for (Charset encoding : new Charset[]{StandardCharsets.UTF_8, StandardCharsets.UTF_16LE}) {
+            byte[][] values = new byte[keys.length][];
+            for (int i = 0; i < keys.length; i++) values[i] = bytes("entry-" + i, encoding);
+            for (int compression = 0; compression <= 2; compression++) {
+                byte[] file = fixture(width, encoding, compression, false, keys, values, summaries);
+                for (String strip : new String[]{"StripKey", "Stripkey"}) {
+                    try (MdictReader reader = reader(headerChange(file, "/>", " " + strip + "=\"Yes\" Compact=\"Yes\" StyleSheet=\"\"/>"))) {
+                        reader.validate((done, total) -> {});
+                        for (int i = 0; i < keys.length; i++) check(reader.lookup(keys[i]).equals(Collections.singletonList("entry-" + i)), "Normalized summary accepts original key " + keys[i]);
+                        check(reader.lookup("ab").isEmpty(), "Sorting normalization does not broaden exact lookup");
+                    }
+                }
+                fails(() -> { try (MdictReader reader = reader(file)) { reader.validate((done, total) -> {}); } }, MdictReader.Error.CORRUPT);
+                byte[] wrong = fixture(width, encoding, compression, false, new String[]{"a-b"}, new byte[][]{bytes("entry", encoding)}, new String[]{"unrelated"});
+                fails(() -> { try (MdictReader reader = reader(headerChange(wrong, "/>", " StripKey=\"Yes\"/>"))) { reader.lookup("a-b"); } }, MdictReader.Error.CORRUPT);
+            }
+        }
+        byte[] casing = fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"A"}, new byte[][]{{65}}, new String[]{"a"});
+        try (MdictReader reader = reader(casing)) { check(reader.lookup("a").equals(Collections.singletonList("A")), "Case-insensitive summary comparison"); }
+        fails(() -> { try (MdictReader reader = reader(headerChange(casing, "KeyCaseSensitive=\"No\"", "KeyCaseSensitive=\"Yes\""))) { reader.lookup("A"); } }, MdictReader.Error.CORRUPT);
+        byte[] punctuation = fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"日・本"}, new byte[][]{{65}}, new String[]{"日本"});
+        fails(() -> { try (MdictReader reader = reader(headerChange(punctuation, "/>", " StripKey=\"Yes\"/>"))) { reader.lookup("日・本"); } }, MdictReader.Error.CORRUPT);
+    }
+    /** Synthetic writer follows the forward transform, separately from the production decoder. */
+    static byte[] encryptedIndex(byte[] file) throws Exception {
+        byte[] result = headerChange(file, "Encrypted=\"0\"", "Encrypted=\"2\"");
+        java.nio.ByteBuffer input = java.nio.ByteBuffer.wrap(result);
+        int header = input.getInt();
+        int indexAt = 8 + header + 44;
+        int indexLength = Math.toIntExact(input.getLong(8 + header + 24));
+        byte[] seed = Arrays.copyOfRange(result, indexAt + 4, indexAt + 12);
+        seed[4] = (byte) 0x95; seed[5] = 0x36; seed[6] = seed[7] = 0;
+        byte[] key = MdictIndexDecoder.digest(seed);
+        int previous = 0x36;
+        for (int i = 0; i < indexLength - 8; i++) {
+            int value = (result[indexAt + 8 + i] & 255) ^ previous ^ (i & 255) ^ (key[i % 16] & 255);
+            int encoded = ((value << 4) | (value >>> 4)) & 255;
+            result[indexAt + 8 + i] = (byte) encoded;
+            previous = encoded;
+        }
+        return result;
+    }
+    private static void encryptedIndexes() throws Exception {
+        String[] messages = {"", "a", "abc", "message digest", "abcdefghijklmnopqrstuvwxyz",
+                "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                "12345678901234567890123456789012345678901234567890123456789012345678901234567890"};
+        String[] hashes = {"cdf26213a150dc3ecb610f18f6b38b46", "86be7afa339d0fc7cfc785e72f578d33",
+                "c14a12199c66e4ba84636b0f69144c77", "9e327b3d6e523062afc1132d7df9d1b8",
+                "fd2aa607f71dc8f510714922b371834e", "a1aa0689d0fafa2ddc22e88b49133a06",
+                "d1e959eb179c911faea4624c60c5c702", "3f45ef194732c2dbb2c4a2c769795fa3"};
+        for (int i = 0; i < messages.length; i++) check(hex(MdictIndexDecoder.digest(bytes(messages[i], StandardCharsets.US_ASCII))).equals(hashes[i]), "Official RIPEMD-128 vector " + i);
+        byte[] million = new byte[1000000]; Arrays.fill(million, (byte) 'a');
+        check(hex(MdictIndexDecoder.digest(million)).equals("4a7f5723f954eba1216c9d8f6320431f"), "Official RIPEMD-128 million-byte vector");
+        for (Charset encoding : new Charset[]{StandardCharsets.UTF_8, StandardCharsets.UTF_16LE}) for (int compression = 0; compression <= 2; compression++) {
+            byte[] file = encryptedIndex(fixture(8, encoding, compression, false, new String[]{"a", "日本語"},
+                    new byte[][]{bytes("@@@LINK=日本語", encoding), bytes("<b>索引混淆</b>", encoding)}));
+            try (MdictReader reader = reader(file)) {
+                reader.validate((done, total) -> {});
+                check(reader.lookup("a").equals(Collections.singletonList("<b>索引混淆</b>")), "Encrypted=2 MDX lookup and links");
+            }
+            byte[] resource = encryptedIndex(fixture(8, StandardCharsets.UTF_16LE, compression, true, new String[]{"\\image.png"}, new byte[][]{{1, 2, 3}}));
+            try (MdictReader reader = reader(resource)) {
+                reader.validate((done, total) -> {});
+                check(Arrays.equals(reader.readResource("image.png"), new byte[]{1, 2, 3}), "Encrypted=2 MDD resource");
+            }
+            byte[] damaged = file.clone(); damaged[damaged.length - 1] ^= 1;
+            fails(() -> { try (MdictReader reader = reader(damaged)) { reader.validate((done, total) -> {}); } }, MdictReader.Error.CORRUPT);
+        }
+        fails(() -> MdictIndexDecoder.decode(new byte[7]), MdictReader.Error.CORRUPT);
+        Thread.currentThread().interrupt();
+        try { fails(() -> MdictIndexDecoder.decode(new byte[100]), MdictReader.Error.CANCELLED); } finally { Thread.interrupted(); }
+    }
+    private static String hex(byte[] data) {
+        StringBuilder result = new StringBuilder();
+        for (byte value : data) result.append(String.format(Locale.ROOT, "%02x", value & 255));
+        return result.toString();
     }
     private static void persistentIndex() throws Exception {
         File directory = Files.createTempDirectory("jpdict-index-test").toFile();
         File dictionary = new File(directory, "test.mdx"), index = new File(directory, "test.idx");
-        byte[] data = fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"a"}, new byte[][]{bytes("entry", StandardCharsets.UTF_8)});
+        byte[] data = encryptedIndex(headerChange(fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"a"}, new byte[][]{bytes("entry", StandardCharsets.UTF_8)}),
+                "/>", " Compact=\"Yes\" StyleSheet=\"\"/>"));
         try {
             try (FileOutputStream out = new FileOutputStream(dictionary)) { out.write(data); }
             try (MdictReader r = MdictReader.open(MdictReader.file(dictionary), index, "fingerprint")) { check(r.lookup("a").get(0).equals("entry"), "Initial indexed read"); }

@@ -43,10 +43,11 @@ public final class DictionaryInstrumentation extends Instrumentation {
         check(pipeRejected,"Streaming SAF provider rejected with copy guidance");
         File originals = new File(context.getCacheDir(), "original-dict-tests"); originals.mkdirs();
         File mdx = new File(originals,"original.mdx"), mainMdd = new File(originals,"original.mdd"), volume = new File(originals,"original.1.mdd");
-        write(mdx, MdictReaderTest.fixture(8,StandardCharsets.UTF_8,2,false,new String[]{"alpha","日本語"},
-                new byte[][]{"<p>English</p>".getBytes(StandardCharsets.UTF_8), "<link rel='stylesheet' href='style.css'><img src='image.png'><a href='entry://alpha'>alpha</a><p>日本語释义</p>".getBytes(StandardCharsets.UTF_8)}));
-        write(mainMdd, MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,2,true,new String[]{"\\image.png","\\style.css"},
-                new byte[][]{android.util.Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",0), "p{color:#006bff}".getBytes(StandardCharsets.UTF_8)}));
+        write(mdx, MdictReaderTest.headerChange(MdictReaderTest.fixture(8,StandardCharsets.UTF_8,2,false,new String[]{"alpha","日本語"},
+                new byte[][]{"<p>English</p>".getBytes(StandardCharsets.UTF_8), "<link rel='stylesheet' href='style.css'><img src='image.png'><a href='entry://alpha'>alpha</a><p>日本語释义</p>".getBytes(StandardCharsets.UTF_8)}),
+                "/>", " Compact=\"Yes\" Compat=\"Yes\" StyleSheet=\"\"/>"));
+        write(mainMdd, MdictReaderTest.encryptedIndex(MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,2,true,new String[]{"\\image.png","\\style.css"},
+                new byte[][]{android.util.Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",0), "p{color:#006bff}".getBytes(StandardCharsets.UTF_8)})));
         write(volume, MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,1,true,new String[]{"\\font.woff"},new byte[][]{{1,2,3,4}}));
         List<DictionaryRepository.Document> files = Arrays.asList(new DictionaryRepository.Document(mdx.getName(),Uri.fromFile(mdx),mdx.length()),
                 new DictionaryRepository.Document(mainMdd.getName(),Uri.fromFile(mainMdd),mainMdd.length()),new DictionaryRepository.Document(volume.getName(),Uri.fromFile(volume),volume.length()));
@@ -86,7 +87,8 @@ public final class DictionaryInstrumentation extends Instrumentation {
         boolean cancelled=false;try{repo.install(files,true,null,(m,d,t)->{});}catch(MdictReader.Failure error){cancelled=error.error==MdictReader.Error.CANCELLED;}finally{Thread.interrupted();}
         check(cancelled,"Import cancellation recognized");repo.reload();check(repo.list().size()==before,"Cancelled import does not register files");
         File external=new File(originals,"external.mdx");
-        write(external,MdictReaderTest.fixture(8,StandardCharsets.UTF_8,0,false,new String[]{"external"},new byte[][]{"external-original".getBytes(StandardCharsets.UTF_8)}));
+        write(external,MdictReaderTest.headerChange(MdictReaderTest.fixture(8,StandardCharsets.UTF_8,0,false,new String[]{"external"},new byte[][]{"external-original".getBytes(StandardCharsets.UTF_8)}),
+                "/>", " Compat=\"Yes\"/>"));
         DictionaryRepository.Dictionary linked=repo.install(Collections.singletonList(new DictionaryRepository.Document("external.mdx",Uri.fromFile(external),external.length())),false,null,(m,d,t)->{}).get(0);
         check(repo.lookup(linked,"external").get(0).equals("external-original"),"External storage lookup");
         repo.delete(linked);repo.reload();check(external.exists(),"Unlink never deletes external original");
