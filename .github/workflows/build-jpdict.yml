@@ -308,20 +308,52 @@ jobs:
         run: |
           TAG="$VERSION_NAME"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" \
-              dist/*.apk \
-              dist/SHA256SUMS.txt \
-              --clobber
+          publish_release() {
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" \
+                dist/*.apk \
+                dist/SHA256SUMS.txt \
+                --clobber || return 1
+            else
+              gh release create "$TAG" \
+                dist/*.apk \
+                dist/SHA256SUMS.txt \
+                --target "$GITHUB_SHA" \
+                --title "jpdict $VERSION_NAME" \
+                --notes-file release-notes.md || return 1
+            fi
 
             gh release edit "$TAG" \
               --title "jpdict $VERSION_NAME" \
-              --notes-file release-notes.md
-          else
-            gh release create "$TAG" \
-              dist/*.apk \
-              dist/SHA256SUMS.txt \
-              --target "$GITHUB_SHA" \
-              --title "jpdict $VERSION_NAME" \
-              --notes-file release-notes.md
-          fi
+              --notes-file release-notes.md \
+              --draft=false --latest || return 1
+
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > dist/published-release.json || return 1
+            python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          release = json.loads(Path("dist/published-release.json").read_text())
+          version = os.environ["VERSION_NAME"]
+          expected = {f"jpdict-{version}-{abi}.apk" for abi in ("arm", "arm64-v8a", "armeabi-v7a")}
+          expected.add("SHA256SUMS.txt")
+          assets = release.get("assets", [])
+          valid = (release.get("draft") is False and release.get("prerelease") is False
+                   and release.get("tag_name") == version
+                   and release.get("target_commitish") == os.environ["GITHUB_SHA"]
+                   and {asset["name"] for asset in assets} == expected
+                   and all(asset.get("state") == "uploaded" and asset.get("size", 0) > 0 for asset in assets))
+          if not valid:
+              raise SystemExit("Release is not fully published for this build")
+          print(release["html_url"])
+          PY
+          }
+
+          for attempt in 1 2 3; do
+            if publish_release; then
+              exit 0
+            fi
+            echo "::warning::Release publication attempt $attempt failed."
+            if (( attempt < 3 )); then sleep $((attempt * 5)); fi
+          done
+          echo "::error::Signed APKs were built, but the Release was not published completely."
+          exit 1
