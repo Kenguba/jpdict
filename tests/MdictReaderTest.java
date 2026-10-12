@@ -248,6 +248,22 @@ public final class MdictReaderTest {
                 + "<center><h1>416 Requested Range Not Satisfiable</h1></center>\r\n<hr><center>nginx/1.27.0</center>\r\n</body>\r\n</html>\r\n", StandardCharsets.US_ASCII));
     }
     private static void completions() throws Exception {
+        String[] fuzzy = {"myselfish", "myselfs", "myself00", "myself01", "myself02", "myself03", "myself04", "myself05", "myself06", "myself07", "myself08", "myself09", "myself10", "myself", "yourself"};
+        byte[][] definitions = new byte[fuzzy.length][];
+        for (int i = 0; i < definitions.length; i++) definitions[i] = bytes("text", StandardCharsets.UTF_8);
+        try (MdictReader r = reader(fixture(8, StandardCharsets.UTF_8, 2, false, fuzzy, definitions))) {
+            r.validate((d,t)->{});
+            List<String> ranked = r.suggest("myself", 12);
+            check(ranked.size() == 12 && ranked.get(0).equals("myself") && ranked.get(1).equals("myselfs"), "Twelve candidates rank exact and closest prefix ahead of earlier dictionary entries");
+            check(r.suggest("myslef", 12).get(0).equals("myself"), "Adjacent spelling transposition finds the original word");
+            check(r.suggest("mself", 12).contains("myself"), "Missing letter fuzzy completion");
+            check(r.suggest("self", 12).contains("myself"), "Substring completion");
+            check(r.suggest("ＭＹＳＥＬＦ", 12).get(0).equals("myself"), "Full-width input normalization");
+            check(r.suggest("xyzwxyz", 12).isEmpty(), "Unrelated words are excluded");
+        }
+        WordSuggestions kana = new WordSuggestions("にほん", 12);
+        kana.add("ニホン"); kana.add("ﾆﾎﾝ");
+        check(kana.words().equals(Collections.singletonList("ニホン")), "Kana width and script equivalents deduplicate");
         String[] keys = {"outside", "Outward", "outside", "日本語", "日本人", "other", "outlook"};
         byte[][] values = new byte[keys.length][];
         for (int i = 0; i < values.length; i++) values[i] = bytes("text", StandardCharsets.UTF_8);

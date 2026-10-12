@@ -81,6 +81,7 @@ final class DictionaryRepository {
     final DictionaryScheduler queries = new DictionaryScheduler();
     private final DictionaryReaderPool readers;
     private volatile List<Dictionary> snapshot = Collections.emptyList();
+    private volatile boolean loaded;
 
     private DictionaryRepository(Context context) {
         this.context = context; database = new Database(context);
@@ -103,6 +104,10 @@ final class DictionaryRepository {
         }
     }
     List<Dictionary> list() { return snapshot; }
+    void ensureLoaded(Complete complete) {
+        if (loaded) new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> complete.done(null));
+        else execute(() -> {}, complete);
+    }
     void reload() throws IOException {
         List<Dictionary> list = new ArrayList<>();
         try (Cursor budget = database.getReadableDatabase().rawQuery("SELECT count(*), coalesce(sum(length(files)),0) FROM dictionaries", null)) {
@@ -113,6 +118,7 @@ final class DictionaryRepository {
         } catch (JSONException | IllegalArgumentException e) { throw new IOException("词典安装记录损坏", e); }
         snapshot = Collections.unmodifiableList(list);
         recoverStorage(list);
+        loaded = true;
     }
     void enable(String id, boolean enabled) {
         ContentValues values = new ContentValues(); values.put("enabled", enabled ? 1 : 0);
@@ -330,7 +336,7 @@ final class DictionaryRepository {
         });
     }
     List<String> suggest(String prefix) throws IOException {
-        LinkedHashMap<String, String> matches = new LinkedHashMap<>();
+        WordSuggestions matches = new WordSuggestions(prefix, WordSuggestions.LIMIT);
         long deadline = System.nanoTime() + 300000000L;
         int visited = 0;
         for (Dictionary dictionary : snapshot) {
@@ -338,15 +344,12 @@ final class DictionaryRepository {
             if (!dictionary.enabled) continue;
             if (++visited > 8 || System.nanoTime() > deadline) break;
             try {
-                for (String word : readers.read(dictionary.mdx(), reader -> reader.suggest(prefix, 6))) {
-                    matches.put(word.toLowerCase(Locale.ROOT), word);
-                    if (matches.size() == 6) return new ArrayList<>(matches.values());
-                }
+                for (String word : readers.read(dictionary.mdx(), reader -> reader.suggest(prefix, WordSuggestions.LIMIT))) matches.add(word);
             } catch (MdictReader.Failure failure) {
                 if (failure.error == MdictReader.Error.CANCELLED) throw failure;
             } catch (IOException unavailable) { /* A missing dictionary must not block typing. */ }
         }
-        return new ArrayList<>(matches.values());
+        return matches.words();
     }
     static final class WordPage {
         final List<String> words;

@@ -28,7 +28,7 @@ final class DictionaryLookupController {
     DictionaryLookupController(Context context, LinearLayout parent, String word, DictionaryEntryView.Navigation navigation) {
         this.context = context; this.parent = parent; this.word = word; this.navigation = navigation;
         repository = DictionaryRepository.get(context);
-        repository.execute(repository::reload, error -> {
+        repository.ensureLoaded(error -> {
             if (closed) return;
             if (error != null) { parent.addView(label("词库记录读取失败：" + error.getMessage())); return; }
             for (DictionaryRepository.Dictionary d : repository.list()) if (d.enabled) {
@@ -76,7 +76,6 @@ final class DictionaryLookupController {
         }
         results.clear(); resultChars = 0;
         if (listPopup != null) { listPopup.dismiss(); listPopup = null; }
-        repository.queries.submit(0, repository::closeReaders);
     }
     void showList(View anchor, Runnable manage) {
         LinearLayout menu = new LinearLayout(context); menu.setOrientation(LinearLayout.VERTICAL);
@@ -124,7 +123,7 @@ final class DictionaryLookupController {
                     if (entries != null) render(entries);
                     else { attempted = false; request(0); }
                     if (ticket != null) ticket.promote(0);
-                } else { destroyView(); }
+                }
             });
         }
         void message(String text) { body.removeAllViews(); body.addView(label(text)); }
@@ -147,7 +146,8 @@ final class DictionaryLookupController {
             if (ticket == null) { attempted = false; message("查询队列已满，点击分区重试"); }
         }
         void render(List<String> entries) {
-            destroyView();
+            // A collapsed section keeps its DOM, loaded assets and measured height.
+            if (web != null) { rendered.remove(this); rendered.add(this); return; }
             if (entries.isEmpty()) { message("该词典未收录此词条"); return; }
             while (rendered.size() >= 3) {
                 Section oldest = rendered.iterator().next(); oldest.destroyView(); oldest.message("点击分区重新加载释义");

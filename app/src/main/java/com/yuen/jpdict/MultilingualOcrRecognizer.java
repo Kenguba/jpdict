@@ -1,6 +1,9 @@
 package com.yuen.jpdict;
 
 import android.graphics.Bitmap;
+import android.graphics.Rect;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
@@ -21,6 +24,16 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     interface Callback {
         void onSuccess(String text);
         void onFailure(Exception error);
+    }
+    interface RegionsCallback {
+        void onSuccess(List<Region> regions);
+        void onFailure(Exception error);
+    }
+    static final class Region {
+        final String text;
+        final Rect bounds;
+        float quality;
+        Region(String text, Rect bounds) { this.text = text; this.bounds = new Rect(bounds); }
     }
 
     private enum Script {
@@ -51,9 +64,15 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     }
 
     void recognize(Bitmap bitmap, Callback callback) {
+        process(bitmap, callback, null);
+    }
+    void recognizeRegions(Bitmap bitmap, RegionsCallback callback) {
+        process(bitmap, null, callback);
+    }
+    private void process(Bitmap bitmap, Callback callback, RegionsCallback regionsCallback) {
         synchronized (lifecycleLock) {
             if (closeRequested || closed) {
-                callback.onFailure(new IllegalStateException("OCR 识别器已关闭"));
+                fail(callback, regionsCallback, new IllegalStateException("OCR 识别器已关闭"));
                 return;
             }
             inFlight++;
@@ -70,6 +89,19 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             Tasks.whenAllComplete(latinTask, chineseTask, japaneseTask, koreanTask)
                     .addOnCompleteListener(ignored -> {
                         try {
+                            if (regionsCallback != null) {
+                                List<Region> found = new ArrayList<>();
+                                addRegions(found, latinTask, Script.LATIN);
+                                addRegions(found, chineseTask, Script.CHINESE);
+                                addRegions(found, japaneseTask, Script.JAPANESE);
+                                addRegions(found, koreanTask, Script.KOREAN);
+                                if (!found.isEmpty()) regionsCallback.onSuccess(found);
+                                else {
+                                    Exception error = firstError(latinTask, chineseTask, japaneseTask, koreanTask);
+                                    regionsCallback.onFailure(error != null ? error : new IllegalStateException("没有识别到文字"));
+                                }
+                                return;
+                            }
                             String best = "";
                             int bestScore = Integer.MIN_VALUE;
 
@@ -118,7 +150,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
 
                             Exception error = firstError(
                                     latinTask, chineseTask, japaneseTask, koreanTask);
-                            callback.onFailure(error != null
+                            fail(callback, regionsCallback, error != null
                                     ? error
                                     : new IllegalStateException("没有识别到文字"));
                         } finally {
@@ -127,7 +159,37 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                     });
         } catch (Exception e) {
             finishRequest();
-            callback.onFailure(e);
+            fail(callback, regionsCallback, e);
+        }
+    }
+    private static void fail(Callback text, RegionsCallback regions, Exception error) {
+        if (regions != null) regions.onFailure(error); else text.onFailure(error);
+    }
+    private static void addRegions(List<Region> regions, Task<Text> task, Script script) {
+        if (!task.isSuccessful() || task.getResult() == null) return;
+        Text result = task.getResult();
+        for (Text.TextBlock block : result.getTextBlocks()) for (Text.Line line : block.getLines()) {
+            for (Text.Element element : line.getElements()) {
+                Rect bounds = element.getBoundingBox();
+                String text = element.getText();
+                if (bounds == null || bounds.isEmpty() || text.trim().isEmpty()) continue;
+                Region candidate = new Region(text, bounds);
+                int letters = 0;
+                for (int i = 0; i < text.length(); i++) if (Character.isLetterOrDigit(text.charAt(i))) letters++;
+                candidate.quality = (float)score(text, script) / Math.max(1, letters) + element.getConfidence();
+                int replace = -1;
+                for (int i = 0; i < regions.size(); i++) {
+                    Region old = regions.get(i);
+                    if (!Rect.intersects(bounds, old.bounds)) continue;
+                    Rect overlap = new Rect(bounds); overlap.intersect(old.bounds);
+                    long area = (long)overlap.width()*overlap.height();
+                    long union = (long)bounds.width()*bounds.height()+(long)old.bounds.width()*old.bounds.height()-area;
+                    if (area >= union*0.55) { replace = i; break; }
+                }
+                if (replace >= 0) {
+                    if (candidate.quality > regions.get(replace).quality) regions.set(replace, candidate);
+                } else regions.add(candidate);
+            }
         }
     }
 

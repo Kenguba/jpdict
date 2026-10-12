@@ -392,30 +392,28 @@ public final class MdictReader implements Closeable {
     public synchronized List<String> suggest(String prefix, int limit) throws IOException {
         ensureOpen();
         if (resource || prefix == null || prefix.isEmpty() || prefix.length() > 128 || limit < 1) return Collections.emptyList();
-        limit = Math.min(limit, 6);
+        limit = Math.min(limit, WordSuggestions.LIMIT);
         String query = normalize(prefix), upper = query + '\uffff';
-        List<String> matches = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
+        WordSuggestions matches = new WordSuggestions(prefix, limit);
         int decoded = 0;
         long deadline = System.nanoTime() + 150000000L;
         boolean heavy = enterLargeRead();
         try {
-            for (int b = 0; b < keys.size(); b++) {
+            for (int pass = 0; pass < 2; pass++) for (int b = 0; b < keys.size(); b++) {
                 checkCancelled();
-                if (System.nanoTime() > deadline) break;
+                if (System.nanoTime() > deadline) return matches.words();
                 Block block = keys.get(b);
-                if (block.min != null && (block.max.compareTo(query) < 0 || block.min.compareTo(upper) > 0)) continue;
-                if (decoded + block.unpacked > MAX_BLOCK_BYTES) break;
+                boolean prefixRange = block.min == null || !(block.max.compareTo(query) < 0 || block.min.compareTo(upper) > 0);
+                if (prefixRange != (pass == 0)) continue;
+                if (decoded + block.unpacked > MAX_BLOCK_BYTES) return matches.words();
                 decoded += block.unpacked;
                 for (Key key : keyBlock(b)) {
-                    String normalized = normalize(key.text);
-                    if (key.text.length() <= 128 && normalized.startsWith(query) && seen.add(normalized)) {
-                        matches.add(key.text);
-                        if (matches.size() == limit) return Collections.unmodifiableList(matches);
-                    }
+                    checkCancelled();
+                    if (System.nanoTime() > deadline) return matches.words();
+                    matches.add(key.text);
                 }
             }
-            return Collections.unmodifiableList(matches);
+            return matches.words();
         } finally { if (heavy) LARGE_READ.release(); }
     }
 
