@@ -35,7 +35,10 @@ def next_version(date, stage, run_number, last_code, last_name, tags, releases):
     if stage not in "ADBTCRPH" or len(stage) != 1 or run_number < 1:
         raise ValueError("Invalid build stage or workflow run number")
     sequence = 0
-    for name in [last_name, *tags]:
+    # A failed upload may leave a draft before its Git tag is created.
+    # That version has already been allocated and must not be reused.
+    release_names = [release.get("tag_name") or "" for release in releases]
+    for name in [last_name, *tags, *release_names]:
         match = VERSION_PATTERN.fullmatch(name)
         if match and match[1] == date:
             sequence = max(sequence, int(match[2]))

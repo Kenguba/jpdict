@@ -175,7 +175,7 @@ YY.MM.DD-NNNNNX
 - 不允许直接把带日期、连字符或阶段字母的 `YY.MM.DD-NNNNNX` 硬塞进 Android `versionCode` 或 iOS build number。
 - 平台内部构建号跨日期、跨阶段都不能回退或重复。
 
-`version.properties` 记录已分配的本地版本。GitHub Actions 将此记录与远端标签、已发布版本合并计算下一版本；Android 构建号同时考虑当前 Workflow 流水号，避免 Workflow 更名或重试造成回退。新的本地版本分配后也必须更新该记录。
+`version.properties` 记录已分配的本地版本。GitHub Actions 将此记录与远端标签、已发布版本及上传中断留下的草稿版本合并计算下一版本；Android 构建号同时考虑当前 Workflow 流水号，避免 Workflow 更名或重试造成回退。新的本地版本分配后也必须更新该记录。
 
 ## APK 命名规则
 
@@ -341,7 +341,7 @@ gradle --no-daemon \
   :app:assembleArmv7Release
 ```
 
-GitHub Actions 会自动重命名 APK、验证签名、计算 SHA-256、上传 Artifact，并创建 GitHub Release。所有产物名称和版本号必须遵守本 README 的规则。
+GitHub Actions 会自动重命名 APK、验证签名、计算 SHA-256、上传 Artifact，并创建 GitHub Release。发布步骤最多重试三次，显式发布草稿；必须通过按标签读取正式 Release 的接口，核对当前提交、正式发布状态及三个 APK/校验文件均上传完整后才算成功，不能仅依据 CLI 返回的草稿链接。所有产物名称和版本号必须遵守本 README 的规则。
 
 推送到 `main` 时使用 `R` 正式发行阶段；手动运行 Workflow 时仍可选择其他阶段。
 
