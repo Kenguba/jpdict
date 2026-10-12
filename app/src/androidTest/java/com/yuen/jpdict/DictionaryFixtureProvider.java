@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
+import android.provider.DocumentsContract;
 import java.io.*;
 
 /** Read-only, synthetic test data. Never shipped in the production APK. */
@@ -28,6 +29,27 @@ public final class DictionaryFixtureProvider extends ContentProvider {
     }
     @Override public Cursor query(Uri uri,String[] projection,String selection,String[] args,String sort){
         MatrixCursor cursor=new MatrixCursor(projection);
+        if (uri.getPath().endsWith("/children")) {
+            String parent = DocumentsContract.getDocumentId(uri);
+            String[][] files = parent.equals("fixture")
+                    ? new String[][]{{"fixture/book", "book.mdx", "application/octet-stream"},
+                            {"fixture/assets", "assets", DocumentsContract.Document.MIME_TYPE_DIR},
+                            {"fixture/git", ".git", DocumentsContract.Document.MIME_TYPE_DIR}}
+                    : new String[][]{{"fixture/css", "local.css", "text/css"}};
+            for (String[] file : files) {
+                Object[] row = new Object[projection.length];
+                for (int i = 0; i < projection.length; i++) {
+                    switch (projection[i]) {
+                        case "document_id": row[i] = file[0]; break;
+                        case "_display_name": row[i] = file[1]; break;
+                        case "mime_type": row[i] = file[2]; break;
+                        default: row[i] = 256L; break;
+                    }
+                }
+                cursor.addRow(row);
+            }
+            return cursor;
+        }
         Object[] row=new Object[projection.length];
         for(int i=0;i<projection.length;i++) row[i]=projection[i].equals("_display_name")?"seek-test.bin":projection[i].equals("last_modified")?1L:256L;
         cursor.addRow(row);return cursor;

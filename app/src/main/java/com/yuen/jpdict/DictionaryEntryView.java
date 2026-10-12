@@ -21,6 +21,12 @@ final class DictionaryEntryView extends WebView {
     private final DictionaryRepository repository;
     private final DictionaryRepository.Dictionary dictionary;
     private final Navigation navigation;
+    private final String origin, entryUrl;
+    private byte[] entryHtml;
+    private static final String POLICY = "default-src 'none'; style-src 'unsafe-inline' 'self'; "
+            + "script-src 'unsafe-inline' 'unsafe-eval' 'self'; img-src 'self' data:; font-src 'self' data:; "
+            + "media-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; "
+            + "base-uri 'self'; form-action 'none'; worker-src 'none'; child-src 'none'";
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean closed;
     private DictionaryScheduler.Ticket soundTask;
@@ -32,8 +38,12 @@ final class DictionaryEntryView extends WebView {
             DictionaryRepository.Dictionary dictionary, List<String> entries, Navigation navigation) {
         super(context);
         this.repository = repository; this.dictionary = dictionary; this.navigation = navigation;
+        origin = "https://" + dictionary.id + ".dict.invalid/";
+        entryUrl = origin + "__jpdict_entry__.html";
         WebSettings settings = getSettings();
-        settings.setJavaScriptEnabled(false);
+        settings.setJavaScriptEnabled(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setGeolocationEnabled(false);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setAllowFileAccessFromFileURLs(false);
@@ -49,13 +59,14 @@ final class DictionaryEntryView extends WebView {
         setWebViewClient(new WebViewClient() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (closed || !"GET".equals(request.getMethod())) return denied();
-                if (request.isForMainFrame() && "data".equals(request.getUrl().getScheme())) return null;
                 try {
+                    if (request.isForMainFrame()) {
+                        return entryUrl.equals(request.getUrl().toString())
+                                ? response("text/html", new ByteArrayInputStream(entryHtml), true) : denied();
+                    }
                     String path = resourcePath(request.getUrl());
-                    byte[] bytes = repository.resource(dictionary, path);
-                    return bytes == null ? denied() : new WebResourceResponse(DictionaryPaths.mime(path),
-                            DictionaryPaths.mime(path).startsWith("text/") ? "UTF-8" : null,
-                            200, "OK", Collections.singletonMap("Cache-Control", "no-store"), new ByteArrayInputStream(bytes));
+                    InputStream stream = repository.resourceStream(dictionary, path);
+                    return stream == null ? denied() : response(DictionaryPaths.mime(path), stream, false);
                 } catch (IOException | RuntimeException failure) { return denied(); }
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -63,7 +74,8 @@ final class DictionaryEntryView extends WebView {
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) { return navigate(Uri.parse(url)); }
         });
-        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline' https://dict.invalid; img-src https://dict.invalid; font-src https://dict.invalid; media-src https://dict.invalid; script-src 'none'; frame-src 'none'; object-src 'none'; connect-src 'none'\"><style>body{margin:12px;color:#171819;overflow-wrap:anywhere}img{max-width:100%;height:auto}audio{max-width:100%}</style>");
+        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"")
+                .append(POLICY).append("\"><style>body{margin:12px;color:#171819;overflow-wrap:anywhere}img{max-width:100%;height:auto}audio{max-width:100%}</style>");
         for (DictionaryRepository.Document file : dictionary.files) {
             if (file.path.toLowerCase(java.util.Locale.ROOT).endsWith(".css") && file.path.indexOf('/') < 0) {
                 if (html.length() < 65536) html.append("<link rel=\"stylesheet\" href=\"").append(Uri.encode(file.path)).append("\">");
@@ -74,29 +86,32 @@ final class DictionaryEntryView extends WebView {
             html.append("<section>").append(entry).append("</section>");
         }
         html.append("</body></html>");
-        loadDataWithBaseURL("https://dict.invalid/" + dictionary.id + "/", html.toString(), "text/html", "UTF-8", null);
+        entryHtml = html.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        loadUrl(entryUrl);
+    }
+    private static WebResourceResponse response(String mime, InputStream stream, boolean document) {
+        java.util.Map<String, String> headers = new java.util.HashMap<>();
+        headers.put("Cache-Control", "no-store"); headers.put("X-Content-Type-Options", "nosniff");
+        if (document) headers.put("Content-Security-Policy", POLICY);
+        return new WebResourceResponse(mime, mime.startsWith("text/") ? "UTF-8" : null, 200, "OK", headers, stream);
     }
     private String resourcePath(Uri uri) throws IOException {
-        String prefix = "/" + dictionary.id + "/";
-        if (!"https".equals(uri.getScheme()) || !"dict.invalid".equals(uri.getHost())
+        if (!"https".equals(uri.getScheme()) || !(dictionary.id + ".dict.invalid").equals(uri.getHost())
                 || uri.getPort() != -1 || uri.getUserInfo() != null) throw new IOException("禁止外部资源");
         String path = uri.getEncodedPath();
-        // A leading slash in MDD HTML is still relative to the current dictionary.
-        if (path.startsWith(prefix)) path = path.substring(prefix.length());
-        else if (path.startsWith("/") && !path.substring(1).contains("/../")) path = path.substring(1);
-        else throw new IOException("词典资源命名空间不符");
-        if (path.matches("[0-9a-fA-F-]{36}/.*")) throw new IOException("禁止跨词典资源");
+        // Each dictionary has its own origin; absolute and relative assets share its root.
         return DictionaryPaths.urlPath(path);
     }
     private boolean navigate(Uri uri) {
         if (closed) return true;
+        if (entryUrl.equals(uri.buildUpon().fragment(null).build().toString()) && uri.getFragment() != null) return false;
         try {
             if ("entry".equalsIgnoreCase(uri.getScheme())) {
                 String word = uri.toString().substring("entry://".length());
                 navigation.lookup(URLDecoder.decode(word.replace("+", "%2B"), "UTF-8"));
             } else if ("sound".equalsIgnoreCase(uri.getScheme())) {
                 play(DictionaryPaths.urlPath(uri.toString().substring("sound://".length())));
-            } else if ("https".equals(uri.getScheme()) && "dict.invalid".equals(uri.getHost())) {
+            } else if ("https".equals(uri.getScheme()) && (dictionary.id + ".dict.invalid").equals(uri.getHost())) {
                 String path = resourcePath(uri);
                 if (!path.contains(".")) navigation.lookup(path);
             }
@@ -147,6 +162,7 @@ final class DictionaryEntryView extends WebView {
         closed = true;
         if (soundTask != null) soundTask.cancel();
         releaseSound(); stopLoading(); loadUrl("about:blank");
+        entryHtml = null;
         setWebViewClient(new WebViewClient()); removeAllViews(); destroy();
     }
 }

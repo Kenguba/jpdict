@@ -20,9 +20,33 @@ final class DictionaryReaderPool {
         boolean retired;
         Handle(MdictReader reader) { this.reader = reader; }
     }
+    private static final class Index {
+        final String key, fingerprint;
+        final File file;
+        Index(String key, String fingerprint, File file) { this.key = key; this.fingerprint = fingerprint; this.file = file; }
+    }
     DictionaryReaderPool(DictionaryRepository repository) {
         this.repository = repository;
         indexes = new File(repository.context().getCacheDir(), "dict-indexes");
+    }
+    private Index index(DictionaryRepository.Document document, MdictReader.Source source, long modified) throws Exception {
+        String fingerprint = DictionaryRepository.fingerprint(source) + ":" + modified;
+        MessageDigest hash = MessageDigest.getInstance("SHA-256");
+        byte[] value = hash.digest((document.uri.toString() + ":" + fingerprint).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        StringBuilder name = new StringBuilder(); for (byte b : value) name.append(String.format(Locale.ROOT, "%02x", b & 255));
+        String key = name.toString();
+        return new Index(key, fingerprint, modified > 0 ? new File(indexes, key + ".idx") : null);
+    }
+    /** Validation and lookup use the final URI identity, including before a private copy is committed. */
+    MdictReader openForValidation(DictionaryRepository.Document document, MdictReader.Source source, long modified) throws IOException {
+        try {
+            Index index = index(document, source, modified);
+            return MdictReader.open(source, index.file, index.fingerprint);
+        } catch (Exception error) {
+            try { source.close(); } catch (IOException close) { error.addSuppressed(close); }
+            if (error instanceof IOException) throw (IOException) error;
+            throw new IOException("词典索引打开失败", error);
+        }
     }
     <T> T read(DictionaryRepository.Document document, Read<T> read) throws IOException {
         Handle handle = acquire(document);
@@ -37,18 +61,12 @@ final class DictionaryReaderPool {
     }
     private synchronized Handle acquire(DictionaryRepository.Document document) throws IOException {
         MdictReader.checkCancelled();
-        String key;
         MdictReader.Source source = repository.open(document);
         try {
-            String fingerprint = DictionaryRepository.fingerprint(source);
             long modified = repository.modified(document);
             boolean reusable = modified > 0;
-            fingerprint += ":" + modified;
-            MessageDigest hash = MessageDigest.getInstance("SHA-256");
-            byte[] value = hash.digest((document.uri.toString() + ":" + fingerprint).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            StringBuilder name = new StringBuilder(); for (byte b : value) name.append(String.format(Locale.ROOT, "%02x", b & 255));
-            key = name.toString();
-            Handle cached = reusable ? handles.get(key) : null;
+            Index index = index(document, source, modified);
+            Handle cached = reusable ? handles.get(index.key) : null;
             if (cached != null) { source.close(); cached.users++; return cached; }
             while (live >= MAX) {
                 String evict = null;
@@ -58,9 +76,9 @@ final class DictionaryReaderPool {
                     Thread.currentThread().interrupt(); MdictReader.checkCancelled();
                 }
             }
-            Handle opened = new Handle(MdictReader.open(source, reusable ? new File(indexes, key + ".idx") : null, fingerprint));
+            Handle opened = new Handle(MdictReader.open(source, index.file, index.fingerprint));
             source = null; opened.users = 1; opened.retired = !reusable;
-            if (reusable) handles.put(key, opened);
+            if (reusable) handles.put(index.key, opened);
             live++;
             trimIndexes();
             return opened;
@@ -68,7 +86,7 @@ final class DictionaryReaderPool {
         catch (Exception error) { throw new IOException("词典索引打开失败", error); }
         finally { if (source != null) source.close(); }
     }
-    private void trimIndexes() {
+    void trimIndexes() {
         File[] files = indexes.listFiles(); if (files == null) return;
         Arrays.sort(files, (left, right) -> Long.compare(right.lastModified(), left.lastModified()));
         long bytes = 0;
