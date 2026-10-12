@@ -73,6 +73,12 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
         addRow(app, SearchIconView.Kind.ADVANCED, "高级设置", null, this::showAdvanced);
         content.addView(app, new LinearLayout.LayoutParams(-1, -2));
 
+        addSection(content, "词典");
+        LinearLayout dictionaries = group();
+        addRow(dictionaries, SearchIconView.Kind.FILE, "词库管理", "安装、下载、排序、备份词库",
+                () -> FloatingSearchRoutes.openFromActivity(this, FloatingSearchRoutes.PAGE_DICTIONARIES, true));
+        content.addView(dictionaries, new LinearLayout.LayoutParams(-1, -2));
+
         addSection(content, "Groq");
         LinearLayout groq = group();
         groqSummary = addRow(groq, SearchIconView.Kind.SETTINGS, "Groq Key", "",

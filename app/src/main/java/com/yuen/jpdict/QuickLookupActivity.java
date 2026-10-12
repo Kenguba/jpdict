@@ -7,6 +7,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Build;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
@@ -45,6 +46,7 @@ public class QuickLookupActivity extends Activity {
     private Button aiKeyButton;
     private String query;
     private boolean closing;
+    private DictionaryLookupController dictionaryLookup;
     private boolean popupMode;
     private long observedKeyRevision = -1L;
     private int aiRequestGeneration;
@@ -117,6 +119,14 @@ public class QuickLookupActivity extends Activity {
             TextView iv = text(icon, popupMode ? 32 : 29, 0xff202124);
             iv.setGravity(Gravity.CENTER);
             if (popupMode) iv.setOnClickListener(v -> closeLookupTask());
+            else if ("☷".equals(icon)) {
+                iv.setContentDescription("词库列表");
+                iv.setOnClickListener(v -> {
+                    if (dictionaryLookup != null) dictionaryLookup.showList(iv,
+                            () -> FloatingSearchRoutes.openFromActivity(this,
+                                    FloatingSearchRoutes.PAGE_DICTIONARIES, false));
+                });
+            }
             header.addView(iv, new LinearLayout.LayoutParams(dp(54), dp(54)));
         }
         panel.addView(header, new LinearLayout.LayoutParams(-1, dp(76)));
@@ -185,6 +195,16 @@ public class QuickLookupActivity extends Activity {
         }
         content.addView(localCard, cardLp);
 
+        LinearLayout dictionarySections = new LinearLayout(this);
+        dictionarySections.setOrientation(LinearLayout.VERTICAL);
+        content.addView(dictionarySections, new LinearLayout.LayoutParams(-1, -2));
+        dictionaryLookup = new DictionaryLookupController(this, dictionarySections, query,
+                word -> {
+                    startActivity(new Intent(this, QuickLookupActivity.class).putExtra("query", word)
+                            .putExtra(FloatingService.EXTRA_POPUP_MODE, popupMode));
+                    finish();
+                });
+
         addSectionHeader(content, "Groq AI");
 
         LinearLayout aiCard = new LinearLayout(this);
@@ -239,6 +259,17 @@ public class QuickLookupActivity extends Activity {
             installPopupWindowGestures(header, title, resizeHandle);
         } else {
             setContentView(panel);
+            if (Build.VERSION.SDK_INT >= 30) {
+                panel.setOnApplyWindowInsetsListener((view, insets) -> {
+                    android.graphics.Insets bars = insets.getInsets(
+                            android.view.WindowInsets.Type.systemBars()
+                                    | android.view.WindowInsets.Type.displayCutout());
+                    int keyboard = insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                    view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, keyboard));
+                    return android.view.WindowInsets.CONSUMED;
+                });
+                panel.requestApplyInsets();
+            }
         }
 
         observedKeyRevision = GroqKeyStore.revision(this);
@@ -293,6 +324,7 @@ public class QuickLookupActivity extends Activity {
     private void closeLookupTask() {
         if (closing) return;
         closing = true;
+        if (dictionaryLookup != null) dictionaryLookup.close();
 
         Intent source = getIntent();
         if (source != null &&
@@ -323,6 +355,11 @@ public class QuickLookupActivity extends Activity {
 
     @Override public void onBackPressed() {
         closeLookupTask();
+    }
+
+    @Override protected void onDestroy() {
+        if (dictionaryLookup != null) dictionaryLookup.close();
+        super.onDestroy();
     }
 
     private void configureWindow() {
@@ -359,6 +396,9 @@ public class QuickLookupActivity extends Activity {
             return;
         }
 
+        if (Build.VERSION.SDK_INT >= 30) w.setDecorFitsSystemWindows(false);
+        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                | (Build.VERSION.SDK_INT >= 26 ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
         w.setStatusBarColor(0xffeaf7ff);
         w.setNavigationBarColor(Color.WHITE);
     }

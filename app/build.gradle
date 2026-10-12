@@ -18,6 +18,7 @@ android {
         applicationId "com.yuen.jpdict"
         minSdk 23
         targetSdk 35
+        testInstrumentationRunner "com.yuen.jpdict.DictionaryInstrumentation"
         versionCode ciVersionCode ? ciVersionCode.toInteger() : 4
         versionName ciVersionName ?: "0.4.0"
 
@@ -27,6 +28,9 @@ android {
 
     buildFeatures {
         buildConfig true
+    }
+    sourceSets {
+        androidTest.java.srcDirs += ["../tests"]
     }
 
     flavorDimensions "abi"

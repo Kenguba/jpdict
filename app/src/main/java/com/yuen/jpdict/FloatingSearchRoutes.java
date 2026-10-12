@@ -24,6 +24,7 @@ final class FloatingSearchRoutes {
     static final String PAGE_SETTINGS = "settings";
     static final String PAGE_BUBBLE_SETTINGS = "bubble_settings";
     static final String PAGE_FILES = "files";
+    static final String PAGE_DICTIONARIES = "dictionaries";
     static final String EXTRA_FILE_ID = "drawer_file_id";
 
     private FloatingSearchRoutes() {}
@@ -44,6 +45,8 @@ final class FloatingSearchRoutes {
             destination = FloatingBubbleSettingsActivity.class;
         } else if (PAGE_FILES.equals(page) || (page != null && page.startsWith(PAGE_FILES + "/"))) {
             destination = DrawerFilesActivity.class;
+        } else if (PAGE_DICTIONARIES.equals(page)) {
+            destination = DictionaryActivity.class;
         } else {
             destination = SearchSettingsActivity.class;
         }

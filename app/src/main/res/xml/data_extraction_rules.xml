@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="Dicts/"/>
+        <exclude domain="database" path="dictionaries.db"/>
+        <exclude domain="sharedpref" path="groq_secure.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="Dicts/"/>
+        <exclude domain="database" path="dictionaries.db"/>
+        <exclude domain="sharedpref" path="groq_secure.xml"/>
+    </device-transfer>
+</data-extraction-rules>
