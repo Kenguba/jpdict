@@ -6,6 +6,7 @@ trap 'rm -rf "$WORK"' EXIT HUP INT TERM
 if [ -n "${JAVA_HOME:-}" ]; then JAVAC="$JAVA_HOME/bin/javac"; JAVA="$JAVA_HOME/bin/java"; else JAVAC=javac; JAVA=java; fi
 "$JAVAC" -encoding UTF-8 -d "$WORK" \
   "$ROOT/app/src/main/java/com/yuen/jpdict/MdictReader.java" \
+  "$ROOT/app/src/main/java/com/yuen/jpdict/MdictIndexDecoder.java" \
   "$ROOT/app/src/main/java/com/yuen/jpdict/LzoDecoder.java" \
   "$ROOT/app/src/main/java/com/yuen/jpdict/DictionaryScheduler.java" \
   "$ROOT/tests/MdictReaderTest.java" \
