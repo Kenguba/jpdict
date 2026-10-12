@@ -33,6 +33,8 @@ final class DictionaryEntryView extends WebView {
     private MediaPlayer player;
     private File soundFile;
     private int soundGeneration;
+    private boolean heightPending;
+    private final Runnable measureHeight = this::measureContentHeight;
 
     DictionaryEntryView(Context context, DictionaryRepository repository,
             DictionaryRepository.Dictionary dictionary, List<String> entries, Navigation navigation) {
@@ -55,8 +57,11 @@ final class DictionaryEntryView extends WebView {
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         settings.setSupportMultipleWindows(false);
         setFocusable(false);
+        setVerticalScrollBarEnabled(false);
+        setOverScrollMode(OVER_SCROLL_NEVER);
         setBackgroundColor(android.graphics.Color.WHITE);
         setWebViewClient(new WebViewClient() {
+            @Override public void onPageFinished(WebView view, String url) { scheduleHeight(); }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (closed || !"GET".equals(request.getMethod())) return denied();
                 try {
@@ -88,6 +93,36 @@ final class DictionaryEntryView extends WebView {
         html.append("</body></html>");
         entryHtml = html.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         loadUrl(entryUrl);
+    }
+    @Override protected void onDraw(android.graphics.Canvas canvas) {
+        super.onDraw(canvas);
+        scheduleHeight(); // Also observes image/font loading and local script layout changes.
+    }
+    @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        if (w != oldw) scheduleHeight();
+    }
+    private void scheduleHeight() {
+        if (closed || heightPending || getWidth() == 0) return;
+        heightPending = true;
+        main.postDelayed(measureHeight, 80);
+    }
+    private void measureContentHeight() {
+        if (closed) return;
+        evaluateJavascript("(function(){var b=document.body;if(!b)return 0;var s=getComputedStyle(b);"
+                + "return Math.ceil(b.getBoundingClientRect().height+parseFloat(s.marginTop||0)+parseFloat(s.marginBottom||0));})()", value -> {
+            heightPending = false;
+            if (closed) return;
+            try {
+                double cssHeight = Double.parseDouble(value);
+                if (Double.isNaN(cssHeight) || Double.isInfinite(cssHeight) || cssHeight <= 0) return;
+                int height = (int) Math.min(1048576, Math.ceil(cssHeight * getResources().getDisplayMetrics().density));
+                android.view.ViewGroup.LayoutParams layout = getLayoutParams();
+                if (layout != null && Math.abs(layout.height - height) > 1) {
+                    layout.height = height; setLayoutParams(layout);
+                }
+            } catch (NumberFormatException ignored) { }
+        });
     }
     private static WebResourceResponse response(String mime, InputStream stream, boolean document) {
         java.util.Map<String, String> headers = new java.util.HashMap<>();
@@ -160,6 +195,7 @@ final class DictionaryEntryView extends WebView {
     void close() {
         if (closed) return;
         closed = true;
+        main.removeCallbacks(measureHeight);
         if (soundTask != null) soundTask.cancel();
         releaseSound(); stopLoading(); loadUrl("about:blank");
         entryHtml = null;

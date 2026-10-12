@@ -63,21 +63,37 @@ final class LookupOverlayWindow {
             float downX, downY;
             int startX, startY;
             boolean moved;
+            boolean held;
+            View pressed;
+            final Runnable edit = () -> {
+                if (!moved && pressed != null && pressed.isAttachedToWindow()
+                        && pressed.getVisibility() == View.VISIBLE) held = pressed.performLongClick();
+            };
+
+            private void cancelHold() {
+                if (pressed != null) pressed.removeCallbacks(edit);
+                pressed = null;
+            }
 
             @Override public boolean onTouch(View view, MotionEvent event) {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        cancelHold();
                         downX = event.getRawX();
                         downY = event.getRawY();
                         startX = x;
                         startY = y;
                         moved = false;
+                        held = false;
+                        pressed = view;
+                        view.postDelayed(edit, 700);
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         float dx = event.getRawX() - downX;
                         float dy = event.getRawY() - downY;
                         moved |= Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop;
-                        if (moved) {
+                        if (moved) cancelHold();
+                        if (moved && !held) {
                             x = startX + Math.round(dx);
                             y = startY + Math.round(dy);
                             clamp();
@@ -85,10 +101,12 @@ final class LookupOverlayWindow {
                         }
                         return true;
                     case MotionEvent.ACTION_UP:
-                        if (moved) save(); else view.performClick();
+                        cancelHold();
+                        if (moved && !held) save();
                         return true;
                     case MotionEvent.ACTION_CANCEL:
-                        if (moved) save();
+                        cancelHold();
+                        if (moved && !held) save();
                         return true;
                     default:
                         return true;
