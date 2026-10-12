@@ -43,6 +43,14 @@ public final class DictionaryInstrumentation extends Instrumentation {
             contrast &= 1.05 / (luminance + .05) >= 4.5;
         }
         check(contrast, "Ten thousand name-generated book colors retain readable white text");
+        MultilingualOcrRecognizer.Region first = new MultilingualOcrRecognizer.Region("avocado", new android.graphics.Rect(20, 200, 120, 225));
+        MultilingualOcrRecognizer.Region next = new MultilingualOcrRecognizer.Region("energetic", new android.graphics.Rect(130, 200, 240, 225));
+        MultilingualOcrRecognizer.Region lower = new MultilingualOcrRecognizer.Region("日本語", new android.graphics.Rect(20, 250, 120, 275));
+        List<MultilingualOcrRecognizer.Region> regionFixtures = Arrays.asList(first, next, lower);
+        check(OcrPickupController.regionAt(regionFixtures, 60, 212, 18) == first, "OCR selects only the word under the aim point");
+        check(OcrPickupController.regionAt(regionFixtures, 180, 212, 18) == next, "Dragging across adjacent words changes the exact selected region");
+        check(OcrPickupController.regionAt(regionFixtures, 60, 264, 18) == lower, "OCR selection keeps the raw CJK text and screen row");
+        check(OcrPickupController.regionAt(regionFixtures, 500, 500, 18) == null, "OCR never snaps to distant recognized text");
         List<DictionaryRepository.Document> scanned = repo.scanTree(Uri.parse("content://com.yuen.jpdict.test.fixtures/tree/fixture"));
         check(scanned.size() == 2 && scanned.get(1).path.equals("assets/local.css"), "SAF tree preserves nested resource paths and skips hidden tool directories");
         try(DictionarySource source=new DictionarySource(context.getContentResolver(),Uri.parse("content://com.yuen.jpdict.test.fixtures/seek"))) {
@@ -191,6 +199,41 @@ public final class DictionaryInstrumentation extends Instrumentation {
         repo.execute(()->{},error->barrier.countDown());
         if(!barrier.await(5,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("Management callbacks timed out");
         runOnMainSync(()->check(closedHost.get().getChildCount()==0,"Closed lookup does not receive asynchronous UI updates"));
+        AtomicReference<DictionaryLookupController> retainedController = new AtomicReference<>();
+        AtomicReference<LinearLayout> retainedHost = new AtomicReference<>();
+        runOnMainSync(() -> {
+            LinearLayout host = new LinearLayout(context); retainedHost.set(host);
+            retainedController.set(new DictionaryLookupController(context, host, "alpha", navigation::set));
+        });
+        AtomicReference<android.view.View> retainedWeb = new AtomicReference<>();
+        for (int attempt = 0; attempt < 50 && retainedWeb.get() == null; attempt++) {
+            Thread.sleep(100);
+            runOnMainSync(() -> {
+                LinearLayout host = retainedHost.get();
+                if (host.getChildCount() < 2) return;
+                LinearLayout body = (LinearLayout)host.getChildAt(1);
+                if (body.getChildCount() > 0 && body.getChildAt(0) instanceof DictionaryEntryView) retainedWeb.set(body.getChildAt(0));
+            });
+        }
+        runOnMainSync(() -> {
+            check(retainedWeb.get() != null, "Expanded dictionary finishes its first render");
+            LinearLayout host = retainedHost.get(), body = (LinearLayout)host.getChildAt(1);
+            host.getChildAt(0).performClick();
+            check(body.getVisibility() == android.view.View.GONE && body.getChildAt(0) == retainedWeb.get(), "Collapse preserves the loaded dictionary DOM");
+            host.getChildAt(0).performClick();
+            check(body.getVisibility() == android.view.View.VISIBLE && body.getChildAt(0) == retainedWeb.get(), "Reopen reuses the same dictionary page without reload");
+            retainedController.get().close();
+        });
+        String[] prefixes = new String[12]; byte[][] meanings = new byte[12][];
+        for (int i = 0; i < 12; i++) { prefixes[i] = "myself" + i; meanings[i] = "prefix fixture".getBytes(StandardCharsets.UTF_8); }
+        File prefixesMdx = new File(originals, "prefixes.mdx"), exactMdx = new File(originals, "exact.mdx");
+        write(prefixesMdx, MdictReaderTest.fixture(8, StandardCharsets.UTF_8, 2, false, prefixes, meanings));
+        write(exactMdx, MdictReaderTest.fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"myself"}, new byte[][]{"exact fixture".getBytes(StandardCharsets.UTF_8)}));
+        repo.install(Collections.singletonList(new DictionaryRepository.Document("prefixes.mdx", Uri.fromFile(prefixesMdx), prefixesMdx.length())), true, null, (m,d,t)->{});
+        repo.install(Collections.singletonList(new DictionaryRepository.Document("exact.mdx", Uri.fromFile(exactMdx), exactMdx.length())), true, null, (m,d,t)->{});
+        List<String> merged = repo.suggest("myself");
+        check(merged.size() == 12 && merged.get(0).equals("myself"), "Later dictionary exact match outranks twelve earlier prefixes");
+        check(repo.suggest("myslef").get(0).equals("myself"), "Repository merges fuzzy spelling candidates across dictionaries");
         // Keep one original generated dictionary installed for manual UI checks.
         repo.closeReaders();
     }

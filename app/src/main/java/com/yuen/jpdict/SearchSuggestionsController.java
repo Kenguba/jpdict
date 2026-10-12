@@ -16,12 +16,12 @@ final class SearchSuggestionsController {
     private DictionaryScheduler.Ticket ticket;
     private Runnable pending;
     private int generation;
-    private boolean closed, ready;
+    private boolean closed, ready, paused;
     private String latestInput = "";
 
     SearchSuggestionsController(Context context, Result result) {
         repository = DictionaryRepository.get(context); this.result = result;
-        repository.execute(repository::reload, error -> {
+        repository.ensureLoaded(error -> {
             if (!closed && error == null) { ready = true; update(latestInput); }
         });
     }
@@ -32,7 +32,7 @@ final class SearchSuggestionsController {
         if (ticket != null) { ticket.cancel(); ticket = null; }
         result.show(Collections.emptyList());
         String prefix = input.trim();
-        if (closed || !ready || prefix.isEmpty() || prefix.length() > 128 || prefix.indexOf('\n') >= 0) return;
+        if (closed || paused || !ready || prefix.isEmpty() || prefix.length() > 128 || prefix.indexOf('\n') >= 0) return;
         pending = () -> {
             pending = null;
             ticket = repository.queries.submit(2, () -> {
@@ -52,4 +52,10 @@ final class SearchSuggestionsController {
         if (pending != null) main.removeCallbacks(pending);
         if (ticket != null) ticket.cancel();
     }
+    void pause() {
+        paused = true; generation++;
+        if (pending != null) { main.removeCallbacks(pending); pending = null; }
+        if (ticket != null) { ticket.cancel(); ticket = null; }
+    }
+    void resume() { if (paused) { paused = false; update(latestInput); } }
 }

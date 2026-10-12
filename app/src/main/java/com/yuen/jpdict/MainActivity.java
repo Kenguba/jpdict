@@ -108,7 +108,7 @@ public class MainActivity extends Activity {
         root.addView(button("📷 屏幕 OCR", v->startActivity(new Intent(this,OcrActivity.class))));
         TextView note=text("这是自己的浮动取词功能，不调用欧路。\n"
                 +"轻点浮动按钮：打开原生悬浮搜索。\n"
-                +"按住拖动：如果尚未授权屏幕共享，会立即呼出系统授权；授权后再次拖动即可区域 OCR 取词。\n"
+                    +"长按 700ms 振动后拖动：准星对准文字，高亮后松手查词。未授权时先请求屏幕共享，授权后再次长按。\n"
                 +"屏幕共享只请求“共享整个屏幕”。");
         root.addView(note);
         setContentView(root);
@@ -363,10 +363,14 @@ public class MainActivity extends Activity {
     public static class ScreenCaptureService extends Service {
         static final String CH="ocr_capture", ACT_OCR="ocr_now", ACT_STOP="ocr_stop";
         public static final String ACT_OCR_REGION="ocr_region";
+        public static final String ACT_OCR_PREVIEW="ocr_preview";
+        public static final String ACTION_PREVIEW="com.yuen.jpdict.OCR_PREVIEW";
+        public static final String ACTION_PREVIEW_FRAME="com.yuen.jpdict.OCR_PREVIEW_FRAME";
         public static final String ACTION_RESULT="com.yuen.jpdict.OCR_RESULT";
         public static volatile boolean READY=false;
         MediaProjection projection; ImageReader reader; VirtualDisplay vd; int w,h,dpi;
         MultilingualOcrRecognizer ocrRecognizer;
+        boolean previewInFlight;
         @Override public void onCreate(){
             super.onCreate();
             ocrRecognizer=new MultilingualOcrRecognizer();
@@ -378,6 +382,7 @@ public class MainActivity extends Activity {
             if(ACT_STOP.equals(a)){ stopCapture(); stopSelf(); return START_NOT_STICKY; }
             if(ACT_OCR.equals(a)){ captureOnce(null); return START_STICKY; }
             if(ACT_OCR_REGION.equals(a)){ captureOnce(in); return START_STICKY; }
+            if(ACT_OCR_PREVIEW.equals(a)){ captureOnce(in); return START_STICKY; }
             Intent data=(Intent)in.getParcelableExtra("data"); int code=in.getIntExtra("code",Activity.RESULT_CANCELED);
             if(data!=null){
                 Notification n=notification("录屏 OCR 正在启动","准备屏幕捕获…");
@@ -392,6 +397,7 @@ public class MainActivity extends Activity {
             projection=mm.getMediaProjection(code,data);
             projection.registerCallback(new MediaProjection.Callback(){
                 @Override public void onStop(){ stopCapture(); stopSelf(); }
+                @Override public void onCapturedContentResize(int width,int height){ resizeCapture(width,height); }
             }, new Handler(Looper.getMainLooper()));
             DisplayMetrics dm=getResources().getDisplayMetrics(); dpi=dm.densityDpi;
             if(Build.VERSION.SDK_INT>=30){
@@ -403,6 +409,20 @@ public class MainActivity extends Activity {
             READY=true;
             Notification n=notification("录屏 OCR 已开启","可拖动悬浮球取词，或点通知识别整屏");
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(42,n);
+        }
+        void resizeCapture(int width,int height){
+            if(vd==null || width<=0 || height<=0 || (width==w && height==h))return;
+            ImageReader next=ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,2);
+            ImageReader old=reader;
+            vd.resize(width,height,dpi);vd.setSurface(next.getSurface());
+            reader=next;w=width;h=height;
+            if(old!=null)old.close();
+        }
+        @Override public void onConfigurationChanged(android.content.res.Configuration config){
+            super.onConfigurationChanged(config);
+            android.util.DisplayMetrics metrics=new android.util.DisplayMetrics();
+            ((WindowManager)getSystemService(WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(metrics);
+            resizeCapture(metrics.widthPixels,metrics.heightPixels);
         }
         Notification notification(String title,String body){
             PendingIntent o=PendingIntent.getService(this,1,new Intent(this,ScreenCaptureService.class).setAction(ACT_OCR),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
@@ -417,8 +437,14 @@ public class MainActivity extends Activity {
             if(Build.VERSION.SDK_INT>=26) ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(new NotificationChannel(CH,"屏幕 OCR",NotificationManager.IMPORTANCE_DEFAULT));
         }
         void captureOnce(Intent request){
+            final boolean preview=request!=null && ACT_OCR_PREVIEW.equals(request.getAction());
+            final long session=request==null?0:request.getLongExtra("session",0);
+            if(preview && previewInFlight){
+                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("error","OCR 正在识别，请稍后再长按"));return;
+            }
             if(reader==null){
-                if(request!=null) sendOcrResult(null,"屏幕捕获尚未就绪，请重新授权录屏");
+                if(preview) sendPreview(session,null,"屏幕捕获尚未就绪，请重新授权录屏");
+                else if(request!=null) sendOcrResult(null,"屏幕捕获尚未就绪，请重新授权录屏");
                 else Toast.makeText(this,"录屏会话尚未建立",Toast.LENGTH_SHORT).show();
                 return;
             }
@@ -428,10 +454,13 @@ public class MainActivity extends Activity {
             final int rw=region?request.getIntExtra("w",w):w;
             final int rh=region?request.getIntExtra("h",h):h;
 
+            if(preview)previewInFlight=true;
             new Handler(Looper.getMainLooper()).postDelayed(()->{
+                if(reader==null) { if(preview) sendPreview(session,null,"录屏会话已结束"); return; }
                 Image image=reader.acquireLatestImage();
                 if(image==null){
-                    if(region) sendOcrResult(null,"暂时没有取得屏幕图像，请再拖动一次");
+                    if(preview) sendPreview(session,null,"暂时没有取得屏幕图像，请再长按一次");
+                    else if(region) sendOcrResult(null,"暂时没有取得屏幕图像，请再拖动一次");
                     else Toast.makeText(this,"暂时未取得屏幕图像，请再点一次",Toast.LENGTH_SHORT).show();
                     return;
                 }
@@ -439,29 +468,63 @@ public class MainActivity extends Activity {
                 try{
                     Image.Plane p=image.getPlanes()[0];
                     ByteBuffer buf=p.getBuffer();
-                    int px=p.getPixelStride(), row=p.getRowStride(), pad=row-px*w;
-                    Bitmap tmp=Bitmap.createBitmap(w+pad/px,h,Bitmap.Config.ARGB_8888);
+                    int imageWidth=image.getWidth(), imageHeight=image.getHeight();
+                    int px=p.getPixelStride(), row=p.getRowStride(), pad=row-px*imageWidth;
+                    Bitmap tmp=Bitmap.createBitmap(imageWidth+pad/px,imageHeight,Bitmap.Config.ARGB_8888);
                     tmp.copyPixelsFromBuffer(buf);
-                    Bitmap full=Bitmap.createBitmap(tmp,0,0,w,h);
-                    tmp.recycle();
+                    Bitmap full=Bitmap.createBitmap(tmp,0,0,imageWidth,imageHeight);
+                    if(tmp!=full) tmp.recycle();
 
                     if(region){
-                        int left=Math.max(0,Math.min(rx,w-1));
-                        int top=Math.max(0,Math.min(ry,h-1));
-                        int cw=Math.max(1,Math.min(rw,w-left));
-                        int ch=Math.max(1,Math.min(rh,h-top));
+                        int left=Math.max(0,Math.min(rx,imageWidth-1));
+                        int top=Math.max(0,Math.min(ry,imageHeight-1));
+                        int cw=Math.max(1,Math.min(rw,imageWidth-left));
+                        int ch=Math.max(1,Math.min(rh,imageHeight-top));
                         bmp=Bitmap.createBitmap(full,left,top,cw,ch);
-                        full.recycle();
+                        if(bmp!=full) full.recycle();
                     }else{
                         bmp=full;
                     }
                 } catch(Exception e){
-                    if(region) sendOcrResult(null,"截图裁剪失败："+e.getMessage());
+                    if(preview) sendPreview(session,null,"截图失败："+e.getMessage());
+                    else if(region) sendOcrResult(null,"截图裁剪失败："+e.getMessage());
                     return;
                 } finally { image.close(); }
 
-                recognize(bmp,region);
-            },280);
+                if(preview){
+                    sendBroadcast(new Intent(ACTION_PREVIEW_FRAME).setPackage(getPackageName()).putExtra("session",session));
+                    recognizePreview(bmp,session);
+                }else recognize(bmp,region);
+            },preview?100:280);
+        }
+        void recognizePreview(Bitmap bitmap,long session){
+            if(ocrRecognizer==null){bitmap.recycle();sendPreview(session,null,"OCR 识别器尚未就绪");return;}
+            ocrRecognizer.recognizeRegions(bitmap,new MultilingualOcrRecognizer.RegionsCallback(){
+                public void onSuccess(java.util.List<MultilingualOcrRecognizer.Region> regions){
+                    try{sendPreview(session,regions,null);}finally{bitmap.recycle();}
+                }
+                public void onFailure(Exception error){
+                    try{sendPreview(session,null,"OCR 失败："+error.getMessage());}finally{bitmap.recycle();}
+                }
+            });
+        }
+        void sendPreview(long session,java.util.List<MultilingualOcrRecognizer.Region> regions,String error){
+            previewInFlight=false;
+            Intent out=new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session);
+            if(regions!=null){
+                int chars=0;for(MultilingualOcrRecognizer.Region region:regions)chars+=region.text.length();
+                if(regions.size()>4096 || chars>65536){error="屏幕文字过多，请缩放页面后重试";}
+                else{
+                    String[] words=new String[regions.size()];int[] boxes=new int[regions.size()*4];
+                    for(int i=0;i<regions.size();i++){
+                        MultilingualOcrRecognizer.Region region=regions.get(i);words[i]=region.text;
+                        boxes[i*4]=region.bounds.left;boxes[i*4+1]=region.bounds.top;boxes[i*4+2]=region.bounds.right;boxes[i*4+3]=region.bounds.bottom;
+                    }
+                    out.putExtra("words",words).putExtra("boxes",boxes);
+                }
+            }
+            if(error!=null)out.putExtra("error",error);
+            sendBroadcast(out);
         }
 
         void recognize(Bitmap bmp, boolean region){

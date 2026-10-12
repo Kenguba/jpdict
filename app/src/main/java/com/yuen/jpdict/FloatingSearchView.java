@@ -67,6 +67,7 @@ final class FloatingSearchView extends FrameLayout {
     private final LinearLayout tools;
     private final Editor input;
     private final GridLayout suggestionWords;
+    private final FrameLayout suggestionArea;
     private final SearchSuggestionsController suggestions;
     private boolean clipboardPending;
     private final SearchIconView plus;
@@ -159,8 +160,9 @@ final class FloatingSearchView extends FrameLayout {
         suggestionWords = new GridLayout(context);
         suggestionWords.setColumnCount(3);
         suggestionWords.setPadding(dp(16), 0, dp(16), dp(4));
-        suggestionWords.setMinimumHeight(dp(64));
-        bottom.addView(suggestionWords, new LinearLayout.LayoutParams(-1, dp(64)));
+        suggestionArea = new FrameLayout(context);
+        suggestionArea.addView(suggestionWords, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+        bottom.addView(suggestionArea, new LinearLayout.LayoutParams(-1, dp(124)));
         composer = new LinearLayout(context);
         composer.setOrientation(LinearLayout.VERTICAL);
         composer.setPadding(dp(8), dp(5), dp(8), dp(7));
@@ -296,7 +298,7 @@ final class FloatingSearchView extends FrameLayout {
 
     private void showSuggestions(List<String> words) {
         suggestionWords.removeAllViews();
-        suggestionWords.setVisibility(compactComposer ? GONE : VISIBLE);
+        suggestionArea.setVisibility(compactComposer ? GONE : VISIBLE);
         if (words.isEmpty()) {
             TextView note = text(input.length() == 0 ? "本地词库智能联想" : "回车查询 · 支持中 / 英 / 日 / 韩", 11, MUTED, false);
             note.setPadding(0, dp(9), 0, 0);
@@ -311,11 +313,12 @@ final class FloatingSearchView extends FrameLayout {
             candidate.setEllipsize(TextUtils.TruncateAt.END);
             candidate.setPadding(dp(8), dp(5), dp(8), dp(5));
             candidate.setBackground(ripple(0xfff0f6ff, 14));
-            candidate.setContentDescription("填写候选词 " + word);
-            GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(index / 3), GridLayout.spec(index % 3, 1f));
+            candidate.setContentDescription("查询候选词 " + word);
+            int rows = (words.size() + 2) / 3;
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(rows - 1 - index / 3), GridLayout.spec(index % 3, 1f));
             lp.width = 0; lp.height = dp(27); lp.rightMargin = dp(4); lp.bottomMargin = dp(3); index++;
             suggestionWords.addView(candidate, lp);
-            candidate.setOnClickListener(v -> { input.setText(word); input.setSelection(input.length()); focusInput(); });
+            candidate.setOnClickListener(v -> { input.setText(word); input.setSelection(input.length()); submit(); });
         }
     }
 
@@ -468,11 +471,13 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     void prepareForLookup() {
+        suggestions.pause();
         closeMenu();
         if (drawerAnimator != null) drawerAnimator.cancel();
         applyDrawerProgress(state.isDrawerOpen() ? 1 : 0);
         hideKeyboard();
     }
+    void resumeAfterLookup() { suggestions.resume(); }
 
     private void togglePrivateMode() {
         closeMenu();
@@ -773,7 +778,7 @@ final class FloatingSearchView extends FrameLayout {
         header.setVisibility(available < dp(240) ? GONE : VISIBLE);
         recommendations.setVisibility(!state.isPrivateMode() && available >= dp(320) ? VISIBLE : GONE);
         boolean tight = available < dp(240);
-        suggestionWords.setVisibility(!tight ? VISIBLE : GONE);
+        suggestionArea.setVisibility(!tight ? VISIBLE : GONE);
         if (tight != compactComposer) {
             compactComposer = tight;
             input.setMinLines(tight ? 1 : 2);

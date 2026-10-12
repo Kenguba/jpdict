@@ -64,8 +64,7 @@ public class FloatingService extends Service {
     private View bubble;
     private WindowManager.LayoutParams bubbleLp;
 
-    private TextView targetBox;
-    private WindowManager.LayoutParams targetLp;
+    private OcrPickupController pickup;
 
     private View searchPanel;
     private WindowManager.LayoutParams searchPanelLp;
@@ -202,7 +201,7 @@ public class FloatingService extends Service {
         return builder
                 .setSmallIcon(android.R.drawable.ic_menu_search)
                 .setContentTitle("多语种浮动取词已开启")
-                .setContentText("轻点搜索；拖动并松手可 OCR 取词")
+                .setContentText("轻点搜索；长按 700ms 后拖动取词")
                 .setContentIntent(p)
                 .setOngoing(true)
                 .build();
@@ -289,6 +288,7 @@ public class FloatingService extends Service {
     }
 
     private final class LookupOverlayFrameLayout extends FrameLayout {
+        private boolean consumeHeaderRelease;
         private float edgeDownX;
         private float edgeDownY;
         private boolean trackingEdgeBack;
@@ -299,6 +299,17 @@ public class FloatingService extends Service {
             super(context);
             setFocusable(true);
             setFocusableInTouchMode(true);
+        }
+        void consumeEditingGesture() { consumeHeaderRelease = true; }
+        @Override public boolean dispatchTouchEvent(MotionEvent event) {
+            // Changing window focus and replacing the pressed title invalidates
+            // its touch target on some OEMs. The same release must never click Mask.
+            if (consumeHeaderRelease && event.getActionMasked() != MotionEvent.ACTION_DOWN) {
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) consumeHeaderRelease = false;
+                return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) consumeHeaderRelease = false;
+            return super.dispatchTouchEvent(event);
         }
 
         private boolean isFromEdge(float x) {
@@ -412,179 +423,34 @@ public class FloatingService extends Service {
         bubbleLp.x = sp.getInt("x", Math.max(0, dm.widthPixels - bubbleLp.width - dp(20)));
         bubbleLp.y = sp.getInt("y", Math.max(dp(120), dm.heightPixels / 2));
 
-        bubble.setOnTouchListener(new View.OnTouchListener() {
-            float downRawX, downRawY;
-            int startX, startY;
-            long downTime;
-            boolean moved;
-
-            @Override public boolean onTouch(View v, MotionEvent e) {
-                try {
-                    switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        downRawX = e.getRawX();
-                        downRawY = e.getRawY();
-                        startX = bubbleLp.x;
-                        startY = bubbleLp.y;
-                        downTime = System.currentTimeMillis();
-                        moved = false;
-                        projectionRequestInFlight = false;
-                        removeResultCard();
-                        return true;
-
-                    case MotionEvent.ACTION_MOVE:
-                        int nx = startX + Math.round(e.getRawX() - downRawX);
-                        int ny = startY + Math.round(e.getRawY() - downRawY);
-
-                        if (Math.abs(e.getRawX() - downRawX) > dp(5) ||
-                                Math.abs(e.getRawY() - downRawY) > dp(5)) {
-                            if (!moved) {
-                                moved = true;
-                                removeSearchPanel();
-                                if (MainActivity.ScreenCaptureService.READY) {
-                                    showTargetBox();
-                                } else {
-                                    requestProjectionPermissionNow();
-                                }
-                            }
-                        }
-
-                        DisplayMetrics d = getResources().getDisplayMetrics();
-                        nx = Math.max(0, Math.min(nx, d.widthPixels - bubbleLp.width));
-                        ny = Math.max(0, Math.min(ny, d.heightPixels - bubbleLp.height));
-
-                        bubbleLp.x = nx;
-                        bubbleLp.y = ny;
-
-                        try {
-                            wm.updateViewLayout(bubble, bubbleLp);
-                        } catch (Exception ignored) {}
-
-                        if (moved) updateTargetBox();
-                        return true;
-
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        getSharedPreferences("float_pos", MODE_PRIVATE).edit()
-                                .putInt("x", bubbleLp.x)
-                                .putInt("y", bubbleLp.y)
-                                .apply();
-
-                        if (!moved && System.currentTimeMillis() - downTime < 650) {
-                            hideTargetBox();
-                            if (lookupOverlay != null) {
-                                markAction("BUBBLE_TAP_CLOSE_LOOKUP_OVERLAY");
-                                closeLookupOverlay();
-                            } else {
-                                markAction("BUBBLE_TAP_SHOW_SEARCH");
-                                toggleSearchPanel();
-                            }
-                        } else if (moved) {
-                            if (MainActivity.ScreenCaptureService.READY && targetLp != null) {
-                                triggerPickup();
-                            } else {
-                                hideTargetBox();
-                            }
-                        }
-                        return true;
-                    }
-                    return false;
-                } catch (Throwable t) {
-                    recordHandledCrash("FloatingService.onTouch", t);
-                    safeToast("悬浮球操作异常：" + t.getClass().getSimpleName()
-                            + (t.getMessage() == null ? "" : " · " + t.getMessage()));
-                    hideTargetBox();
-                    return true;
+        if (pickup == null) pickup = new OcrPickupController(this, new OcrPickupController.Host() {
+            @Override public Rect position() {
+                View owner = bubbleTopProxy != null ? bubbleTopProxy : bubble;
+                int[] location = new int[2]; owner.getLocationOnScreen(location);
+                return new Rect(location[0], location[1], location[0] + bubbleLp.width, location[1] + bubbleLp.height);
+            }
+            @Override public void move(int x, int y) {
+                Rect current = position();
+                DisplayMetrics screen = new DisplayMetrics(); wm.getDefaultDisplay().getRealMetrics(screen);
+                bubbleLp.x = Math.max(0, Math.min(x - (current.left - bubbleLp.x), screen.widthPixels - bubbleLp.width));
+                bubbleLp.y = Math.max(0, Math.min(y - (current.top - bubbleLp.y), screen.heightPixels - bubbleLp.height));
+                wm.updateViewLayout(bubble, bubbleLp);
+                if (bubbleTopProxy != null && bubbleTopProxyLp != null) {
+                    bubbleTopProxyLp.x = bubbleLp.x; bubbleTopProxyLp.y = bubbleLp.y;
+                    wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp);
                 }
             }
+            @Override public void save() {
+                getSharedPreferences("float_pos", MODE_PRIVATE).edit().putInt("x", bubbleLp.x).putInt("y", bubbleLp.y).apply();
+            }
+            @Override public void tap() {
+                if (lookupOverlay != null) closeLookupOverlay(); else toggleSearchPanel();
+            }
+            @Override public void authorize() { requestProjectionPermissionNow(); }
+            @Override public void lookup(String text) { removeSearchPanel(); openOcrLookupPopup(text); }
         });
-
+        bubble.setOnTouchListener(pickup.listener());
         wm.addView(bubble, bubbleLp);
-    }
-
-    private void showTargetBox() {
-        if (targetBox != null) return;
-
-        targetBox = new TextView(this);
-        targetBox.setText("  对准单词 · 松手取词  ");
-        targetBox.setTextColor(Color.WHITE);
-        targetBox.setTextSize(13);
-        targetBox.setGravity(Gravity.CENTER);
-        targetBox.setBackground(outline(0xff29a8ff, 2, 0x77090d14, 8));
-
-        targetLp = new WindowManager.LayoutParams(
-                dp(190), dp(58), overlayType(),
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
-                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        targetLp.gravity = Gravity.TOP | Gravity.START;
-
-        updateTargetCoordinates();
-        wm.addView(targetBox, targetLp);
-    }
-
-    private void updateTargetBox() {
-        if (targetBox == null || targetLp == null) return;
-        updateTargetCoordinates();
-        try {
-            wm.updateViewLayout(targetBox, targetLp);
-        } catch (Exception ignored) {}
-    }
-
-    private void updateTargetCoordinates() {
-        DisplayMetrics d = getResources().getDisplayMetrics();
-
-        int targetWidth = dp(190);
-        int targetHeight = dp(58);
-
-        int centerX = bubbleLp.x + bubbleLp.width / 2;
-        int x = centerX - targetWidth / 2;
-        int y = bubbleLp.y - targetHeight - dp(18);
-
-        x = Math.max(0, Math.min(x, d.widthPixels - targetWidth));
-        y = Math.max(dp(4), Math.min(y, d.heightPixels - targetHeight - dp(4)));
-
-        targetLp.x = x;
-        targetLp.y = y;
-    }
-
-    private void hideTargetBox() {
-        if (targetBox != null && wm != null) {
-            try {
-                wm.removeView(targetBox);
-            } catch (Exception ignored) {}
-        }
-
-        targetBox = null;
-        targetLp = null;
-    }
-
-    private void triggerPickup() {
-        if (targetLp == null) return;
-
-        final int x = targetLp.x;
-        final int y = targetLp.y;
-        final int width = targetLp.width;
-        final int height = targetLp.height;
-
-        hideTargetBox();
-
-        if (!MainActivity.ScreenCaptureService.READY) {
-            requestProjectionPermissionNow();
-            return;
-        }
-
-        Intent i = new Intent(this, MainActivity.ScreenCaptureService.class)
-                .setAction(MainActivity.ScreenCaptureService.ACT_OCR_REGION)
-                .putExtra("x", x)
-                .putExtra("y", y)
-                .putExtra("w", width)
-                .putExtra("h", height);
-
-        // The OCR target rectangle is positioned away from the bubble. Keep the
-        // bubble mounted and visible so pickup never flashes off/on.
-        startService(i);
     }
 
     private void toggleSearchPanel() {
@@ -766,74 +632,7 @@ public class FloatingService extends Service {
         lp.x = bubbleLp.x;
         lp.y = bubbleLp.y;
 
-        proxy.setOnTouchListener(new View.OnTouchListener() {
-            float downRawX;
-            float downRawY;
-            int startX;
-            int startY;
-            boolean moved;
-
-            @Override public boolean onTouch(View v, MotionEvent e) {
-                switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        downRawX = e.getRawX();
-                        downRawY = e.getRawY();
-                        startX = bubbleTopProxyLp == null ? bubbleLp.x : bubbleTopProxyLp.x;
-                        startY = bubbleTopProxyLp == null ? bubbleLp.y : bubbleTopProxyLp.y;
-                        moved = false;
-                        return true;
-
-                    case MotionEvent.ACTION_MOVE:
-                        int dx = Math.round(e.getRawX() - downRawX);
-                        int dy = Math.round(e.getRawY() - downRawY);
-                        if (Math.abs(dx) > dp(5) || Math.abs(dy) > dp(5)) moved = true;
-                        // A tap on a temporarily relocated proxy must not move
-                        // the real bubble or replace its saved coordinates.
-                        if (!moved) return true;
-
-                        DisplayMetrics dm = getResources().getDisplayMetrics();
-                        int nx = Math.max(0, Math.min(startX + dx, dm.widthPixels - bubbleLp.width));
-                        int ny = Math.max(0, Math.min(startY + dy, dm.heightPixels - bubbleLp.height));
-
-                        bubbleLp.x = nx;
-                        bubbleLp.y = ny;
-                        if (bubbleTopProxyLp != null) {
-                            bubbleTopProxyLp.x = nx;
-                            bubbleTopProxyLp.y = ny;
-                        }
-
-                        try {
-                            wm.updateViewLayout(bubble, bubbleLp);
-                        } catch (Exception ignored) {}
-                        try {
-                            if (bubbleTopProxy != null && bubbleTopProxyLp != null) {
-                                wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp);
-                            }
-                        } catch (Exception ignored) {}
-                        return true;
-
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        getSharedPreferences("float_pos", MODE_PRIVATE)
-                                .edit()
-                                .putInt("x", bubbleLp.x)
-                                .putInt("y", bubbleLp.y)
-                                .apply();
-
-                        if (!moved) {
-                            if (lookupOverlay != null) {
-                                closeLookupOverlay();
-                            } else if (searchPanel != null) {
-                                removeSearchPanel();
-                            }
-                        }
-                        return true;
-
-                    default:
-                        return true;
-                }
-            }
-        });
+        proxy.setOnTouchListener(pickup.listener());
 
         bubbleTopProxy = proxy;
         bubbleTopProxyLp = lp;
@@ -898,7 +697,7 @@ public class FloatingService extends Service {
             try { wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp); }
             catch (Exception ignored) {}
         }
-        updateTargetBox();
+        if (pickup != null) pickup.cancel();
     }
 
     private void removeBubbleProxyIfUnused() {
@@ -1088,7 +887,7 @@ public class FloatingService extends Service {
         }
 
         if (focusable || !lookupOverlayHosted) {
-            lookupOverlay.requestFocus();
+            if (lookupEditor == null && !lookupKeyEditing) lookupOverlay.requestFocus();
             registerLookupBackCallback();
         } else {
             clearLookupBackCallback();
@@ -1234,6 +1033,8 @@ public class FloatingService extends Service {
                 FrameLayout.LayoutParams.MATCH_PARENT, dp(48)));
 
         Runnable enterEditMode = () -> {
+            if (lookupOverlay != root || lookupEditor != null) return;
+            root.consumeEditingGesture();
             lookupEditor = editor;
             lookupHeaderNormal = header;
             lookupHeaderEdit = editHeader;
@@ -1243,16 +1044,11 @@ public class FloatingService extends Service {
             // Normal lookup mode intentionally leaves the WindowManager overlay
             // NOT_FOCUSABLE so Android Back belongs to the transparent host.
             // Only editing temporarily takes focus for IME input.
-            setLookupOverlayFocusable(true);
-
             editor.setText(lookupOverlayQuery);
             editor.setSelection(editor.length());
             editor.requestFocus();
-            editor.post(() -> {
-                InputMethodManager imm =
-                        (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
-                imm.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
-            });
+            // OverlayEditor opens IME after this window actually gains focus.
+            setLookupOverlayFocusable(true);
         };
         title.setContentDescription(q + "，长按 700 毫秒修改");
         title.setOnLongClickListener(v -> { enterEditMode.run(); return true; });
@@ -1337,57 +1133,6 @@ public class FloatingService extends Service {
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
         content.addView(pronunciation, new LinearLayout.LayoutParams(-1, dp(46)));
-
-        LinearLayout localBody = new LinearLayout(this);
-        localBody.setOrientation(LinearLayout.VERTICAL);
-        localBody.setPadding(dp(14), dp(12), dp(14), dp(12));
-        localBody.setBackgroundColor(Color.WHITE);
-
-        LinearLayout summaryCard = new LinearLayout(this);
-        summaryCard.setOrientation(LinearLayout.VERTICAL);
-        summaryCard.setPadding(dp(13), dp(12), dp(13), dp(13));
-        summaryCard.setBackground(bg(0xfff4f4f4, 10));
-        summaryCard.setMinimumHeight(dp(96));
-
-        if (local != null) {
-            TextView word = lookupText(q, 18, 0xff00a6a6);
-            word.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            word.setIncludeFontPadding(false);
-            summaryCard.addView(word);
-
-            TextView meta = lookupText(
-                    local[0] + "   " + local[1] + "   " + local[2],
-                    13,
-                    0xff6f7378);
-            meta.setPadding(0, dp(6), 0, dp(7));
-            meta.setIncludeFontPadding(false);
-            summaryCard.addView(meta);
-
-            LinearLayout meaningCard = new LinearLayout(this);
-            meaningCard.setOrientation(LinearLayout.VERTICAL);
-            meaningCard.setPadding(dp(11), dp(10), dp(11), dp(10));
-            meaningCard.setBackground(bg(0xffe5f5fb, 8));
-
-            TextView meaning = lookupText(local[3], 16, 0xff25272a);
-            meaning.setLineSpacing(dp(2), 1f);
-            meaning.setIncludeFontPadding(false);
-            meaningCard.addView(meaning, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT));
-            summaryCard.addView(meaningCard, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT));
-        } else {
-            TextView empty = lookupText("暂无笔记", 16, 0xff303236);
-            empty.setIncludeFontPadding(false);
-            summaryCard.addView(empty);
-        }
-
-        localBody.addView(summaryCard, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        addLookupSection(content, "日语单词总汇", localBody, true);
 
         LinearLayout dictionarySections = new LinearLayout(this);
         dictionarySections.setOrientation(LinearLayout.VERTICAL);
@@ -2016,6 +1761,7 @@ public class FloatingService extends Service {
 
     @Override public void onConfigurationChanged(Configuration configuration) {
         super.onConfigurationChanged(configuration);
+        if (pickup != null) pickup.cancel();
         if (searchPanel != null) {
             // Native layout dimensions are created in pixels. Recreate the
             // search surface for density/font changes, retaining its draft
@@ -2072,6 +1818,7 @@ public class FloatingService extends Service {
             removeLookupOverlay(true);
             lookupOverlayHosted = false;
             lookupPrivateMode = false;
+            if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).resumeAfterLookup();
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
             if (restoredQuery != null && searchPanel == null) currentSearchQuery = restoredQuery;
             if (intent.hasExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE)) {
@@ -2143,7 +1890,7 @@ public class FloatingService extends Service {
         } catch (Exception ignored) {}
         FloatingBubbleAppearance.removeChangeListener(bubbleAppearanceListener);
 
-        hideTargetBox();
+        if (pickup != null) { pickup.close(); pickup = null; }
         removeSearchPanel();
         removeLookupOverlay(true);
         notifyLookupHostFinish();
