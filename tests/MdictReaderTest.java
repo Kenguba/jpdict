@@ -59,6 +59,10 @@ public final class MdictReaderTest {
     }
     private static byte[] fixture(int width, Charset encoding, int compression, boolean resource,
             String[] keys, byte[][] values, String[] summaries) throws IOException {
+        return fixture(width, encoding, compression, resource, keys, values, summaries, 7);
+    }
+    private static byte[] fixture(int width, Charset encoding, int compression, boolean resource,
+            String[] keys, byte[][] values, String[] summaries, int recordBlockBytes) throws IOException {
         String xml = "<" + (resource ? "Library_Data" : "Dictionary")
                 + " GeneratedByEngineVersion=\"" + (width == 8 ? "2.0" : "1.2")
                 + "\" RequiredEngineVersion=\"" + (width == 8 ? "2.0" : "1.2")
@@ -90,8 +94,8 @@ public final class MdictReaderTest {
         List<byte[]> recordBlocks = new ArrayList<>();
         byte[] records = rec.toByteArray();
         // Deliberately split UTF-16 units and UTF-8 code points between blocks.
-        for (int start = 0; start < records.length; start += 7) {
-            recordBlocks.add(envelope(Arrays.copyOfRange(records, start, Math.min(start + 7, records.length)), compression));
+        for (int start = 0; start < records.length; start += recordBlockBytes) {
+            recordBlocks.add(envelope(Arrays.copyOfRange(records, start, Math.min(start + recordBlockBytes, records.length)), compression));
         }
         if (recordBlocks.isEmpty()) recordBlocks.add(envelope(new byte[0], 0));
         ByteArrayOutputStream file = new ByteArrayOutputStream();
@@ -111,7 +115,7 @@ public final class MdictReaderTest {
         number(out, recordBlocks.stream().mapToInt(a -> a.length).sum(), width);
         for (int i = 0; i < recordBlocks.size(); i++) {
             number(out, recordBlocks.get(i).length, width);
-            number(out, Math.min(7, records.length - i * 7), width);
+            number(out, Math.min(recordBlockBytes, records.length - i * recordBlockBytes), width);
         }
         for (byte[] block : recordBlocks) out.write(block);
         return file.toByteArray();
@@ -212,7 +216,7 @@ public final class MdictReaderTest {
     }
     public static void main(String[] args) throws Exception {
         formats(); lzo(); corrupt(); persistentIndex(); sparse();
-        referenceVectors(args[0]); unsupportedHeaders(); compactHeaders(); normalizedSummaries(); encryptedIndexes();
+        referenceVectors(args[0]); unsupportedHeaders(); compactHeaders(); normalizedSummaries(); encryptedIndexes(); caseVariantLinks(); largeResources(); overlappingRanges();
         System.out.println("MdictReader: " + checks + " assertions passed (v1/v2, MDX/MDD, UTF8/UTF16LE, raw/zlib/LZO, cross-block, duplicates, links, malformed/fuzz)");
     }
     private static void referenceVectors(String directory) throws Exception {
@@ -271,6 +275,49 @@ public final class MdictReaderTest {
         byte[] mdd = fixture(8, StandardCharsets.UTF_16LE, 2, true, new String[]{"\\style.css"}, new byte[][]{{0, 1, 2, 3}});
         try (MdictReader reader = reader(headerChange(mdd, "/>", " Compact=\"Yes\" StyleSheet=\"\"/>"))) {
             check(Arrays.equals(reader.readResource("style.css"), new byte[]{0, 1, 2, 3}), "Empty compact stylesheet never changes binary resources");
+        }
+    }
+    private static void overlappingRanges() throws Exception {
+        String[] keys = new String[200]; byte[][] values = new byte[keys.length][];
+        for (int i = 0; i < keys.length; i++) { keys[i] = (i % 2 == 0 ? "a" : "z") + i; values[i] = bytes("entry" + i, StandardCharsets.UTF_8); }
+        byte[] data = fixture(8, StandardCharsets.UTF_8, 2, false, keys, values);
+        int[] reads = {0};
+        try (MdictReader r = MdictReader.open(new MdictReader.Source() {
+            public long size() { return data.length; }
+            public void read(long position, byte[] target, int offset, int length) { reads[0]++; System.arraycopy(data, (int) position, target, offset, length); }
+            public void close() {}
+        })) {
+            r.validate((done, total) -> {}); reads[0] = 0;
+            check(r.lookup("middle-missing").isEmpty(), "Overlapping ranges retain correct missing result");
+            check(reads[0] < 10, "Bloom summary skips almost all 100 overlapping key blocks; reads=" + reads[0]);
+            for (int i = 0; i < keys.length; i++) check(r.lookup(keys[i]).equals(Collections.singletonList("entry" + i)), "Bloom filter never hides a present original key");
+        }
+    }
+    private static void largeResources() throws Exception {
+        byte[] data = new byte[9 * 1024 * 1024]; new Random(42).nextBytes(data);
+        String[] paths = {"\\font.otf"};
+        byte[] mdd = fixture(8, StandardCharsets.UTF_16LE, 2, true, paths, new byte[][]{data}, paths, data.length);
+        try (MdictReader r = reader(mdd)) {
+            r.validate((done, total) -> {});
+            check(Arrays.equals(r.readResource("font.otf"), data), "Large CJK font record is read without loading the whole MDD");
+        }
+        byte[] mdx = fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"entry"}, new byte[][]{data}, new String[]{"entry"}, data.length);
+        fails(() -> reader(mdx), MdictReader.Error.LIMIT);
+    }
+    private static void caseVariantLinks() throws Exception {
+        for (int width : new int[]{4, 8}) for (Charset encoding : new Charset[]{StandardCharsets.UTF_8, StandardCharsets.UTF_16LE}) {
+            byte[] data = fixture(width, encoding, 2, false, new String[]{"my", "MY", "alias", "Target", "dup", "dup"},
+                    new byte[][]{bytes("definition", encoding), bytes("@@@LINK=my", encoding),
+                            bytes("@@@LINK=target", encoding), bytes("fallback", encoding), bytes("first", encoding), bytes("second", encoding)});
+            try (MdictReader r = reader(data)) {
+                check(r.lookup("my").equals(Arrays.asList("definition", "definition")), "Case variant redirect does not create a false cycle");
+                check(r.lookup("MY").equals(Arrays.asList("definition", "definition")), "Case insensitive lookup still retains both rows");
+                check(r.lookup("alias").equals(Collections.singletonList("fallback")), "Redirect falls back when exact target spelling is absent");
+                check(r.lookup("dup").equals(Arrays.asList("first", "second")), "Exact duplicates survive redirect preference");
+            }
+            byte[] cycle = fixture(width, encoding, 2, false, new String[]{"a", "A"},
+                    new byte[][]{bytes("@@@LINK=A", encoding), bytes("@@@LINK=a", encoding)});
+            try (MdictReader r = reader(cycle)) { fails(() -> r.lookup("a"), MdictReader.Error.CORRUPT); }
         }
     }
     private static void normalizedSummaries() throws Exception {

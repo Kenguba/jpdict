@@ -35,6 +35,8 @@ public final class DictionaryInstrumentation extends Instrumentation {
     private void integration() throws Exception {
         Context context = getTargetContext(); DictionaryRepository repo = DictionaryRepository.get(context); repo.reload();
         if (!repo.list().isEmpty()) throw new AssertionError("Use an empty disposable emulator registry for integration tests");
+        List<DictionaryRepository.Document> scanned = repo.scanTree(Uri.parse("content://com.yuen.jpdict.test.fixtures/tree/fixture"));
+        check(scanned.size() == 2 && scanned.get(1).path.equals("assets/local.css"), "SAF tree preserves nested resource paths and skips hidden tool directories");
         try(DictionarySource source=new DictionarySource(context.getContentResolver(),Uri.parse("content://com.yuen.jpdict.test.fixtures/seek"))) {
             byte[] tail=new byte[6];source.read(250,tail,0,6);
             check(source.size()==256&&(tail[0]&255)==250&&(tail[5]&255)==255,"SAF descriptor positional reads");
@@ -43,17 +45,33 @@ public final class DictionaryInstrumentation extends Instrumentation {
         check(pipeRejected,"Streaming SAF provider rejected with copy guidance");
         File originals = new File(context.getCacheDir(), "original-dict-tests"); originals.mkdirs();
         File mdx = new File(originals,"original.mdx"), mainMdd = new File(originals,"original.mdd"), volume = new File(originals,"original.1.mdd");
+        File script = new File(originals, "local.js"), css = new File(originals, "local.css"), json = new File(originals, "data.json"), largeFont = new File(originals, "large.otf");
+        write(script, ("document.body.dataset.local='ok';fetch('data.json').then(r=>r.json()).then(d=>document.body.dataset.json=d.value);"
+                + "document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]').remove();"
+                + "fetch('https://example.invalid/blocked').then(()=>document.body.dataset.network='leaked').catch(()=>document.body.dataset.network='blocked');").getBytes(StandardCharsets.UTF_8));
+        write(css, "@import url('/style.css');#probe{font-weight:bold}".getBytes(StandardCharsets.UTF_8));
+        write(json, "{\"value\":\"ok\"}".getBytes(StandardCharsets.UTF_8));
+        try (RandomAccessFile font = new RandomAccessFile(largeFont, "rw")) { font.setLength(9L * 1024 * 1024); font.write(42); }
         write(mdx, MdictReaderTest.headerChange(MdictReaderTest.fixture(8,StandardCharsets.UTF_8,2,false,new String[]{"alpha","日本語"},
                 new byte[][]{"<p>English</p>".getBytes(StandardCharsets.UTF_8), "<link rel='stylesheet' href='style.css'><img src='image.png'><a href='entry://alpha'>alpha</a><p>日本語释义</p>".getBytes(StandardCharsets.UTF_8)}),
                 "/>", " Compact=\"Yes\" Compat=\"Yes\" StyleSheet=\"\"/>"));
-        write(mainMdd, MdictReaderTest.encryptedIndex(MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,2,true,new String[]{"\\image.png","\\style.css"},
-                new byte[][]{android.util.Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",0), "p{color:#006bff}".getBytes(StandardCharsets.UTF_8)})));
+        write(mainMdd, MdictReaderTest.encryptedIndex(MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,2,true,new String[]{"\\image.png","\\style.css","\\logic.js"},
+                new byte[][]{android.util.Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",0), "p{color:#006bff}".getBytes(StandardCharsets.UTF_8), "document.body.dataset.mdd='ok'".getBytes(StandardCharsets.UTF_8)})));
         write(volume, MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,1,true,new String[]{"\\font.woff"},new byte[][]{{1,2,3,4}}));
         List<DictionaryRepository.Document> files = Arrays.asList(new DictionaryRepository.Document(mdx.getName(),Uri.fromFile(mdx),mdx.length()),
-                new DictionaryRepository.Document(mainMdd.getName(),Uri.fromFile(mainMdd),mainMdd.length()),new DictionaryRepository.Document(volume.getName(),Uri.fromFile(volume),volume.length()));
+                new DictionaryRepository.Document(mainMdd.getName(),Uri.fromFile(mainMdd),mainMdd.length()),new DictionaryRepository.Document(volume.getName(),Uri.fromFile(volume),volume.length()),
+                new DictionaryRepository.Document("src/local.js", Uri.fromFile(script), script.length()),
+                new DictionaryRepository.Document("src/local.css", Uri.fromFile(css), css.length()),
+                new DictionaryRepository.Document("src/data.json", Uri.fromFile(json), json.length()),
+                new DictionaryRepository.Document("assets/large.otf", Uri.fromFile(largeFont), largeFont.length()));
         long start = System.nanoTime();
         DictionaryRepository.Dictionary dictionary = repo.install(files,true,null,(m,d,t)->{}).get(0);
-        check(dictionary.files.size()==3,"Multi-volume association");
+        check(dictionary.files.size()==7,"Multi-volume and nested resource association");
+        File[] indexes = new File(context.getCacheDir(), "dict-indexes").listFiles((dir, name) -> name.endsWith(".idx"));
+        check(indexes != null && indexes.length >= 3, "Import persists MDX and MDD indexes before the first lookup");
+        try (InputStream font = repo.resourceStream(dictionary, "assets/large.otf")) {
+            check(font != null && font.read() == 42 && font.skip(8L * 1024 * 1024) > 0 && font.read() == 0, "Large external font streams beyond the old 8 MB limit");
+        }
         check(repo.lookup(dictionary,"日本語").get(0).contains("日本語释义"),"Internal lookup");
         System.out.println("Device cold import/query ms="+((System.nanoTime()-start)/1_000_000.0));
         start=System.nanoTime(); repo.lookup(dictionary,"日本語"); System.out.println("Device hot query ms="+((System.nanoTime()-start)/1_000_000.0));
@@ -115,7 +133,8 @@ public final class DictionaryInstrumentation extends Instrumentation {
         AtomicReference<String> pageError=new AtomicReference<>();
         AtomicReference<DictionaryEntryView> loadedView=new AtomicReference<>();
         runOnMainSync(()->{
-            DictionaryEntryView view=new DictionaryEntryView(context,repo,renderDictionary,Collections.singletonList("<p>test</p>"),navigation::set);
+            DictionaryEntryView view=new DictionaryEntryView(context,repo,renderDictionary,Collections.singletonList(
+                    "<link rel='stylesheet' href='local.css'><p id='probe'>test</p><script src='local.js'></script><script src='/logic.js'></script>"),navigation::set);
             loadedView.set(view);
             android.webkit.WebViewClient client=view.getWebViewClient();
             view.setWebViewClient(new android.webkit.WebViewClient(){
@@ -124,18 +143,35 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 @Override public void onReceivedError(android.webkit.WebView v,WebResourceRequest request,android.webkit.WebResourceError error){if(request.isForMainFrame())pageError.set(error.getDescription().toString());}
                 @Override public void onReceivedHttpError(android.webkit.WebView v,WebResourceRequest request,WebResourceResponse error){if(request.isForMainFrame())pageError.set("HTTP "+error.getStatusCode());}
             });
-            check(!view.getSettings().getJavaScriptEnabled(),"JavaScript disabled");
+            check(view.getSettings().getJavaScriptEnabled(),"Local dictionary JavaScript enabled");
+            check(view.getSettings().getBlockNetworkLoads() && !view.getSettings().getDomStorageEnabled(), "Network and persistent DOM storage disabled");
             check(!view.getSettings().getAllowFileAccess()&&!view.getSettings().getAllowContentAccess(),"Private file access disabled");
             client.shouldOverrideUrlLoading(view,"entry://%E6%97%A5%E6%9C%AC%E8%AA%9E");
             check("日本語".equals(navigation.get()),"Entry navigation decodes Unicode");
             WebResourceResponse denied=view.getWebViewClient().shouldInterceptRequest(view,request("https://dict.invalid/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/style.css"));
             check(denied.getStatusCode()==404,"Cross-dictionary request denied");
+            String origin = "https://" + renderDictionary.id + ".dict.invalid/";
+            denied=client.shouldInterceptRequest(view,request(origin + "%2E%2E/private"));
+            check(denied.getStatusCode()==404,"Encoded resource traversal denied");
+            denied=client.shouldInterceptRequest(view,request("file:///data/data/com.yuen.jpdict/private"));
+            check(denied.getStatusCode()==404,"Private file request denied");
             LinearLayout host=new LinearLayout(context);
             closedHost.set(host);
             DictionaryLookupController controller=new DictionaryLookupController(context,host,"alpha",navigation::set);
             controller.close();
         });
-        check(pageLoaded.await(5,java.util.concurrent.TimeUnit.SECONDS)&&pageError.get()==null,"Inline HTML main frame loads successfully: "+pageError.get());
+        check(pageLoaded.await(5,java.util.concurrent.TimeUnit.SECONDS)&&pageError.get()==null,"Local HTML main frame loads successfully: "+pageError.get());
+        String dom = null;
+        for (int attempt = 0; attempt < 30; attempt++) {
+            java.util.concurrent.CountDownLatch evaluated = new java.util.concurrent.CountDownLatch(1);
+            AtomicReference<String> value = new AtomicReference<>();
+            runOnMainSync(() -> loadedView.get().evaluateJavascript("JSON.stringify([document.body.dataset.local,document.body.dataset.mdd,document.body.dataset.json,document.body.dataset.network,getComputedStyle(document.getElementById('probe')).color,getComputedStyle(document.getElementById('probe')).fontWeight,typeof window.jpdict])", result -> {value.set(result); evaluated.countDown();}));
+            check(evaluated.await(2, java.util.concurrent.TimeUnit.SECONDS), "DOM evaluation completes");
+            dom = value.get(); if (dom != null && dom.contains("blocked") && dom.contains("rgb(0, 107, 255)")) break;
+            Thread.sleep(100);
+        }
+        check(dom != null && dom.contains("ok\\\",\\\"ok\\\",\\\"ok") && dom.contains("blocked") && dom.contains("rgb(0, 107, 255)") && dom.contains("700") && dom.contains("undefined"),
+                "External/MDD JS, local fetch, nested CSS and immutable network policy work: " + dom);
         runOnMainSync(()->loadedView.get().close());
         java.util.concurrent.CountDownLatch barrier = new java.util.concurrent.CountDownLatch(1);
         repo.execute(()->{},error->barrier.countDown());

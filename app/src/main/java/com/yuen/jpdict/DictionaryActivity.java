@@ -87,7 +87,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         action(actions, "导入本地词库", () -> chooseImport(null));
         action(actions, "存储与迁移", this::migration); content.addView(actions);
         List<DictionaryRepository.Dictionary> list = repository.list();
-        if (list.isEmpty()) content.addView(text("尚未安装 MDX 词典。选择 MDX/MDD 文件或词典文件夹导入。", 14, 0xff73777a));
+        if (list.isEmpty()) content.addView(text("尚未安装 MDX 词典。可同时选择 MDX、配套 MDD、JS、CSS 和字体；有子目录的词库请选择整个文件夹。", 14, 0xff73777a));
         for (DictionaryRepository.Dictionary dictionary : list) {
             LinearLayout c = card(); c.setTag(dictionary.id);
             LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL);
@@ -100,7 +100,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             TextView detail = text((dictionary.source == DictionaryRepository.SourceType.USER_IMPORT ? "用户导入" : dictionary.source == DictionaryRepository.SourceType.BUILTIN ? "内置词典" : "词库中心")
                     + " · " + (dictionary.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "内部存储" : "外部文件")
                     + "\n" + android.text.format.Formatter.formatFileSize(this, dictionary.bytes)
-                    + " · 1 MDX / " + mdd + " MDD\n" + dictionary.indexState + " · " + ("INSTALLED".equals(dictionary.status) ? "已安装" : "需要重新关联文件"), 12, 0xff73777a);
+                    + " · 1 MDX / " + mdd + " MDD / " + (dictionary.files.size() - 1 - mdd) + " 资源文件\n" + dictionary.indexState + " · " + ("INSTALLED".equals(dictionary.status) ? "已安装" : "需要重新关联文件"), 12, 0xff73777a);
             c.addView(detail);
             action(c, "详情与管理", () -> details(dictionary));
             TextView handle = text("长按拖动排序", 13, 0xff73777a); c.addView(handle);
@@ -154,7 +154,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         replaceId = id;
         new AlertDialog.Builder(this).setTitle("词库存储位置").setItems(new String[]{"导入到 JPDict（独立内部副本）", "外部直接读取（保留 URI 授权）"}, (d, which) -> {
             copy = which == 0;
-            new AlertDialog.Builder(this).setTitle("选择词库").setItems(new String[]{"选择 MDX / MDD / 资源文件", "选择整个词典文件夹（递归）"}, (x, y) -> {
+            new AlertDialog.Builder(this).setTitle("选择词库").setItems(new String[]{"选择文件（MDX / MDD / JS / CSS / 字体）", "选择整个词典文件夹（包含子目录）"}, (x, y) -> {
                 Intent intent = new Intent(y == 0 ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT_TREE);
                 if (y == 0) intent.setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
@@ -189,14 +189,39 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             catch (SecurityException error) { if (!copy) { report(new java.io.IOException("文件提供方不允许持久授权，请选择内部导入")); return; } }
         }
         String id = replaceId; boolean copyFiles = copy;
-        runOperation(() -> {
-            List<DictionaryRepository.Document> files = new ArrayList<>();
-            if (request == TREE) files.addAll(repository.scanTree(uris.get(0)));
-            else for (Uri uri : uris) files.add(repository.document(uri, ""));
+        List<DictionaryRepository.Document> files = new ArrayList<>();
+        if (request == TREE) runOperation(() -> files.addAll(repository.scanTree(uris.get(0))),
+                () -> chooseTreeBooks(files, copyFiles, id));
+        else runOperation(() -> {
+            for (Uri uri : uris) files.add(repository.document(uri, ""));
             repository.install(files, copyFiles, id, this::progress);
         });
     }
+    private void chooseTreeBooks(List<DictionaryRepository.Document> files, boolean copyFiles, String id) {
+        List<DictionaryRepository.Document> books = new ArrayList<>();
+        for (DictionaryRepository.Document f : files) if (f.path.toLowerCase(Locale.ROOT).endsWith(".mdx")) books.add(f);
+        if (books.isEmpty()) { report(new java.io.IOException("所选文件夹中没有 MDX 词库")); return; }
+        if (books.size() == 1) { runOperation(() -> repository.install(files, copyFiles, id, this::progress)); return; }
+        String[] names = new String[books.size()]; boolean[] checked = new boolean[books.size()];
+        for (int i = 0; i < names.length; i++) names[i] = books.get(i).path;
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(id == null ? "选择要安装的词库" : "选择要替换的词库（一本）")
+                .setMultiChoiceItems(names, checked, (d, which, value) -> checked[which] = value)
+                .setPositiveButton("导入及配套资源", null).setNegativeButton("取消", null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            List<DictionaryRepository.Document> selected = new ArrayList<>(); int count = 0;
+            for (DictionaryRepository.Document f : files) if (!f.path.toLowerCase(Locale.ROOT).endsWith(".mdx")) selected.add(f);
+            for (int i = 0; i < checked.length; i++) if (checked[i]) { selected.add(books.get(i)); count++; }
+            if (count == 0 || (id != null && count != 1)) {
+                Toast.makeText(this, id == null ? "请至少选择一本词库" : "替换时请选择一本词库", Toast.LENGTH_SHORT).show(); return;
+            }
+            dialog.dismiss(); runOperation(() -> repository.install(selected, copyFiles, id, this::progress));
+        }));
+        dialog.show();
+    }
     private void runOperation(DictionaryRepository.Work work) {
+        runOperation(work, null);
+    }
+    private void runOperation(DictionaryRepository.Work work, Runnable after) {
         if (operation != null && !operation.isDone()) { info("操作进行中", "请等待或取消当前操作。"); return; }
         int generation = ++operationGeneration;
         progressDialog = new AlertDialog.Builder(this).setTitle("词库操作").setMessage("准备中…").setCancelable(false)
@@ -205,8 +230,9 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             if (isDestroyed() || operationGeneration != generation) return;
             if (progressDialog != null) progressDialog.dismiss(); progressDialog = null;
             report(error);
-            if (error == null) Toast.makeText(this, "操作完成", Toast.LENGTH_SHORT).show();
+            if (error == null && after == null) Toast.makeText(this, "操作完成", Toast.LENGTH_SHORT).show();
             refresh();
+            if (error == null && after != null) after.run();
         });
     }
     private void progress(String message, long done, long total) {

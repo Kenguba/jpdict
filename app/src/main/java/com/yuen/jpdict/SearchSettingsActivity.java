@@ -57,7 +57,7 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
 
         addIdentityCard(content);
-        addIntroCard(content);
+        addDictionaryCard(content);
 
         addSection(content, "应用");
         LinearLayout app = group();
@@ -72,12 +72,6 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
                 () -> showInfo("应用语言", "当前界面使用简体中文。词条查询支持中文、英语、日语和韩语。"));
         addRow(app, SearchIconView.Kind.ADVANCED, "高级设置", null, this::showAdvanced);
         content.addView(app, new LinearLayout.LayoutParams(-1, -2));
-
-        addSection(content, "词典");
-        LinearLayout dictionaries = group();
-        addRow(dictionaries, SearchIconView.Kind.FILE, "词库管理", "安装、下载、排序、备份词库",
-                () -> FloatingSearchRoutes.openFromActivity(this, FloatingSearchRoutes.PAGE_DICTIONARIES, true));
-        content.addView(dictionaries, new LinearLayout.LayoutParams(-1, -2));
 
         addSection(content, "Groq");
         LinearLayout groq = group();
@@ -113,13 +107,13 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
         content.addView(card, new LinearLayout.LayoutParams(-1, -2));
     }
 
-    private void addIntroCard(LinearLayout content) {
+    private void addDictionaryCard(LinearLayout content) {
         LinearLayout card = new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(18), dp(10), dp(16), dp(10));
         card.setBackground(ripple(Color.WHITE, 20));
-        card.addView(icon(SearchIconView.Kind.MARK), new LinearLayout.LayoutParams(dp(24), dp(24)));
-        LinearLayout labels = labels("jpdict 多语种查询", "OCR · 词典 · AI", 14, true);
+        card.addView(icon(SearchIconView.Kind.FILE), new LinearLayout.LayoutParams(dp(24), dp(24)));
+        LinearLayout labels = labels("词库管理", "安装、下载、排序、备份词库", 14, true);
         labels.setPadding(dp(10), 0, dp(8), 0);
         card.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         TextView action = text("关于", 14, Color.WHITE, true);
@@ -127,9 +121,10 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
         action.setPadding(dp(16), 0, dp(16), 0);
         action.setBackground(shape(BLUE, 20));
         card.addView(action, new LinearLayout.LayoutParams(-2, dp(34)));
-        card.setContentDescription("关于 jpdict");
-        card.setOnClickListener(v -> showInfo("jpdict", "版本 " + BuildConfig.VERSION_NAME
+        action.setOnClickListener(v -> showInfo("jpdict", "版本 " + BuildConfig.VERSION_NAME
                 + "\n原生 Android 多语种 OCR 与词条查询。"));
+        card.setContentDescription("词库管理：安装、下载、排序、备份词库");
+        card.setOnClickListener(v -> FloatingSearchRoutes.openFromActivity(this, FloatingSearchRoutes.PAGE_DICTIONARIES, true));
         card.setMinimumHeight(dp(68));
         LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2);
         layout.topMargin = dp(16);

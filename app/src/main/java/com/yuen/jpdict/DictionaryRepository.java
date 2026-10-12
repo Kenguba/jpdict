@@ -171,6 +171,7 @@ final class DictionaryRepository {
                 MdictReader.checkCancelled();
                 String id = c.getString(0), name = c.getString(1);
                 if (name == null || name.contains("/") || name.contains("\\")) throw new IOException("不安全文件名称");
+                if (name.startsWith(".") || name.equals("__MACOSX")) continue;
                 String path = DictionaryPaths.safe(prefix + name);
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(2))) scan(tree, id, path + "/", depth + 1, files, visited);
                 else {
@@ -216,7 +217,7 @@ final class DictionaryRepository {
                 if (!paths.add(f.path.toLowerCase(Locale.ROOT))) throw new IOException("词典含大小写冲突的资源路径");
                 manifestCharacters += f.path.length() + f.uri.toString().length() + 128;
             }
-            if (manifestCharacters > 256 * 1024) throw new IOException("词典外部资源清单过大，请优先使用 MDD 打包资源");
+            if (manifestCharacters > 4 * 1024 * 1024) throw new IOException("词典外部资源清单超过 4 MB，请优先使用 MDD 打包资源");
             if (replaceId == null && snapshot.size() >= 512) throw new IOException("最多可注册 512 本词典");
             String id = replaceId == null ? UUID.randomUUID().toString() : replaceId;
             Dictionary old = null;
@@ -263,12 +264,17 @@ final class DictionaryRepository {
                 for (Document f : files) {
                     if (!f.path.toLowerCase(Locale.ROOT).matches(".*\\.(mdx|mdd)$")) continue;
                     progress.update("验证 " + f.path, 0, 0);
-                    try (MdictReader r = MdictReader.open(copy ? MdictReader.file(inside(temporary, f.path)) : open(f))) {
+                    File staged = copy ? inside(temporary, f.path) : null;
+                    try (MdictReader r = readers.openForValidation(f, copy ? MdictReader.file(staged) : open(f),
+                            copy ? staged.lastModified() : modified(f))) {
                         if (f == first && !r.getMetadata().title.isEmpty()) title = r.getMetadata().title;
                         if (r.getMetadata().resource != f.path.toLowerCase(Locale.ROOT).endsWith(".mdd")) throw new IOException("MDX/MDD 类型不符");
                         r.validate((done, total) -> progress.update("验证 " + f.path, done, total));
+                    } catch (IOException error) {
+                        throw new IOException("验证 " + f.path + " 失败：" + error.getMessage(), error);
                     }
                 }
+                readers.trimIndexes();
                 ContentValues v = new ContentValues();
                 long now = System.currentTimeMillis();
                 v.put("dict_id", id); v.put("name", old == null ? title : old.name);
@@ -276,7 +282,7 @@ final class DictionaryRepository {
                 v.put("source_type", SourceType.USER_IMPORT.name());
                 v.put("storage_mode", copy ? StorageMode.APP_PRIVATE.name() : StorageMode.SAF_EXTERNAL.name());
                 v.put("enabled", old == null || old.enabled ? 1 : 0); v.put("sort_order", old == null ? snapshot.size() : old.order);
-                v.put("index_state", "按需索引"); v.put("install_state", "INSTALLED");
+                v.put("index_state", "已建立索引"); v.put("install_state", "INSTALLED");
                 v.put("fingerprint", fingerprint); v.put("installed_at", old == null ? now : old.installedAt);
                 v.put("updated_at", now); v.put("files", filesJson(files).toString());
                 try (Cursor budget = database.getReadableDatabase().rawQuery("SELECT coalesce(sum(length(files)),0) FROM dictionaries WHERE dict_id<>?", new String[]{id})) {
@@ -325,29 +331,59 @@ final class DictionaryRepository {
         } catch (RuntimeException unavailable) { return 0; }
     }
     byte[] resource(Dictionary d, String requested) throws IOException {
+        try (InputStream in = resourceStream(d, requested)) {
+            if (in == null) return null;
+            ByteArrayOutputStream out = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int n;
+            while ((n = in.read(buffer)) != -1) {
+                MdictReader.checkCancelled();
+                if (out.size() > MdictReader.MAX_BLOCK_BYTES - n) throw new IOException("资源超过 8 MB 内存限制");
+                out.write(buffer, 0, n);
+            }
+            return out.toByteArray();
+        }
+    }
+    /** WebView consumes external assets as streams, including large CJK fonts. */
+    InputStream resourceStream(Dictionary d, String requested) throws IOException {
         String path = DictionaryPaths.safe(requested);
         List<Document> volumes = new ArrayList<>();
+        Document external = null; int priority = 3;
         for (Document f : d.files) {
-            if (f.path.equalsIgnoreCase(path) && !f.path.toLowerCase(Locale.ROOT).matches(".*\\.(mdx|mdd)$")) {
-                if (f.size > MdictReader.MAX_BLOCK_BYTES) throw new IOException("资源超过 8 MB 限制");
-                try (InputStream in = "file".equals(f.uri.getScheme()) ? new FileInputStream(new File(f.uri.getPath()))
-                        : context.getContentResolver().openInputStream(f.uri)) {
-                    if (in == null) throw new IOException("资源不可访问");
-                    ByteArrayOutputStream out = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int n;
-                    while ((n = in.read(buffer)) != -1) {
-                        MdictReader.checkCancelled();
-                        if (out.size() > MdictReader.MAX_BLOCK_BYTES - n) throw new IOException("资源超过 8 MB 限制");
-                        out.write(buffer, 0, n);
-                    }
-                    return out.toByteArray();
-                }
-            }
             if (f.path.toLowerCase(Locale.ROOT).endsWith(".mdd")) volumes.add(f);
+            else if (!f.path.toLowerCase(Locale.ROOT).endsWith(".mdx")) {
+                // Unpacked dictionaries commonly keep root resources in src/ or mdd/.
+                int candidate = f.path.equalsIgnoreCase(path) ? 0 : f.path.equalsIgnoreCase("src/" + path) ? 1
+                        : f.path.equalsIgnoreCase("mdd/" + path) ? 2 : 3;
+                if (candidate < priority) { priority = candidate; external = f; }
+            }
+        }
+        if (external != null) {
+            Document f = external;
+            if (f.size > 32L * 1024 * 1024) throw new IOException("外部资源超过 32 MB 流式限制");
+            InputStream in = "file".equals(f.uri.getScheme()) ? new FileInputStream(new File(f.uri.getPath()))
+                    : context.getContentResolver().openInputStream(f.uri);
+            if (in == null) throw new IOException("资源不可访问");
+            return new FilterInputStream(in) {
+                private long remaining = 32L * 1024 * 1024;
+                @Override public int read() throws IOException {
+                    MdictReader.checkCancelled(); int value = super.read();
+                    if (value != -1 && --remaining < 0) throw new IOException("外部资源超过 32 MB 流式限制");
+                    return value;
+                }
+                @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+                    MdictReader.checkCancelled(); int n = in.read(bytes, offset, (int) Math.min(length, remaining + 1));
+                    if (n > 0 && (remaining -= n) < 0) throw new IOException("外部资源超过 32 MB 流式限制");
+                    return n;
+                }
+                @Override public long skip(long count) throws IOException {
+                    MdictReader.checkCancelled(); long skipped = in.skip(Math.min(count, remaining));
+                    remaining -= skipped; return skipped;
+                }
+            };
         }
         Collections.sort(volumes, (left, right) -> Integer.compare(part(left.path), part(right.path)));
         for (Document f : volumes) {
             byte[] bytes = readers.read(f, reader -> reader.readResource(path));
-            if (bytes != null) return bytes;
+            if (bytes != null) return new ByteArrayInputStream(bytes);
         }
         return null;
     }

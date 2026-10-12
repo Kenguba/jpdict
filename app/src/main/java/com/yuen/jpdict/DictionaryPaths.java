@@ -32,6 +32,7 @@ final class DictionaryPaths {
         String lower = path.toLowerCase(Locale.ROOT);
         if (lower.endsWith(".css")) return "text/css";
         if (lower.endsWith(".js")) return "text/javascript";
+        if (lower.endsWith(".json")) return "application/json";
         if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
         if (lower.endsWith(".svg")) return "image/svg+xml";
         if (lower.endsWith(".png")) return "image/png";

@@ -36,6 +36,7 @@ import java.util.zip.Inflater;
  * This class is independent of Android and of any third party MDict engine. */
 public final class MdictReader implements Closeable {
     static final int MAX_BLOCK_BYTES = 8 * 1024 * 1024;
+    static final int MAX_RESOURCE_BYTES = 16 * 1024 * 1024;
     private static final int MAX_INDEX_BYTES = 4 * 1024 * 1024;
     private static final int MAX_RESULT_BYTES = 2 * 1024 * 1024;
     private static final java.util.concurrent.Semaphore LARGE_READ = new java.util.concurrent.Semaphore(1, true);
@@ -96,6 +97,7 @@ public final class MdictReader implements Closeable {
         long position, start, count;
         int packed, unpacked;
         String first, last, min, max;
+        byte[] filter;
     }
     private static final class Key {
         final String text;
@@ -172,7 +174,7 @@ public final class MdictReader implements Closeable {
             long expected = new DataInputStream(new ByteArrayInputStream(all, all.length - 8, 8)).readLong();
             verify(body, expected);
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(body));
-            if (in.readInt() != 0x4a504432 || !in.readUTF().equals(fingerprint) || in.readLong() != size) return false;
+            if (in.readInt() != 0x4a504433 || !in.readUTF().equals(fingerprint) || in.readLong() != size) return false;
             width = in.readInt(); unit = in.readInt(); resource = in.readBoolean(); caseSensitive = in.readBoolean();
             if ((width != 4 && width != 8) || (unit != 1 && unit != 2)) throw corrupt("缓存字段无效");
             charset = Charset.forName(in.readUTF()); entryCount = in.readLong(); totalRecords = in.readLong();
@@ -183,6 +185,7 @@ public final class MdictReader implements Closeable {
             for (int i = 0; i < count; i++) {
                 Block block = readIndexBlock(in); block.count = in.readLong(); block.first = in.readUTF(); block.last = in.readUTF();
                 block.min = in.readUTF(); block.max = in.readUTF();
+                block.filter = new byte[filterBytes(count)]; in.readFully(block.filter);
                 if (block.min.compareTo(block.max) > 0) throw corrupt("缓存词头范围无效");
                 if (block.count <= 0 || block.count > block.unpacked / (width + unit)) throw corrupt("缓存词头数量无效");
                 entries = add(entries, block.count); keys.add(block);
@@ -205,8 +208,8 @@ public final class MdictReader implements Closeable {
     }
     private Block readIndexBlock(DataInputStream in) throws IOException {
         Block block = new Block(); block.position = in.readLong();
-        block.packed = bounded(in.readInt(), MAX_BLOCK_BYTES + 65536, "缓存压缩块");
-        block.unpacked = bounded(in.readInt(), MAX_BLOCK_BYTES, "缓存解压块");
+        block.packed = bounded(in.readInt(), blockLimit() + 65536, "缓存压缩块");
+        block.unpacked = bounded(in.readInt(), blockLimit(), "缓存解压块");
         checkRange(block.position, block.packed); return block;
     }
     private void saveIndex(File file, String fingerprint) {
@@ -214,13 +217,13 @@ public final class MdictReader implements Closeable {
         File temporary = new File(file.getPath() + ".tmp");
         try {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(buffer);
-            out.writeInt(0x4a504432); out.writeUTF(fingerprint); out.writeLong(size);
+            out.writeInt(0x4a504433); out.writeUTF(fingerprint); out.writeLong(size);
             out.writeInt(width); out.writeInt(unit); out.writeBoolean(resource); out.writeBoolean(caseSensitive);
             out.writeUTF(charset.name()); out.writeLong(entryCount); out.writeLong(totalRecords);
             out.writeInt(attributes.size());
             for (Map.Entry<String, String> entry : attributes.entrySet()) { out.writeUTF(entry.getKey()); out.writeUTF(entry.getValue()); }
             out.writeInt(keys.size());
-            for (Block b : keys) { writeIndexBlock(out, b); out.writeLong(b.count); out.writeUTF(b.first); out.writeUTF(b.last); out.writeUTF(b.min); out.writeUTF(b.max); }
+            for (Block b : keys) { writeIndexBlock(out, b); out.writeLong(b.count); out.writeUTF(b.first); out.writeUTF(b.last); out.writeUTF(b.min); out.writeUTF(b.max); out.write(b.filter); }
             out.writeInt(records.size());
             for (Block b : records) { writeIndexBlock(out, b); out.writeLong(b.start); }
             out.flush(); if (buffer.size() > MAX_INDEX_BYTES - 8) return;
@@ -302,8 +305,8 @@ public final class MdictReader implements Closeable {
             if (block.count == 0 || block.count > 100000) throw limit("单块词头数超出限制");
             block.first = ki.summary();
             block.last = ki.summary();
-            block.packed = bounded(ki.number(), MAX_BLOCK_BYTES + 65536, "Key 压缩块");
-            block.unpacked = bounded(ki.number(), MAX_BLOCK_BYTES, "Key 解压块");
+            block.packed = bounded(ki.number(), blockLimit() + 65536, "Key 压缩块");
+            block.unpacked = bounded(ki.number(), blockLimit(), "Key 解压块");
             if (block.count > block.unpacked / (width + unit)) throw corrupt("Key 条目数量不符");
             block.position = keyPosition;
             keyPosition = add(keyPosition, block.packed);
@@ -325,8 +328,8 @@ public final class MdictReader implements Closeable {
         long recordPosition = position;
         for (int i = 0; i < recordCount; i++) {
             Block block = new Block();
-            block.packed = bounded(ri.number(), MAX_BLOCK_BYTES + 65536, "Record 压缩块");
-            block.unpacked = bounded(ri.number(), MAX_BLOCK_BYTES, "Record 解压块");
+            block.packed = bounded(ri.number(), blockLimit() + 65536, "Record 压缩块");
+            block.unpacked = bounded(ri.number(), blockLimit(), "Record 解压块");
             block.position = recordPosition;
             block.start = totalRecords;
             recordPosition = add(recordPosition, block.packed);
@@ -334,7 +337,10 @@ public final class MdictReader implements Closeable {
             records.add(block);
         }
         ri.end();
-        if (recordPosition != add(position, recordBytes) || recordPosition != size) throw corrupt("Record 数据长度或文件尾不符");
+        if (recordPosition != add(position, recordBytes)) throw corrupt("Record 压缩块合计长度与声明不符（差值 "
+                + (recordPosition - add(position, recordBytes)) + " bytes）");
+        if (recordPosition != size) throw corrupt("Record 数据结束后还有 " + (size - recordPosition)
+                + " bytes；文件可能附带未支持的扩展或不是完整的 MDX/MDD");
         if (entryCount > 0 && (keys.isEmpty() || records.isEmpty())) throw corrupt("词典缺少数据块");
         metadata = new Metadata(attributes, resource, entryCount, size);
     }
@@ -350,22 +356,26 @@ public final class MdictReader implements Closeable {
     }
 
     private List<String> lookupText(String word, Set<String> path, int depth, long[] budget) throws IOException {
-        String normalized = normalize(word);
-        if (depth >= 32 || !path.add(normalized)) throw corrupt("@@@LINK 循环或超过 32 层");
+        if (depth >= 32) throw corrupt("@@@LINK 超过 32 层");
         List<String> result = new ArrayList<>();
-        try {
-            for (byte[] bytes : find(word, budget)) {
-                String text = decode(bytes, charset);
-                while (text.endsWith("\u0000")) text = text.substring(0, text.length() - 1);
-                if (text.startsWith("@@@LINK=")) {
-                    String target = text.substring(8).trim();
-                    List<String> links = lookupText(target, path, depth + 1, budget);
-                    if (links.isEmpty()) throw corrupt("@@@LINK 目标不存在：" + target);
-                    result.addAll(links);
-                } else result.add(text);
-                if (result.size() > MAX_MATCHES) throw limit("重复词条或重定向结果过多");
-            }
-        } finally { path.remove(normalized); }
+        // A redirect names a concrete spelling. Case variants often redirect to its
+        // lowercase entry; including the alias again would manufacture a cycle.
+        List<byte[]> found = depth == 0 ? find(word, budget) : find(word, budget, true);
+        if (depth > 0 && found.isEmpty()) found = find(word, budget);
+        for (byte[] bytes : found) {
+            String text = decode(bytes, charset);
+            while (text.endsWith("\u0000")) text = text.substring(0, text.length() - 1);
+            if (text.startsWith("@@@LINK=")) {
+                String target = text.substring(8).trim();
+                if (!path.add(target)) throw corrupt("@@@LINK 循环：" + target);
+                List<String> links;
+                try { links = lookupText(target, path, depth + 1, budget); }
+                finally { path.remove(target); }
+                if (links.isEmpty()) throw corrupt("@@@LINK 目标不存在：" + target);
+                result.addAll(links);
+            } else result.add(text);
+            if (result.size() > MAX_MATCHES) throw limit("重复词条或重定向结果过多");
+        }
         return result;
     }
 
@@ -391,6 +401,9 @@ public final class MdictReader implements Closeable {
     }
 
     private List<byte[]> find(String word, long[] budget) throws IOException {
+        return find(word, budget, false);
+    }
+    private List<byte[]> find(String word, long[] budget, boolean exactSpelling) throws IOException {
         List<byte[]> result = new ArrayList<>();
         String query = normalize(word);
         long resultBytes = 0;
@@ -408,17 +421,19 @@ public final class MdictReader implements Closeable {
             checkCancelled();
             Block block = keys.get(b);
             if (query.compareTo(block.min) < 0 || query.compareTo(block.max) > 0) continue;
+            if (!filter(block.filter, query, false)) continue;
             List<Key> entries = keyBlock(b);
             for (int k = 0; k < entries.size(); k++) {
                 Key key = entries.get(k);
                 if (!normalize(key.text).equals(query)) continue;
+                if (exactSpelling && !key.text.equals(word)) continue;
                 long end = k + 1 < entries.size() ? entries.get(k + 1).offset
                         : b + 1 < keys.size() ? keyBlock(b + 1).get(0).offset : totalRecords;
                 if (end < key.offset || end > totalRecords) throw corrupt("记录偏移逆序或越界");
-                int length = bounded(end - key.offset, MAX_BLOCK_BYTES, "单条记录");
+                int length = bounded(end - key.offset, blockLimit(), "单条记录");
                 resultBytes += length;
                 budget[0] += length;
-                int allowed = resource ? MAX_BLOCK_BYTES : MAX_RESULT_BYTES;
+                int allowed = resource ? MAX_RESOURCE_BYTES : MAX_RESULT_BYTES;
                 if (result.size() >= MAX_MATCHES || resultBytes > allowed || budget[0] > allowed) throw limit("查询结果或重定向超出内存限制");
                 result.add(record(key.offset, length));
             }
@@ -443,14 +458,33 @@ public final class MdictReader implements Closeable {
         if (!summaryKey(result.get(0).text).equals(summaryKey(block.first))
                 || !summaryKey(result.get(result.size() - 1).text).equals(summaryKey(block.last))) throw corrupt("Key 首尾词头与索引不符");
         block.min = block.max = normalize(result.get(0).text);
+        block.filter = new byte[filterBytes(keys.size())];
         for (Key key : result) {
             String value = normalize(key.text);
+            filter(block.filter, value, true);
             if (value.compareTo(block.min) < 0) block.min = value;
             if (value.compareTo(block.max) > 0) block.max = value;
         }
         lastKeys = result;
         lastKeyBlock = index;
         return result;
+    }
+
+    // Bounded Bloom summaries avoid decoding every overlapping range in dictionaries
+    // with irregular collation. False positives still go through exact key matching.
+    private static int filterBytes(int blocks) {
+        return Integer.highestOneBit(Math.max(8, Math.min(1024, 2 * 1024 * 1024 / Math.max(1, blocks))));
+    }
+    private static boolean filter(byte[] bits, String value, boolean insert) {
+        long hash = 0xcbf29ce484222325L;
+        for (int i = 0; i < value.length(); i++) { hash ^= value.charAt(i); hash *= 0x100000001b3L; }
+        int first = (int) hash, step = (int) (hash >>> 32) | 1, mask = bits.length * 8 - 1;
+        for (int i = 0; i < 4; i++) {
+            int bit = (first + i * step) & mask;
+            if (insert) bits[bit >>> 3] |= 1 << (bit & 7);
+            else if ((bits[bit >>> 3] & (1 << (bit & 7))) == 0) return false;
+        }
+        return true;
     }
 
     // Index summaries may contain publisher-normalized sorting keys. Lookup still uses original keys.
@@ -497,7 +531,7 @@ public final class MdictReader implements Closeable {
 
     static byte[] unpack(byte[] input, int expected) throws IOException {
         if (input.length < 8) throw corrupt("压缩块头不完整");
-        bounded(expected, MAX_BLOCK_BYTES, "解压长度");
+        bounded(expected, MAX_RESOURCE_BYTES, "解压长度");
         if (expected > Math.max(1024L, (input.length - 8L) * 1024L)) throw limit("异常压缩比");
         if (input[1] != 0 || input[2] != 0 || input[3] != 0) throw unsupported("无法识别的压缩类型");
         byte[] output;
@@ -529,6 +563,7 @@ public final class MdictReader implements Closeable {
         return output;
     }
 
+    private int blockLimit() { return resource ? MAX_RESOURCE_BYTES : MAX_BLOCK_BYTES; }
     private String normalize(String text) { return caseSensitive ? text : text.toLowerCase(Locale.ROOT); }
     private byte[] read(long position, int length) throws IOException {
         checkCancelled();
