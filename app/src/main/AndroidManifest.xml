@@ -9,6 +9,8 @@
     <application
         android:name=".MainActivity$App"
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true"
         android:label="日语词典"
         android:icon="@drawable/app_icon"
@@ -95,6 +97,10 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
+            android:theme="@style/Theme.Jpdict.Page"/>
+
+        <activity android:name=".DictionaryActivity" android:exported="false"
+            android:excludeFromRecents="true" android:taskAffinity=""
             android:theme="@style/Theme.Jpdict.Page"/>
 
         <activity

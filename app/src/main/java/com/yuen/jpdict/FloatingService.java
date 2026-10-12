@@ -76,6 +76,7 @@ public class FloatingService extends Service {
     private boolean lookupPrivateMode;
     private View resultCard;
     private View lookupOverlay;
+    private DictionaryLookupController dictionaryLookup;
     private WindowManager.LayoutParams lookupOverlayLp;
     private String lookupOverlayQuery = "";
     private String lookupOverlayMode = LOOKUP_MODE_FLOAT;
@@ -1162,6 +1163,9 @@ public class FloatingService extends Service {
                 R.drawable.ic_lookup_replay, "重新查询", 0xff242629);
         ImageView list = lookupIcon(
                 R.drawable.ic_lookup_list, "词典列表", 0xff242629);
+        list.setOnClickListener(v -> {
+            if (dictionaryLookup != null) dictionaryLookup.showList(list, this::openDictionaryPage);
+        });
         ImageView more = lookupIcon(
                 R.drawable.ic_lookup_plus, "更多", 0xff242629);
 
@@ -1370,6 +1374,12 @@ public class FloatingService extends Service {
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
         addLookupSection(content, "日语单词总汇", localBody, true);
+
+        LinearLayout dictionarySections = new LinearLayout(this);
+        dictionarySections.setOrientation(LinearLayout.VERTICAL);
+        content.addView(dictionarySections, new LinearLayout.LayoutParams(-1, -2));
+        dictionaryLookup = new DictionaryLookupController(this, dictionarySections, q,
+                word -> showLookupOverlay(word, returnToSearch, mode));
 
         LinearLayout aiBodyBox = new LinearLayout(this);
         aiBodyBox.setOrientation(LinearLayout.VERTICAL);
@@ -1794,7 +1804,33 @@ public class FloatingService extends Service {
         }
     }
 
+    private void openDictionaryPage() {
+        boolean restore = lookupOverlayReturnToSearch;
+        boolean hosted = lookupOverlayHosted;
+        boolean privacy = lookupPrivateMode;
+        if (restore && hosted) {
+            removeLookupOverlay(false);
+            lookupOverlayHosted = false;
+            lookupOverlayReturnToSearch = false;
+            sendBroadcast(new Intent(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE)
+                    .setPackage(getPackageName())
+                    .putExtra(EXTRA_HOST_SESSION, activeHostSession)
+                    .putExtra(FloatingSearchRoutes.EXTRA_PAGE, FloatingSearchRoutes.PAGE_DICTIONARIES)
+                    .putExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY, privacy ? "" : currentSearchQuery)
+                    .putExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, true)
+                    .putExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE, privacy));
+        } else {
+            lookupOverlayReturnToSearch = false;
+            closeLookupOverlay();
+            Intent page = FloatingSearchRoutes.pageIntent(this, FloatingSearchRoutes.PAGE_DICTIONARIES,
+                    privacy ? "" : currentSearchQuery, restore, false, privacy, false)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(page);
+        }
+    }
+
     private void removeLookupOverlay(boolean clearRestoreState) {
+        if (dictionaryLookup != null) { dictionaryLookup.close(); dictionaryLookup = null; }
         pendingPronunciation = null;
         if (textToSpeech != null) {
             try { textToSpeech.stop(); }

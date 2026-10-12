@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "jpdict-official",
+  "packages": [{
+    "packageId": "jpdict.demo.ja.zh",
+    "version": "0.0.1",
+    "name": "日语基础词典（示例）",
+    "description": "演示目录字段；未接入真实下载服务，不会发出下载请求。",
+    "publisher": "JPDict Demo",
+    "languages": {"headword": ["ja"], "definition": ["zh-CN"]},
+    "tags": ["日语", "示例"],
+    "iconUrl": null,
+    "sizeBytes": null,
+    "minAppVersionCode": null,
+    "license": {"name": "UNVERIFIED", "url": null, "redistributionAllowed": false},
+    "distribution": {"mode": "PREVIEW", "files": [{
+      "path": "demo.mdx", "role": "MDX", "dictId": "jpdict.demo.ja.zh.main",
+      "partIndex": null, "sizeBytes": null, "sha256": null,
+      "url": "https://example.invalid/jpdict/demo.mdx"
+    }]},
+    "dictionaries": [{"dictId": "jpdict.demo.ja.zh.main", "name": "日语基础词典",
+      "mdxPath": "demo.mdx", "mddPaths": [], "resourcePaths": []}]
+  }]
+}

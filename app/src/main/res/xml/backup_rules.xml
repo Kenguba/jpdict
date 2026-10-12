@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="file" path="Dicts/"/>
+    <exclude domain="database" path="dictionaries.db"/>
+    <exclude domain="sharedpref" path="groq_secure.xml"/>
+</full-backup-content>

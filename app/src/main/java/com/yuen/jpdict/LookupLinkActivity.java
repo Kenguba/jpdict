@@ -49,6 +49,10 @@ public final class LookupLinkActivity extends Activity {
                 forwardSearch(getIntent());
             } else if (FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE.equals(intent.getAction())) {
                 if (!hostVisible || isFinishing()) return;
+                if (intent.getBooleanExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, false)) {
+                    showingSearch = true;
+                    configureTransparentHost();
+                }
                 pageInFront = true;
                 boolean privateMode = intent.getBooleanExtra(
                         FloatingSearchRoutes.EXTRA_PRIVATE_MODE, false);
