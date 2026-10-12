@@ -35,7 +35,6 @@ public final class LookupLinkActivity extends Activity {
     private boolean pageInFront;
     private String hostSession = java.util.UUID.randomUUID().toString();
     private Intent pendingForward;
-    private boolean hasForwarded;
 
     private final BroadcastReceiver finishReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -109,6 +108,7 @@ public final class LookupLinkActivity extends Activity {
         showingSearch = intent.getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false);
         configureTransparentHost();
         pendingForward = intent;
+        forwardPendingWhenVisible();
     }
 
     @Override protected void onStart() {
@@ -137,11 +137,10 @@ public final class LookupLinkActivity extends Activity {
         // Package updates can briefly resume several restored tasks. Wait for
         // real window focus and the newest Intent before mounting an overlay.
         if (!hostVisible || isFinishing()
-                || (!hasForwarded && !getWindow().getDecorView().hasWindowFocus())) return;
+                || !getWindow().getDecorView().hasWindowFocus()) return;
         if (pendingForward != null) {
             Intent source = pendingForward;
             pendingForward = null;
-            hasForwarded = true;
             forward(source);
         }
     }
