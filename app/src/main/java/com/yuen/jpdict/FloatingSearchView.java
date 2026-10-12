@@ -154,9 +154,10 @@ final class FloatingSearchView extends FrameLayout {
         recommendations.addView(pills, new HorizontalScrollView.LayoutParams(-2, -1));
         addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, 0xffdef7ff, 0xff009bdc,
                 () -> openPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS));
+        addPill(pills, "词库管理", SearchIconView.Kind.BOOK, 0xffe7f5ed, 0xff15996c,
+                () -> openPage(FloatingSearchRoutes.PAGE_DICTIONARIES));
         addPill(pills, "Groq Key", SearchIconView.Kind.MARK, SOFT, INK,
                 () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
-        addPill(pills, "多语种查词", SearchIconView.Kind.SEARCH, 0xffe7f5ed, 0xff15996c, this::focusInput);
         suggestionWords = new GridLayout(context);
         suggestionWords.setColumnCount(3);
         suggestionWords.setPadding(dp(16), 0, dp(16), dp(4));
