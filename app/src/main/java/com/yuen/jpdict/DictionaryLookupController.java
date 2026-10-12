@@ -35,9 +35,7 @@ final class DictionaryLookupController {
                 Section section = new Section(d); sections.add(section);
                 parent.addView(section.header); parent.addView(section.body);
             }
-            if (!sections.isEmpty()) {
-                Section first = sections.get(0); first.expanded = true; first.body.setVisibility(View.VISIBLE); first.arrow.setRotation(0); first.request(1);
-            }
+            for (Section section : sections) if (section.expanded) section.request(1);
             parent.getViewTreeObserver().addOnScrollChangedListener(scrollListener);
             parent.post(this::prefetchVisible);
         });
@@ -84,7 +82,7 @@ final class DictionaryLookupController {
         LinearLayout menu = new LinearLayout(context); menu.setOrientation(LinearLayout.VERTICAL);
         android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
         background.setColor(0xffffffff); background.setCornerRadius(dp(16)); menu.setBackground(background);
-        ScrollView scroll = new ScrollView(context); scroll.addView(menu);
+        ScrollView scroll = new ScrollView(context); scroll.setVerticalScrollBarEnabled(false); scroll.addView(menu);
         PopupWindow popup = new PopupWindow(scroll, dp(280), dp(320), true);
         if (listPopup != null) listPopup.dismiss(); listPopup = popup;
         popup.setBackgroundDrawable(background); popup.setElevation(dp(12)); popup.setOutsideTouchable(true);
@@ -117,6 +115,8 @@ final class DictionaryLookupController {
             arrow.setPadding(dp(12), dp(12), dp(12), dp(12));
             header.addView(arrow, new LinearLayout.LayoutParams(dp(40), dp(40)));
             header.setMinimumHeight(dp(40)); body.setOrientation(LinearLayout.VERTICAL); body.setBackgroundColor(0xffffffff); body.setVisibility(View.GONE);
+            expanded = dictionary.lookupExpanded;
+            body.setVisibility(expanded ? View.VISIBLE : View.GONE); arrow.setRotation(expanded ? 0 : 180);
             header.setOnClickListener(v -> {
                 expanded = !expanded; body.setVisibility(expanded ? View.VISIBLE : View.GONE); arrow.setRotation(expanded ? 0 : 180);
                 if (expanded) {

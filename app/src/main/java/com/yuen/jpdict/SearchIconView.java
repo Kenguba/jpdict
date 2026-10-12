@@ -12,7 +12,8 @@ public final class SearchIconView extends View {
     public enum Kind {
         MENU, PRIVATE, PLUS, LIGHTNING, CHEVRON, MIC, VOICE, SEND, CLOSE, BACK,
         SEARCH, SETTINGS, NEW_CHAT, CLOCK, CAMERA, IMAGE, FILE, SKILLS,
-        CONNECTOR, CHECK, BOT, PROJECT, TASK, MARK, MORE, HAPTICS, WIDGET, LANGUAGE, ADVANCED
+        CONNECTOR, CHECK, BOT, PROJECT, TASK, MARK, MORE, HAPTICS, WIDGET, LANGUAGE, ADVANCED,
+        BOOK, FOLDER, TRASH, DRAG, REORDER, DATABASE, IMPORT
     }
 
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -64,6 +65,26 @@ public final class SearchIconView extends View {
         canvas.scale(size / 24f, size / 24f);
         path.reset();
         switch (kind) {
+            case BOOK:
+                poly(canvas, 12, 5, 8, 3, 3, 4, 3, 20, 8, 19, 12, 21, 16, 19, 21, 20, 21, 4, 16, 3, 12, 5);
+                line(canvas, 12, 5, 12, 21); break;
+            case FOLDER:
+                poly(canvas, 3, 7, 3, 4, 10, 4, 12, 7, 21, 7, 21, 20, 3, 20, 3, 7); break;
+            case TRASH:
+                line(canvas, 3, 6, 21, 6); poly(canvas, 9, 6, 9, 3, 15, 3, 15, 6);
+                poly(canvas, 6, 6, 7, 21, 17, 21, 18, 6); line(canvas, 10, 10, 10, 17); line(canvas, 14, 10, 14, 17); break;
+            case DRAG:
+                Paint.Style dragStyle = stroke.getStyle(); stroke.setStyle(Paint.Style.FILL);
+                for (int x : new int[]{9, 15}) for (int y : new int[]{6, 12, 18}) circle(canvas, x, y, 1.2f);
+                stroke.setStyle(dragStyle); break;
+            case REORDER:
+                line(canvas, 4, 6, 20, 6); line(canvas, 4, 12, 20, 12); line(canvas, 4, 18, 20, 18); break;
+            case DATABASE:
+                canvas.drawOval(3, 3, 21, 9, stroke); arc(canvas, 3, 9, 21, 15, 0, 180); arc(canvas, 3, 15, 21, 21, 0, 180);
+                line(canvas, 3, 6, 3, 18); line(canvas, 21, 6, 21, 18); break;
+            case IMPORT:
+                poly(canvas, 3, 8, 3, 5, 9, 5, 11, 8, 21, 8, 21, 21, 3, 21, 3, 8);
+                line(canvas, 12, 17, 12, 10); poly(canvas, 8, 14, 12, 10, 16, 14); break;
             case MENU:
                 line(canvas, 4, 8, 20, 8); line(canvas, 4, 16, 20, 16); break;
             case PRIVATE:

@@ -34,5 +34,10 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:colorAccent">#008FD1</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:alertDialogTheme">@style/Theme.Jpdict.Dialog</item>
+    </style>
+    <style name="Theme.Jpdict.Dialog" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_rounded</item>
+        <item name="android:colorAccent">#006BFF</item>
     </style>
 </resources>

@@ -283,6 +283,18 @@ public final class SearchDrawerView extends LinearLayout {
         refreshHistory();
     }
 
+    void showHistory() {
+        endSearch();
+        if (collapseAnimator != null) { collapseAnimator.cancel(); collapseAnimator = null; }
+        expanded = true;
+        historyChevron.animate().cancel(); historyChevron.setRotation(180);
+        history.getLayoutParams().height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        history.setVisibility(VISIBLE); history.requestLayout();
+        post(() -> historyHeading.requestRectangleOnScreen(
+                new android.graphics.Rect(0, 0, historyHeading.getWidth(), historyHeading.getHeight()), true));
+        refreshHistory();
+    }
+
     private void showResults(List<String> queries,
             List<DrawerSearchFileRepository.SearchResult> files) {
         boolean filtered = hasSearchQuery();
@@ -292,7 +304,7 @@ public final class SearchDrawerView extends LinearLayout {
         history.setVisibility(filtered || expanded ? VISIBLE : GONE);
         historyChevron.setRotation(expanded ? 180 : 0);
         if (filtered && !queries.isEmpty()) addResultLabel("查询记录");
-        int count = filtered ? queries.size() : Math.min(12, queries.size());
+        int count = queries.size();
         for (int i = 0; i < count; i++) {
             String query = queries.get(i);
             LinearLayout row = horizontal();

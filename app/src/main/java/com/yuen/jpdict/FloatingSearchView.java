@@ -31,6 +31,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputConnection;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.GridLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -65,8 +66,7 @@ final class FloatingSearchView extends FrameLayout {
     private final LinearLayout composer;
     private final LinearLayout tools;
     private final Editor input;
-    private final HorizontalScrollView suggestionScroll;
-    private final LinearLayout suggestionWords;
+    private final GridLayout suggestionWords;
     private final SearchSuggestionsController suggestions;
     private boolean clipboardPending;
     private final SearchIconView plus;
@@ -88,6 +88,9 @@ final class FloatingSearchView extends FrameLayout {
     private boolean disposed;
     private boolean compactComposer;
     private int imeBottom;
+    private final SearchKeyboardSpace keyboardSpace;
+    private boolean imeAnimating;
+    private int legacyImeCandidate;
     private int safeBottom;
     private int topInset;
     private int systemBackInset;
@@ -101,6 +104,7 @@ final class FloatingSearchView extends FrameLayout {
     FloatingSearchView(Context context, String query, boolean privateMode, Callback callback) {
         super(context);
         this.callback = callback;
+        keyboardSpace = new SearchKeyboardSpace(context);
         state.setPrivateMode(privateMode);
         setBackgroundColor(PAPER);
         // Own blank-area DOWN events so the drawer receives subsequent MOVE events.
@@ -124,8 +128,8 @@ final class FloatingSearchView extends FrameLayout {
         tabs.setGravity(Gravity.CENTER);
         addHeaderTab(tabs, "提问", 0, () -> {});
         addHeaderTab(tabs, "图片", 1, () -> unavailable("图片"));
-        addHeaderTab(tabs, "设置", 2, () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
-        selectSettingsTab(false);
+        addHeaderTab(tabs, "历史记录", 2, this::openHistory);
+        selectQuestionTab();
         header.addView(tabs, new LinearLayout.LayoutParams(0, dp(44), 1));
         privateButton = button(SearchIconView.Kind.PRIVATE, "切换私密查询", SOFT);
         header.addView(privateButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -152,8 +156,11 @@ final class FloatingSearchView extends FrameLayout {
         addPill(pills, "Groq Key", SearchIconView.Kind.MARK, SOFT, INK,
                 () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
         addPill(pills, "多语种查词", SearchIconView.Kind.SEARCH, 0xffe7f5ed, 0xff15996c, this::focusInput);
-        bottom.addView(recommendations, new LinearLayout.LayoutParams(-1, dp(50)));
-
+        suggestionWords = new GridLayout(context);
+        suggestionWords.setColumnCount(3);
+        suggestionWords.setPadding(dp(16), 0, dp(16), dp(4));
+        suggestionWords.setMinimumHeight(dp(64));
+        bottom.addView(suggestionWords, new LinearLayout.LayoutParams(-1, dp(64)));
         composer = new LinearLayout(context);
         composer.setOrientation(LinearLayout.VERTICAL);
         composer.setPadding(dp(8), dp(5), dp(8), dp(7));
@@ -165,9 +172,8 @@ final class FloatingSearchView extends FrameLayout {
         input.setTextSize(17);
         input.setBackgroundColor(Color.TRANSPARENT);
         input.setPadding(dp(10), dp(5), dp(10), dp(6));
-        input.setMinLines(1);
+        input.setMinLines(2);
         input.setMaxLines(4);
-        input.setMinHeight(0);
         input.setMinimumHeight(0);
         input.setGravity(Gravity.TOP);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -177,14 +183,6 @@ final class FloatingSearchView extends FrameLayout {
         input.setText(query == null ? "" : query);
         input.setSelection(input.length());
         composer.addView(input, new LinearLayout.LayoutParams(-1, -2));
-        suggestionScroll = new HorizontalScrollView(context);
-        suggestionScroll.setHorizontalScrollBarEnabled(false);
-        suggestionScroll.setPadding(dp(10), 0, dp(10), dp(4));
-        suggestionWords = new LinearLayout(context);
-        suggestionWords.setGravity(Gravity.CENTER_VERTICAL);
-        suggestionScroll.addView(suggestionWords, new HorizontalScrollView.LayoutParams(-2, -2));
-        suggestionScroll.setVisibility(GONE);
-        composer.addView(suggestionScroll, new LinearLayout.LayoutParams(-1, -2));
         suggestions = new SearchSuggestionsController(context, this::showSuggestions);
         tools = new LinearLayout(context);
         tools.setGravity(Gravity.CENTER_VERTICAL);
@@ -223,8 +221,11 @@ final class FloatingSearchView extends FrameLayout {
         });
         composer.addView(tools, new LinearLayout.LayoutParams(-1, dp(44)));
         LinearLayout.LayoutParams composerLp = new LinearLayout.LayoutParams(-1, -2);
-        composerLp.setMargins(dp(8), dp(10), dp(8), 0);
+        composerLp.setMargins(dp(8), 0, dp(8), 0);
         bottom.addView(composer, composerLp);
+        LinearLayout.LayoutParams recommendationsLp = new LinearLayout.LayoutParams(-1, dp(42));
+        recommendationsLp.topMargin = dp(8);
+        bottom.addView(recommendations, recommendationsLp);
         page.addView(bottom, new LinearLayout.LayoutParams(-1, -2));
 
         drawerDismiss = new View(context);
@@ -240,7 +241,7 @@ final class FloatingSearchView extends FrameLayout {
                 state.setDrawerOpen(false);
                 animateDrawer(0, FloatingSearchView.this::focusInput);
             }
-            public void onHistorySelected(String q) { input.setText(q); setDrawerOpen(false); callback.onLookup(q, false); }
+            public void onHistorySelected(String q) { input.setText(q); callback.onLookup(q, false); }
             public void onEditingChanged() { callback.onEditingChanged(true); }
             public void onBack() { handleBack(); }
             public void onFiles(String id) {
@@ -295,21 +296,24 @@ final class FloatingSearchView extends FrameLayout {
 
     private void showSuggestions(List<String> words) {
         suggestionWords.removeAllViews();
-        boolean typing = !input.getText().toString().trim().isEmpty();
-        suggestionScroll.setVisibility(typing && !compactComposer ? VISIBLE : GONE);
+        suggestionWords.setVisibility(compactComposer ? GONE : VISIBLE);
         if (words.isEmpty()) {
-            TextView note = text("回车查询 · 支持中 / 英 / 日 / 韩", 11, MUTED, false);
-            note.setPadding(0, dp(4), 0, dp(4)); suggestionWords.addView(note);
+            TextView note = text(input.length() == 0 ? "本地词库智能联想" : "回车查询 · 支持中 / 英 / 日 / 韩", 11, MUTED, false);
+            note.setPadding(0, dp(9), 0, 0);
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(0), GridLayout.spec(0, 3));
+            lp.width = -1; suggestionWords.addView(note, lp);
             return;
         }
+        int index = 0;
         for (String word : words) {
             TextView candidate = text(word, 13, 0xff006bff, false);
-            candidate.setSingleLine(true); candidate.setMaxWidth(dp(220));
+            candidate.setSingleLine(true);
             candidate.setEllipsize(TextUtils.TruncateAt.END);
-            candidate.setPadding(dp(10), dp(6), dp(10), dp(6));
+            candidate.setPadding(dp(8), dp(5), dp(8), dp(5));
             candidate.setBackground(ripple(0xfff0f6ff, 14));
             candidate.setContentDescription("填写候选词 " + word);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2); lp.rightMargin = dp(6);
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(index / 3), GridLayout.spec(index % 3, 1f));
+            lp.width = 0; lp.height = dp(27); lp.rightMargin = dp(4); lp.bottomMargin = dp(3); index++;
             suggestionWords.addView(candidate, lp);
             candidate.setOnClickListener(v -> { input.setText(word); input.setSelection(input.length()); focusInput(); });
         }
@@ -332,11 +336,15 @@ final class FloatingSearchView extends FrameLayout {
         setOnApplyWindowInsetsListener((v, insets) -> { applyInsets(insets); return insets; });
         if (Build.VERSION.SDK_INT >= 30) {
             setWindowInsetsAnimationCallback(new WindowInsetsAnimation.Callback(WindowInsetsAnimation.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                @Override public void onPrepare(WindowInsetsAnimation animation) {
+                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) imeAnimating = true;
+                }
                 @Override public WindowInsets onProgress(WindowInsets insets, List<WindowInsetsAnimation> animations) {
                     applyInsets(insets); return insets;
                 }
                 @Override public void onEnd(WindowInsetsAnimation animation) {
                     if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0 || disposed) return;
+                    imeAnimating = false;
                     WindowInsets current = getRootWindowInsets();
                     if (current != null) {
                         applyInsets(current);
@@ -367,6 +375,10 @@ final class FloatingSearchView extends FrameLayout {
         boolean wasVisible = state.isKeyboardVisible();
         int keyboard = getResources().getDisplayMetrics().heightPixels - legacyVisibleFrame.bottom;
         state.setKeyboardVisible(keyboard > dp(120));
+        if (keyboard > dp(120) && keyboard != legacyImeCandidate) {
+            legacyImeCandidate = keyboard;
+            removeCallbacks(commitLegacyIme); postDelayed(commitLegacyIme, 150);
+        }
 
         // TYPE_PHONE can retain a full-height surface and pan its root to the
         // editor despite ADJUST_RESIZE. Frame all content in the real visible
@@ -388,10 +400,26 @@ final class FloatingSearchView extends FrameLayout {
 
     private void setLegacyViewportFrame(View child) {
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams)child.getLayoutParams();
-        if (lp.topMargin == topInset && lp.height == legacyViewportHeight) return;
+        int height = legacyViewportHeight;
+        if (child == page) {
+            int full = getResources().getDisplayMetrics().heightPixels - legacyVisibleFrame.top;
+            height = Math.min(height, full - Math.max(safeBottom, keyboardSpace.reserved(full)));
+        }
+        if (lp.topMargin == topInset && lp.height == height) return;
         lp.topMargin = topInset;
-        lp.height = legacyViewportHeight;
+        lp.height = height;
         child.setLayoutParams(lp);
+    }
+
+    private final Runnable commitLegacyIme = new Runnable() {
+        public void run() {
+            if (disposed || !state.isKeyboardVisible()) return;
+            keyboardSpace.measured(legacyImeCandidate); updateLegacyViewport();
+        }
+    };
+
+    private int composerBottomSpace() {
+        return Math.max(safeBottom, keyboardSpace.reserved(getHeight() - topInset));
     }
 
     private void applyInsets(WindowInsets insets) {
@@ -402,13 +430,14 @@ final class FloatingSearchView extends FrameLayout {
             safeBottom = bars.bottom;
             imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom;
             state.setKeyboardVisible(insets.isVisible(WindowInsets.Type.ime()) || imeBottom > 0);
+            if (!imeAnimating && state.isKeyboardVisible()) keyboardSpace.measured(imeBottom);
         } else {
             safeBottom = insets.getStableInsetBottom();
             if (Build.VERSION.SDK_INT >= 29) systemBackInset = insets.getSystemGestureInsets().left;
             updateLegacyViewport();
             return;
         }
-        page.setPadding(0, topInset, 0, Math.max(safeBottom, imeBottom));
+        page.setPadding(0, topInset, 0, composerBottomSpace());
         updateCompactLayout();
         drawer.setPadding(drawer.getPaddingLeft(), topInset + dp(6), drawer.getPaddingRight(),
                 Math.max(safeBottom, imeBottom) + dp(8));
@@ -425,7 +454,7 @@ final class FloatingSearchView extends FrameLayout {
         title.setPadding(dp(7), 0, 0, 0);
         pill.addView(title);
         pill.setOnClickListener(v -> action.run());
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(48));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(40));
         lp.rightMargin = dp(8);
         parent.addView(pill, lp);
     }
@@ -436,6 +465,13 @@ final class FloatingSearchView extends FrameLayout {
         closeMenu();
         hideKeyboard();
         callback.onLookup(q, state.isPrivateMode());
+    }
+
+    void prepareForLookup() {
+        closeMenu();
+        if (drawerAnimator != null) drawerAnimator.cancel();
+        applyDrawerProgress(state.isDrawerOpen() ? 1 : 0);
+        hideKeyboard();
     }
 
     private void togglePrivateMode() {
@@ -463,7 +499,7 @@ final class FloatingSearchView extends FrameLayout {
         empty.setOrientation(LinearLayout.VERTICAL);
         empty.setGravity(Gravity.CENTER);
         empty.setPadding(dp(24), 0, dp(24), 0);
-        SearchIconView mark = icon(privacy ? SearchIconView.Kind.PRIVATE : SearchIconView.Kind.MARK, 0xffe7e7e7);
+        SearchIconView mark = icon(privacy ? SearchIconView.Kind.PRIVATE : SearchIconView.Kind.BOOK, 0xffe7e7e7);
         empty.addView(mark, new LinearLayout.LayoutParams(dp(84), dp(84)));
         if (privacy) {
             TextView title = text("私密聊天", 20, INK, true);
@@ -665,9 +701,9 @@ final class FloatingSearchView extends FrameLayout {
         tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(44), 1));
     }
 
-    private void selectSettingsTab(boolean settings) {
+    private void selectQuestionTab() {
         for (int i = 0; i < tabLabels.length; i++) {
-            boolean selected = i == (settings ? 2 : 0);
+            boolean selected = i == 0;
             tabLabels[i].setTextColor(selected ? INK : 0xffb0b0b0);
             tabIndicators[i].setVisibility(selected ? VISIBLE : INVISIBLE);
         }
@@ -677,6 +713,11 @@ final class FloatingSearchView extends FrameLayout {
         hideKeyboard();
         closeMenu();
         callback.onOpenPage(page, state.isPrivateMode());
+    }
+
+    private void openHistory() {
+        setDrawerOpen(true);
+        drawer.showHistory();
     }
 
     private void setDrawerOpen(boolean open) {
@@ -722,25 +763,27 @@ final class FloatingSearchView extends FrameLayout {
         ViewGroup.LayoutParams lp = drawer.getLayoutParams(); lp.width = drawerWidth; drawer.setLayoutParams(lp);
         applyDrawerProgress(drawerProgress); post(this::positionMenu);
         if (Build.VERSION.SDK_INT < 30) updateLegacyViewport(); else updateCompactLayout();
+        if (Build.VERSION.SDK_INT >= 30) page.setPadding(0, topInset, 0, composerBottomSpace());
     }
 
     private void updateCompactLayout() {
         if (getHeight() == 0) return;
         int available = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
-                ? legacyViewportHeight : getHeight() - topInset - Math.max(safeBottom, imeBottom);
-        header.setVisibility(state.isKeyboardVisible() && available < dp(220) ? GONE : VISIBLE);
+                ? page.getLayoutParams().height : getHeight() - topInset - composerBottomSpace();
+        header.setVisibility(available < dp(240) ? GONE : VISIBLE);
         recommendations.setVisibility(!state.isPrivateMode() && available >= dp(320) ? VISIBLE : GONE);
-        boolean tight = state.isKeyboardVisible() && available < dp(220);
-        suggestionScroll.setVisibility(!tight && input.length() > 0 ? VISIBLE : GONE);
+        boolean tight = available < dp(240);
+        suggestionWords.setVisibility(!tight ? VISIBLE : GONE);
         if (tight != compactComposer) {
             compactComposer = tight;
+            input.setMinLines(tight ? 1 : 2);
             input.setMaxLines(tight ? 1 : 4);
             input.setPadding(dp(10), tight ? 0 : dp(5), dp(10), tight ? 0 : dp(6));
             composer.setPadding(dp(8), dp(tight ? 2 : 5), dp(8), dp(tight ? 2 : 7));
             ViewGroup.LayoutParams toolsLp = tools.getLayoutParams();
             toolsLp.height = dp(tight ? 36 : 44); tools.setLayoutParams(toolsLp);
             LinearLayout.LayoutParams composerLp = (LinearLayout.LayoutParams)composer.getLayoutParams();
-            composerLp.setMargins(dp(8), dp(tight ? 2 : 10), dp(8), 0);
+            composerLp.setMargins(dp(8), 0, dp(8), 0);
             composer.setLayoutParams(composerLp);
         }
         // Maintain an 8dp gap above the keyboard and the display's lower edge.
@@ -758,9 +801,9 @@ final class FloatingSearchView extends FrameLayout {
             int swipeStart = Math.max(dp(24), systemBackInset + dp(8));
             int viewportBottom = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
                     ? topInset + legacyViewportHeight : getHeight() - Math.max(safeBottom, imeBottom);
-            swipeEligible = menuCard == null && downX > swipeStart &&
+            swipeEligible = menuCard == null && !containsPoint(recommendations, downX, downY) && downX > swipeStart &&
                     downX < getWidth() - swipeStart &&
-                    (drawerProgress > 0 || (downY > topInset + header.getHeight() && downY < viewportBottom - bottom.getHeight()));
+                    (drawerProgress > 0 || (downY > topInset + header.getHeight() && downY < viewportBottom));
             recycleVelocity(); velocity = VelocityTracker.obtain(); velocity.addMovement(e);
         } else if (e.getActionMasked() == MotionEvent.ACTION_MOVE && beginSwipe(e)) {
             return true;
@@ -817,6 +860,7 @@ final class FloatingSearchView extends FrameLayout {
 
     void dispose() {
         suggestions.close();
+        removeCallbacks(commitLegacyIme);
         drawer.dispose();
         disposed = true;
         ViewTreeObserver observer = getViewTreeObserver();

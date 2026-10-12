@@ -646,7 +646,7 @@ public class FloatingService extends Service {
             @Override public void onPrivateModeChanged(boolean privacy) { searchPrivateMode = privacy; }
             @Override public void onLookup(String query, boolean privacy) {
                 searchPrivateMode = privacy;
-                removeSearchPanel(false);
+                rootSearchForLookup();
                 openQuickLookup(query);
             }
             @Override public void onEditingChanged(boolean editing) { setSearchFocusable(editing); }
@@ -717,6 +717,12 @@ public class FloatingService extends Service {
                 : WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
     }
 
+    private void rootSearchForLookup() {
+        if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).prepareForLookup();
+        setSearchFocusable(false);
+        clearSearchBackCallback();
+    }
+
     private void handleSearchBack() {
         if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).handleBack();
         else removeSearchPanel();
@@ -736,8 +742,15 @@ public class FloatingService extends Service {
             bubbleTopProxyLp.x = bubbleLp.x;
             bubbleTopProxyLp.y = bubbleLp.y;
             try {
-                wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp);
-            } catch (Exception ignored) {}
+                // Reorder only the proxy when another surface is mounted.
+                // The real bubble and retained search page stay attached.
+                wm.removeViewImmediate(bubbleTopProxy);
+                wm.addView(bubbleTopProxy, bubbleTopProxyLp);
+            } catch (Exception error) {
+                try { wm.removeViewImmediate(bubbleTopProxy); } catch (Exception ignored) {}
+                bubbleTopProxy = null; bubbleTopProxyLp = null;
+                setOriginalBubbleProxyCovered(false);
+            }
             return;
         }
 
@@ -1100,7 +1113,8 @@ public class FloatingService extends Service {
         if (q.isEmpty()) return;
 
         removeLookupOverlay(false);
-        removeSearchPanel(false);
+        if (returnToSearch && searchPanel != null) rootSearchForLookup();
+        else removeSearchPanel(false);
         removeResultCard();
 
         lookupOverlayQuery = q;
@@ -1118,7 +1132,7 @@ public class FloatingService extends Service {
             fullscreenMask.setBackgroundColor(Color.BLACK);
             // The Activity supplies the pixels, including both system bars.
             // Keep one touch target here without doubling the mask opacity.
-            fullscreenMask.setAlpha(lookupOverlayHosted ? 0f : 0.42f);
+            fullscreenMask.setAlpha(lookupOverlayHosted && searchPanel == null ? 0f : 0.42f);
             fullscreenMask.setClickable(true);
             fullscreenMask.setFocusable(false);
             fullscreenMask.setContentDescription("点击关闭查词浮层");

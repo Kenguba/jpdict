@@ -1,7 +1,10 @@
 package com.yuen.jpdict;
 
 import android.app.AlertDialog;
-import android.content.ClipData;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.transition.AutoTransition;
+import android.transition.TransitionManager;
 import android.content.Intent;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -17,6 +20,10 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
     private DictionaryRepository repository;
     private LinearLayout content;
     private TextView status;
+    private ScrollView scroll;
+    private DictionaryListView libraries;
+    private String expandedId, filter = "";
+    private final TextView[] tabButtons = new TextView[2];
     private boolean copy = true, picking, fullBackup, downloads;
     private String replaceId;
     private Future<?> operation;
@@ -45,21 +52,30 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         if (state != null) {
             copy = state.getBoolean("copy", true); picking = state.getBoolean("picking");
             fullBackup = state.getBoolean("full"); replaceId = state.getString("replace"); downloads = state.getBoolean("downloads");
+            expandedId = state.getString("expanded"); filter = state.getString("filter", "");
         }
         LinearLayout root = createPage("词库管理", false);
         LinearLayout tabs = new LinearLayout(this);
         for (String tab : new String[]{"已安装", "词库下载"}) {
             TextView button = text(tab, 16, 0xff006bff); button.setGravity(Gravity.CENTER);
+            button.setBackgroundResource(R.drawable.dictionary_tab);
+            tabButtons[tab.equals("已安装") ? 0 : 1] = button;
             tabs.addView(button, new LinearLayout.LayoutParams(0, dp(48), 1));
             button.setOnClickListener(v -> { downloads = tab.equals("词库下载"); refresh(); });
         }
         root.addView(tabs);
-        ScrollView scroll = new ScrollView(this); scroll.setPadding(dp(12), dp(8), dp(12), 0);
+        scroll = new ScrollView(this); scroll.setVerticalScrollBarEnabled(false); scroll.setPadding(dp(12), dp(8), dp(12), 0);
         content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); scroll.addView(content);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1)); setContentView(root);
         refresh();
     }
     private void refresh() {
+        for (int i = 0; i < tabButtons.length; i++) {
+            boolean selected = downloads == (i == 1);
+            tabButtons[i].setSelected(selected);
+            tabButtons[i].setTextColor(selected ? 0xff006bff : 0xff72777f);
+            tabButtons[i].setTypeface(android.graphics.Typeface.DEFAULT, selected ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+        }
         int generation = ++pageGeneration;
         content.removeAllViews(); status = text("正在读取词库…", 14, 0xff73777a); content.addView(status);
         if (downloads) {
@@ -83,93 +99,149 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         });
     }
     private void installed() {
-        content.removeAllViews(); LinearLayout actions = card();
-        action(actions, "导入本地词库", () -> chooseImport(null));
-        action(actions, "存储与迁移", this::migration); content.addView(actions);
-        List<DictionaryRepository.Dictionary> list = repository.list();
-        if (list.isEmpty()) content.addView(text("尚未安装 MDX 词典。可同时选择 MDX、配套 MDD、JS、CSS 和字体；有子目录的词库请选择整个文件夹。", 14, 0xff73777a));
-        for (DictionaryRepository.Dictionary dictionary : list) {
-            LinearLayout c = card(); c.setTag(dictionary.id);
-            LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL);
-            TextView title = text(dictionary.name, 17, 0xff171819); row.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-            Switch enabled = new Switch(this); enabled.setChecked(dictionary.enabled); enabled.setContentDescription("启用 " + dictionary.name);
-            row.addView(enabled); c.addView(row);
-            enabled.setOnCheckedChangeListener((button, value) -> repository.execute(() -> repository.enable(dictionary.id, value), this::report));
-            long mdd = 0;
-            for (DictionaryRepository.Document file : dictionary.files) if (file.path.toLowerCase(Locale.ROOT).endsWith(".mdd")) mdd++;
-            TextView detail = text((dictionary.source == DictionaryRepository.SourceType.USER_IMPORT ? "用户导入" : dictionary.source == DictionaryRepository.SourceType.BUILTIN ? "内置词典" : "词库中心")
-                    + " · " + (dictionary.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "内部存储" : "外部文件")
-                    + "\n" + android.text.format.Formatter.formatFileSize(this, dictionary.bytes)
-                    + " · 1 MDX / " + mdd + " MDD / " + (dictionary.files.size() - 1 - mdd) + " 资源文件\n" + dictionary.indexState + " · " + ("INSTALLED".equals(dictionary.status) ? "已安装" : "需要重新关联文件"), 12, 0xff73777a);
-            c.addView(detail);
-            action(c, "详情与管理", () -> details(dictionary));
-            TextView handle = text("长按拖动排序", 13, 0xff73777a); c.addView(handle);
-            handle.setOnLongClickListener(v -> {
-                ClipData data = ClipData.newPlainText("dictionary", dictionary.id);
-                if (android.os.Build.VERSION.SDK_INT >= 24) c.startDragAndDrop(data, new View.DragShadowBuilder(c), dictionary.id, 0);
-                else c.startDrag(data, new View.DragShadowBuilder(c), dictionary.id, 0);
-                return true;
-            });
-            c.setOnDragListener((v, event) -> {
-                if (event.getAction() == DragEvent.ACTION_DRAG_STARTED) return event.getLocalState() instanceof String;
-                if (event.getAction() == DragEvent.ACTION_DROP && event.getLocalState() instanceof String) {
-                    move((String) event.getLocalState(), dictionary.id); return true;
+        int position = scroll.getScrollY();
+        content.removeAllViews();
+        LinearLayout search = new LinearLayout(this); search.setGravity(Gravity.CENTER_VERTICAL);
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(0xffe8ebef); bg.setCornerRadius(dp(14)); search.setBackground(bg);
+        search.setPadding(dp(12), 0, dp(8), 0);
+        SearchIconView magnifier = new SearchIconView(this, SearchIconView.Kind.SEARCH); magnifier.setColor(0xff80858d);
+        search.addView(magnifier, new LinearLayout.LayoutParams(dp(21), dp(21)));
+        EditText field = new EditText(this); field.setSingleLine(); field.setTextSize(14); field.setHint("搜索已安装的词库"); field.setText(filter);
+        field.setBackgroundColor(android.graphics.Color.TRANSPARENT); field.setPadding(dp(9), 0, dp(4), 0); field.setContentDescription("搜索已安装的词库");
+        search.addView(field, new LinearLayout.LayoutParams(0, dp(42), 1));
+        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2); searchLp.bottomMargin = dp(10); content.addView(search, searchLp);
+        LinearLayout actions = new LinearLayout(this);
+        shortcut(actions, "导入本地词库", "MDX / MDD 及配套资源", SearchIconView.Kind.IMPORT, () -> chooseImport(null));
+        shortcut(actions, "存储与迁移", "存储、备份与恢复", SearchIconView.Kind.DATABASE, this::migration);
+        content.addView(actions);
+        LinearLayout reorderHint = new LinearLayout(this); reorderHint.setGravity(Gravity.CENTER_VERTICAL);
+        reorderHint.setPadding(dp(6), dp(12), dp(6), dp(12));
+        SearchIconView reorder = new SearchIconView(this, SearchIconView.Kind.REORDER); reorder.setColor(0xffa4a7ad);
+        reorderHint.addView(reorder, new LinearLayout.LayoutParams(dp(18), dp(18)));
+        TextView hint = text("长按卡片或右侧手柄拖动排序", 11, 0xff90959d); hint.setPadding(dp(8), 0, 0, 0);
+        reorderHint.addView(hint); content.addView(reorderHint);
+        renderLibraries();
+        field.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) { filter = s.toString(); renderLibraries(); }
+            public void afterTextChanged(Editable s) {}
+        });
+        scroll.post(() -> scroll.scrollTo(0, position));
+    }
+    private void shortcut(LinearLayout parent, String title, String subtitle, SearchIconView.Kind kind, Runnable run) {
+        LinearLayout tile = card(); tile.setOrientation(LinearLayout.HORIZONTAL); tile.setGravity(Gravity.CENTER_VERTICAL); tile.setPadding(dp(9), dp(12), dp(6), dp(12));
+        SearchIconView icon = new SearchIconView(this, kind); icon.setColor(0xff006bff); tile.addView(icon, new LinearLayout.LayoutParams(dp(25), dp(28)));
+        LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(7), 0, 0, 0);
+        TextView heading = text(title, 13, 0xff171819); heading.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD); heading.setPadding(0, 0, 0, dp(4)); labels.addView(heading);
+        TextView note = text(subtitle, 9, 0xff73777a); note.setPadding(0, 0, 0, 0); labels.addView(note); tile.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1); if (parent.getChildCount() > 0) lp.leftMargin = dp(8); parent.addView(tile, lp); tile.setOnClickListener(v -> run.run());
+    }
+    private void renderLibraries() {
+        if (libraries != null) content.removeView(libraries);
+        if (status != null) content.removeView(status);
+        libraries = new DictionaryListView(this, scroll, this::saveOrder);
+        content.addView(libraries);
+        int count = 0;
+        for (DictionaryRepository.Dictionary d : repository.list()) {
+            if (!d.name.toLowerCase(Locale.ROOT).contains(filter.trim().toLowerCase(Locale.ROOT))) continue;
+            count++;
+            DictionaryCardView card = new DictionaryCardView(this, d, new DictionaryCardView.Actions() {
+                public void toggleDetails(DictionaryCardView c) {
+                    if (libraries.isDragging()) return;
+                    AutoTransition transition = new AutoTransition(); transition.setDuration(180); TransitionManager.beginDelayedTransition(libraries, transition);
+                    expandedId = c.isOpen() ? null : c.dictionary.id;
+                    for (DictionaryCardView row : libraries.cards()) row.setOpen(row.dictionary.id.equals(expandedId));
                 }
-                return true;
+                public void enable(DictionaryCardView c, boolean value) {
+                    repository.execute(() -> repository.enable(d.id, value), error -> { report(error); if (error != null) c.restoreEnabled(!value); });
+                }
+                public void expandLookup(DictionaryCardView c, boolean value) {
+                    repository.execute(() -> repository.setLookupExpanded(d.id, value), error -> { report(error); if (error != null) c.restoreExpanded(!value); });
+                }
+                public void rename(DictionaryCardView c) { renameDictionary(d); }
+                public void files(DictionaryCardView c) { manageFiles(d); }
+                public void browse(DictionaryCardView c) { new DictionaryBrowseDialog(DictionaryActivity.this, repository, d).show(); }
+                public void uninstall(DictionaryCardView c) { uninstallDictionary(d); }
+                public void drag(DictionaryCardView c) { libraries.start(c); }
+                public void move(DictionaryCardView c, int direction) { moveDictionary(d, direction); }
             });
-            content.addView(c);
+            card.setOpen(d.id.equals(expandedId)); libraries.add(card);
         }
+        if (count == 0) { status = text(repository.list().isEmpty() ? "尚未安装词库，可导入 MDX、MDD 及配套资源文件。" : "没有匹配的词库", 14, 0xff73777a); content.addView(status); }
     }
-    private void move(String id, String before) {
-        List<String> order = new ArrayList<>(); for (DictionaryRepository.Dictionary d : repository.list()) order.add(d.id);
-        if (id.equals(before) || !order.remove(id)) return;
-        order.add(order.indexOf(before), id);
-        repository.execute(() -> repository.reorder(order), error -> { report(error); if (error == null) refresh(); });
+    private void saveOrder(List<String> visibleOrder) {
+        // Filtering keeps hidden libraries in place; only reorder the visible slots.
+        List<String> order = new ArrayList<>(); int index = 0;
+        for (DictionaryRepository.Dictionary d : repository.list()) order.add(visibleOrder.contains(d.id) ? visibleOrder.get(index++) : d.id);
+        DictionaryListView savingList = libraries; savingList.setSaving(true);
+        repository.execute(() -> repository.reorder(order), error -> { savingList.setSaving(false); report(error); if (error != null) refresh(); });
     }
-    private void details(DictionaryRepository.Dictionary d) {
-        new AlertDialog.Builder(this).setTitle(d.name).setItems(new String[]{"查看文件和状态", "重命名", "向上移动", "向下移动", "更新 / 替换 / 重新关联", "复制到内部存储", d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "删除内部副本" : "解除外部关联"}, (dialog, which) -> {
+    private void moveDictionary(DictionaryRepository.Dictionary d, int direction) {
+        List<String> ids = new ArrayList<>(); for (DictionaryRepository.Dictionary f : repository.list()) ids.add(f.id);
+        int index = ids.indexOf(d.id), target = index + direction;
+        if (target >= 0 && target < ids.size()) { Collections.swap(ids, index, target); repository.execute(() -> repository.reorder(ids), error -> { report(error); if (error == null) refresh(); }); }
+    }
+    private void renameDictionary(DictionaryRepository.Dictionary d) {
+        EditText name = new EditText(this); name.setText(d.name); name.setSingleLine(); name.setSelectAllOnFocus(true);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("重命名词库").setView(name).setPositiveButton("保存", null).create();
+        dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v ->
+                repository.execute(() -> repository.rename(d.id, name.getText().toString()), error -> { report(error); if (error == null) { dialog.dismiss(); refresh(); } })));
+        dialog.show();
+    }
+    private void manageFiles(DictionaryRepository.Dictionary d) {
+        choices("文件管理", new String[]{"查看文件与状态", "更新 / 替换 / 重新关联", "复制到内部存储", "向上移动", "向下移动"}, (dialog, which) -> {
             if (which == 0) {
                 StringBuilder files = new StringBuilder(d.status + "\nID: " + d.id + "\n");
                 for (DictionaryRepository.Document f : d.files) files.append('\n').append(f.path).append("\n").append(f.uri);
                 info(d.name, files.toString());
-            } else if (which == 1) {
-                EditText name = new EditText(this); name.setText(d.name);
-                new AlertDialog.Builder(this).setTitle("重命名词典").setView(name).setPositiveButton("保存", (x, y) ->
-                        repository.execute(() -> repository.rename(d.id, name.getText().toString()), error -> { report(error); if (error == null) refresh(); })).setNegativeButton("取消", null).show();
-            } else if (which == 2 || which == 3) {
-                List<String> ids = new ArrayList<>(); for (DictionaryRepository.Dictionary f : repository.list()) ids.add(f.id);
-                int index = ids.indexOf(d.id), target = index + (which == 2 ? -1 : 1);
-                if (target >= 0 && target < ids.size()) { Collections.swap(ids, index, target); repository.execute(() -> repository.reorder(ids), error -> { report(error); if (error == null) refresh(); }); }
-            } else if (which == 4) chooseImport(d.id);
-            else if (which == 5) {
+            } else if (which == 1) chooseImport(d.id);
+            else if (which == 2) {
                 if (d.storage == DictionaryRepository.StorageMode.APP_PRIVATE) info("存储", "此词典已在 JPDict 内部存储。");
                 else runOperation(() -> repository.install(d.files, true, d.id, this::progress));
-            } else new AlertDialog.Builder(this).setTitle(d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "删除内部词典副本？" : "解除词典关联？")
-                    .setMessage(d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "将删除 JPDict 内部文件，原始外部文件保持不变。" : "仅删除安装记录，不删除原始外部文件。")
-                    .setPositiveButton("确定", (x,y) -> runOperation(() -> repository.delete(d))).setNegativeButton("取消", null).show();
-        }).setNegativeButton("关闭", null).show();
+            } else moveDictionary(d, which == 3 ? -1 : 1);
+        });
+    }
+    private void uninstallDictionary(DictionaryRepository.Dictionary d) {
+        new AlertDialog.Builder(this).setTitle(d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "删除内部词库副本？" : "解除词库关联？")
+                .setMessage(d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "将删除 JPDict 内部文件，原始外部文件保持不变。" : "仅删除安装记录，不删除原始外部文件。")
+                .setPositiveButton("确定", (x,y) -> runOperation(() -> repository.delete(d))).setNegativeButton("取消", null).show();
     }
     private void chooseImport(String id) {
         if (operation != null && !operation.isDone()) { info("操作进行中", "请等待或取消当前操作。"); return; }
         replaceId = id;
-        new AlertDialog.Builder(this).setTitle("词库存储位置").setItems(new String[]{"导入到 JPDict（独立内部副本）", "外部直接读取（保留 URI 授权）"}, (d, which) -> {
+        choices("词库存储位置", new String[]{"导入到 JPDict（独立内部副本）", "外部直接读取（保留 URI 授权）"}, (d, which) -> {
             copy = which == 0;
-            new AlertDialog.Builder(this).setTitle("选择词库").setItems(new String[]{"选择文件（MDX / MDD / JS / CSS / 字体）", "选择整个词典文件夹（包含子目录）"}, (x, y) -> {
+            choices("选择词库", new String[]{"选择文件（MDX / MDD / JS / CSS / 字体）", "选择整个词典文件夹（包含子目录）"}, (x, y) -> {
                 Intent intent = new Intent(y == 0 ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT_TREE);
                 if (y == 0) intent.setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
                 picking = true; startActivityForResult(intent, y == 0 ? FILES : TREE);
-            }).setNegativeButton("取消", null).show();
-        }).setNegativeButton("取消", null).show();
+            });
+        });
     }
     private void migration() {
-        new AlertDialog.Builder(this).setTitle("存储与迁移").setItems(new String[]{"完整备份（包含内部词库文件）", "轻量备份（仅清单与设置）", "恢复备份"}, (dialog, which) -> {
+        choices("存储与迁移", new String[]{"完整备份（包含内部词库文件）", "轻量备份（仅清单与设置）", "恢复备份"}, (dialog, which) -> {
             fullBackup = which == 0;
             Intent intent = new Intent(which == 2 ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_CREATE_DOCUMENT)
                     .addCategory(Intent.CATEGORY_OPENABLE).setType("application/zip");
             if (which != 2) intent.putExtra(Intent.EXTRA_TITLE, "jpdict-dictionaries-" + (fullBackup ? "full" : "light") + ".zip");
             picking = true; startActivityForResult(intent, which == 2 ? RESTORE : BACKUP);
-        }).setNegativeButton("取消", null).show();
+        });
+    }
+    private void choices(String title, String[] labels, android.content.DialogInterface.OnClickListener select) {
+        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
+        TextView heading = text(title, 16, 0xff171819); heading.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
+        heading.setIncludeFontPadding(false); heading.setPadding(dp(8), dp(2), dp(8), dp(8)); panel.addView(heading);
+        AlertDialog dialog = new AlertDialog.Builder(this).create(); dialog.setView(panel, 0, 0, 0, 0);
+        for (int i = 0; i < labels.length; i++) {
+            final int index = i;
+            TextView row = text(labels[i], 14, 0xff34373b); row.setIncludeFontPadding(false);
+            row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(8), dp(10), dp(8), dp(10)); row.setMinimumHeight(dp(44));
+            android.util.TypedValue feedback = new android.util.TypedValue(); getTheme().resolveAttribute(android.R.attr.selectableItemBackground, feedback, true);
+            row.setBackgroundResource(feedback.resourceId); panel.addView(row);
+            row.setOnClickListener(v -> { dialog.dismiss(); select.onClick(dialog, index); });
+        }
+        dialog.setCanceledOnTouchOutside(true); dialog.show();
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data); picking = false;
@@ -246,9 +318,10 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
     }
     private void info(String title, String message) { new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("关闭", null).show(); }
     @Override protected void onUserLeaveHint() { if (!picking) super.onUserLeaveHint(); }
-    @Override public void onBackPressed() { FloatingSearchRoutes.finishPage(this); }
+    @Override public void onBackPressed() { if (libraries != null && libraries.cancelDrag()) return; FloatingSearchRoutes.finishPage(this); }
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putBoolean("copy", copy); state.putBoolean("picking", picking); state.putBoolean("full", fullBackup);
+        state.putString("expanded", expandedId); state.putString("filter", filter);
         state.putString("replace", replaceId); state.putBoolean("downloads", downloads); super.onSaveInstanceState(state);
     }
     @Override protected void onDestroy() {
