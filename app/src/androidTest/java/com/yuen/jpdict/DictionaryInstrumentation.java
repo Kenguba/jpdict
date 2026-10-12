@@ -57,7 +57,7 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 "/>", " Compact=\"Yes\" Compat=\"Yes\" StyleSheet=\"\"/>"));
         write(mainMdd, MdictReaderTest.encryptedIndex(MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,2,true,new String[]{"\\image.png","\\style.css","\\logic.js"},
                 new byte[][]{android.util.Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",0), "p{color:#006bff}".getBytes(StandardCharsets.UTF_8), "document.body.dataset.mdd='ok'".getBytes(StandardCharsets.UTF_8)})));
-        write(volume, MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,1,true,new String[]{"\\font.woff"},new byte[][]{{1,2,3,4}}));
+        write(volume, MdictReaderTest.withDownloadTrailer(MdictReaderTest.fixture(8,StandardCharsets.UTF_16LE,1,true,new String[]{"\\font.woff"},new byte[][]{{1,2,3,4}})));
         List<DictionaryRepository.Document> files = Arrays.asList(new DictionaryRepository.Document(mdx.getName(),Uri.fromFile(mdx),mdx.length()),
                 new DictionaryRepository.Document(mainMdd.getName(),Uri.fromFile(mainMdd),mainMdd.length()),new DictionaryRepository.Document(volume.getName(),Uri.fromFile(volume),volume.length()),
                 new DictionaryRepository.Document("src/local.js", Uri.fromFile(script), script.length()),
@@ -73,9 +73,10 @@ public final class DictionaryInstrumentation extends Instrumentation {
             check(font != null && font.read() == 42 && font.skip(8L * 1024 * 1024) > 0 && font.read() == 0, "Large external font streams beyond the old 8 MB limit");
         }
         check(repo.lookup(dictionary,"日本語").get(0).contains("日本語释义"),"Internal lookup");
+        check(repo.suggest("al").equals(Collections.singletonList("alpha")), "Repository returns installed dictionary completions");
         System.out.println("Device cold import/query ms="+((System.nanoTime()-start)/1_000_000.0));
         start=System.nanoTime(); repo.lookup(dictionary,"日本語"); System.out.println("Device hot query ms="+((System.nanoTime()-start)/1_000_000.0));
-        check(Arrays.equals(repo.resource(dictionary,"font.woff"),new byte[]{1,2,3,4}),"MDD numbered volume");
+        check(Arrays.equals(repo.resource(dictionary,"font.woff"),new byte[]{1,2,3,4}),"MDD numbered volume with complete 416 download trailer");
         check(repo.resource(dictionary,"style.css").length>0,"CSS resource");
         boolean duplicate=false; try{repo.install(files,true,null,(m,d,t)->{});}catch(IOException e){duplicate=true;} check(duplicate,"Duplicate rejected");
         repo.rename(dictionary.id,"重命名词典"); repo.enable(dictionary.id,false); repo.reload();

@@ -216,8 +216,52 @@ public final class MdictReaderTest {
     }
     public static void main(String[] args) throws Exception {
         formats(); lzo(); corrupt(); persistentIndex(); sparse();
-        referenceVectors(args[0]); unsupportedHeaders(); compactHeaders(); normalizedSummaries(); encryptedIndexes(); caseVariantLinks(); largeResources(); overlappingRanges();
+        referenceVectors(args[0]); unsupportedHeaders(); compactHeaders(); normalizedSummaries(); encryptedIndexes(); caseVariantLinks(); largeResources(); overlappingRanges(); downloadTrailers(); completions();
         System.out.println("MdictReader: " + checks + " assertions passed (v1/v2, MDX/MDD, UTF8/UTF16LE, raw/zlib/LZO, cross-block, duplicates, links, malformed/fuzz)");
+    }
+    private static byte[] appended(byte[] file, byte[] tail) {
+        byte[] result = Arrays.copyOf(file, file.length + tail.length);
+        System.arraycopy(tail, 0, result, file.length, tail.length); return result;
+    }
+    private static void downloadTrailers() throws Exception {
+        byte[] tail = withDownloadTrailer(new byte[0]);
+        check(tail.length == 197, "Reported 197-byte download trailer reproduced with original text");
+        for (int compression : new int[]{0, 1, 2}) {
+            byte[] good = fixture(8, StandardCharsets.UTF_16LE, compression, true,
+                    new String[]{"\\image.png"}, new byte[][]{{1,2,3,4,5}});
+            try (MdictReader r = reader(appended(good, tail))) {
+                r.validate((d,t)->{});
+                check(Arrays.equals(r.readResource("image.png"), new byte[]{1,2,3,4,5}), "416 tail does not change resource bytes");
+            }
+            fails(() -> reader(appended(good, Arrays.copyOf(tail, tail.length - 1))), MdictReader.Error.CORRUPT);
+            fails(() -> reader(appended(good, appended(tail, new byte[]{0}))), MdictReader.Error.CORRUPT);
+            fails(() -> reader(appended(good, bytes("<html>unknown extension</html>", StandardCharsets.UTF_8))), MdictReader.Error.CORRUPT);
+            fails(() -> reader(appended(Arrays.copyOf(good, good.length - 1), tail)), MdictReader.Error.CORRUPT);
+            byte[] damaged = good.clone(); damaged[damaged.length - 4] ^= 0x40;
+            fails(() -> { try (MdictReader r = reader(appended(damaged, tail))) { r.validate((d,t)->{}); } }, MdictReader.Error.CORRUPT);
+        }
+        byte[] mdx = fixture(8, StandardCharsets.UTF_8, 0, false, new String[]{"a"}, new byte[][]{bytes("text", StandardCharsets.UTF_8)});
+        fails(() -> reader(appended(mdx, tail)), MdictReader.Error.CORRUPT);
+    }
+    static byte[] withDownloadTrailer(byte[] file) {
+        return appended(file, bytes("<html>\r\n<head><title>416 Requested Range Not Satisfiable</title></head>\r\n<body>\r\n"
+                + "<center><h1>416 Requested Range Not Satisfiable</h1></center>\r\n<hr><center>nginx/1.27.0</center>\r\n</body>\r\n</html>\r\n", StandardCharsets.US_ASCII));
+    }
+    private static void completions() throws Exception {
+        String[] keys = {"outside", "Outward", "outside", "日本語", "日本人", "other", "outlook"};
+        byte[][] values = new byte[keys.length][];
+        for (int i = 0; i < values.length; i++) values[i] = bytes("text", StandardCharsets.UTF_8);
+        try (MdictReader r = reader(fixture(8, StandardCharsets.UTF_8, 2, false, keys, values))) {
+            r.validate((d,t)->{});
+            check(r.suggest("out", 6).equals(Arrays.asList("outside", "Outward", "outlook")), "Completion preserves spelling and irregular dictionary order, deduplicates");
+            check(r.suggest("OUT", 1).equals(Collections.singletonList("outside")), "Case folding and bounded completion count");
+            check(r.suggest("日本", 6).size() == 2, "Unicode completion");
+            check(r.suggest("missing", 6).isEmpty() && r.suggest("", 6).isEmpty(), "No invented or empty completions");
+            check(r.lookup("outside").size() == 2, "Completions preserve duplicate exact lookup");
+            Thread.currentThread().interrupt();
+            try { fails(() -> r.suggest("out", 6), MdictReader.Error.CANCELLED); }
+            finally { Thread.interrupted(); }
+        }
     }
     private static void referenceVectors(String directory) throws Exception {
         for(int v=0;v<3;v++) {

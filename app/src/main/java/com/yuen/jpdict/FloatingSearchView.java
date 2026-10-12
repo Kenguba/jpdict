@@ -65,6 +65,10 @@ final class FloatingSearchView extends FrameLayout {
     private final LinearLayout composer;
     private final LinearLayout tools;
     private final Editor input;
+    private final HorizontalScrollView suggestionScroll;
+    private final LinearLayout suggestionWords;
+    private final SearchSuggestionsController suggestions;
+    private boolean clipboardPending;
     private final SearchIconView plus;
     private final SearchIconView privateButton;
     private final LinearLayout modelButton;
@@ -173,6 +177,15 @@ final class FloatingSearchView extends FrameLayout {
         input.setText(query == null ? "" : query);
         input.setSelection(input.length());
         composer.addView(input, new LinearLayout.LayoutParams(-1, -2));
+        suggestionScroll = new HorizontalScrollView(context);
+        suggestionScroll.setHorizontalScrollBarEnabled(false);
+        suggestionScroll.setPadding(dp(10), 0, dp(10), dp(4));
+        suggestionWords = new LinearLayout(context);
+        suggestionWords.setGravity(Gravity.CENTER_VERTICAL);
+        suggestionScroll.addView(suggestionWords, new HorizontalScrollView.LayoutParams(-2, -2));
+        suggestionScroll.setVisibility(GONE);
+        composer.addView(suggestionScroll, new LinearLayout.LayoutParams(-1, -2));
+        suggestions = new SearchSuggestionsController(context, this::showSuggestions);
         tools = new LinearLayout(context);
         tools.setGravity(Gravity.CENTER_VERTICAL);
         plus = button(SearchIconView.Kind.PLUS, "附件菜单", SOFT);
@@ -251,7 +264,9 @@ final class FloatingSearchView extends FrameLayout {
         addView(drawer, new FrameLayout.LayoutParams(dp(340), -1));
         input.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            public void onTextChanged(CharSequence s, int start, int before, int count) { callback.onQueryChanged(s.toString()); updateAction(); }
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                callback.onQueryChanged(s.toString()); updateAction(); suggestions.update(s.toString());
+            }
             public void afterTextChanged(Editable s) {}
         });
         input.setOnEditorActionListener((v, action, event) -> {
@@ -274,7 +289,43 @@ final class FloatingSearchView extends FrameLayout {
             return false;
         });
         applyPrivateMode(false);
+        suggestions.update(input.getText().toString());
         installInsets();
+    }
+
+    private void showSuggestions(List<String> words) {
+        suggestionWords.removeAllViews();
+        boolean typing = !input.getText().toString().trim().isEmpty();
+        suggestionScroll.setVisibility(typing && !compactComposer ? VISIBLE : GONE);
+        if (words.isEmpty()) {
+            TextView note = text("回车查询 · 支持中 / 英 / 日 / 韩", 11, MUTED, false);
+            note.setPadding(0, dp(4), 0, dp(4)); suggestionWords.addView(note);
+            return;
+        }
+        for (String word : words) {
+            TextView candidate = text(word, 13, 0xff006bff, false);
+            candidate.setSingleLine(true); candidate.setMaxWidth(dp(220));
+            candidate.setEllipsize(TextUtils.TruncateAt.END);
+            candidate.setPadding(dp(10), dp(6), dp(10), dp(6));
+            candidate.setBackground(ripple(0xfff0f6ff, 14));
+            candidate.setContentDescription("填写候选词 " + word);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2); lp.rightMargin = dp(6);
+            suggestionWords.addView(candidate, lp);
+            candidate.setOnClickListener(v -> { input.setText(word); input.setSelection(input.length()); focusInput(); });
+        }
+    }
+
+    void prefillClipboardOnFocus() { clipboardPending = input.length() == 0; }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused && clipboardPending) post(() -> {
+            if (disposed || !hasWindowFocus() || !clipboardPending) return;
+            clipboardPending = false;
+            if (input.length() != 0) return;
+            String copied = SearchClipboard.recentText(getContext());
+            if (copied != null) { input.setText(copied); input.setSelection(input.length()); }
+        });
     }
 
     private void installInsets() {
@@ -680,6 +731,7 @@ final class FloatingSearchView extends FrameLayout {
         header.setVisibility(state.isKeyboardVisible() && available < dp(220) ? GONE : VISIBLE);
         recommendations.setVisibility(!state.isPrivateMode() && available >= dp(320) ? VISIBLE : GONE);
         boolean tight = state.isKeyboardVisible() && available < dp(220);
+        suggestionScroll.setVisibility(!tight && input.length() > 0 ? VISIBLE : GONE);
         if (tight != compactComposer) {
             compactComposer = tight;
             input.setMaxLines(tight ? 1 : 4);
@@ -707,17 +759,19 @@ final class FloatingSearchView extends FrameLayout {
             int viewportBottom = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
                     ? topInset + legacyViewportHeight : getHeight() - Math.max(safeBottom, imeBottom);
             swipeEligible = menuCard == null && downX > swipeStart &&
-                    (drawerProgress > 0 || (downX < swipeStart + dp(40) && downY > topInset + header.getHeight() && downY < viewportBottom - bottom.getHeight()));
+                    downX < getWidth() - swipeStart &&
+                    (drawerProgress > 0 || (downY > topInset + header.getHeight() && downY < viewportBottom - bottom.getHeight()));
             recycleVelocity(); velocity = VelocityTracker.obtain(); velocity.addMovement(e);
         } else if (e.getActionMasked() == MotionEvent.ACTION_MOVE && beginSwipe(e)) {
             return true;
-        } else if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL) recycleVelocity();
+        } else if (!swiping && (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL)) recycleVelocity();
         return super.onInterceptTouchEvent(e);
     }
 
     private boolean beginSwipe(MotionEvent e) {
         if (!swipeEligible) return false;
         float dx = e.getX() - downX, dy = e.getY() - downY;
+        if (startProgress == 0 && dx <= 0) return false;
         if (Math.abs(dx) <= ViewConfiguration.get(getContext()).getScaledTouchSlop() || Math.abs(dx) <= Math.abs(dy) * 1.3f) return false;
         if (drawerAnimator != null) drawerAnimator.cancel();
         if (!swiping && startProgress == 0 && dx > 0) { hideKeyboard(); drawer.refreshHistory(); }
@@ -736,6 +790,7 @@ final class FloatingSearchView extends FrameLayout {
         if (velocity != null) velocity.addMovement(e);
         if (e.getActionMasked() == MotionEvent.ACTION_MOVE) applyDrawerProgress(startProgress + (e.getX() - downX) / drawerWidth);
         if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            if (e.getActionMasked() == MotionEvent.ACTION_UP) applyDrawerProgress(startProgress + (e.getX() - downX) / drawerWidth);
             float speed = 0;
             if (velocity != null) { velocity.computeCurrentVelocity(1000); speed = velocity.getXVelocity(); }
             boolean open = e.getActionMasked() == MotionEvent.ACTION_CANCEL ? state.isDrawerOpen() : Math.abs(speed) > dp(500) ? speed > 0 : drawerProgress > .5f;
@@ -761,6 +816,7 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     void dispose() {
+        suggestions.close();
         drawer.dispose();
         disposed = true;
         ViewTreeObserver observer = getViewTreeObserver();

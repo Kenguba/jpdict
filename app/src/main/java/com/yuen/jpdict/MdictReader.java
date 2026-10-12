@@ -45,6 +45,11 @@ public final class MdictReader implements Closeable {
     private static final int CACHE_BYTES = 4 * 1024 * 1024;
     private static final Pattern ATTRIBUTE = Pattern.compile("([A-Za-z][A-Za-z0-9_]*)\\s*=\\s*([\"'])(.*?)\\2", Pattern.DOTALL);
     private static final Pattern SUMMARY_PUNCTUATION = Pattern.compile("[\\x20-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e]");
+    // A failed download resume can append nginx's complete 416 page to a valid MDD.
+    private static final Pattern RANGE_ERROR_TRAILER = Pattern.compile("<html>\\r?\\n"
+            + "<head><title>416 Requested Range Not Satisfiable</title></head>\\r?\\n"
+            + "<body>\\r?\\n<center><h1>416 Requested Range Not Satisfiable</h1></center>\\r?\\n"
+            + "<hr><center>nginx/[0-9.]+</center>\\r?\\n</body>\\r?\\n</html>\\r?\\n");
 
     public enum Error { UNSUPPORTED, CORRUPT, INACCESSIBLE, CANCELLED, LIMIT }
 
@@ -339,8 +344,13 @@ public final class MdictReader implements Closeable {
         ri.end();
         if (recordPosition != add(position, recordBytes)) throw corrupt("Record 压缩块合计长度与声明不符（差值 "
                 + (recordPosition - add(position, recordBytes)) + " bytes）");
-        if (recordPosition != size) throw corrupt("Record 数据结束后还有 " + (size - recordPosition)
-                + " bytes；文件可能附带未支持的扩展或不是完整的 MDX/MDD");
+        if (recordPosition != size) {
+            long trailing = size - recordPosition;
+            boolean knownDownloadError = resource && width == 8 && trailing > 0 && trailing <= 512
+                    && RANGE_ERROR_TRAILER.matcher(decode(read(recordPosition, (int) trailing), StandardCharsets.US_ASCII)).matches();
+            if (!knownDownloadError) throw corrupt("Record 数据结束后还有 " + trailing
+                    + " bytes；文件可能附带未支持的扩展或下载错误，请重新下载原文件");
+        }
         if (entryCount > 0 && (keys.isEmpty() || records.isEmpty())) throw corrupt("词典缺少数据块");
         metadata = new Metadata(attributes, resource, entryCount, size);
     }
@@ -353,6 +363,37 @@ public final class MdictReader implements Closeable {
         boolean heavy = enterLargeRead();
         try { return Collections.unmodifiableList(lookupText(word, new HashSet<>(), 0, new long[1])); }
         finally { if (heavy) LARGE_READ.release(); }
+    }
+
+    /** Best-effort bounded completion; never reads Record blocks or rebuilds a full index. */
+    public synchronized List<String> suggest(String prefix, int limit) throws IOException {
+        ensureOpen();
+        if (resource || prefix == null || prefix.isEmpty() || prefix.length() > 128 || limit < 1) return Collections.emptyList();
+        limit = Math.min(limit, 6);
+        String query = normalize(prefix), upper = query + '\uffff';
+        List<String> matches = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        int decoded = 0;
+        long deadline = System.nanoTime() + 150000000L;
+        boolean heavy = enterLargeRead();
+        try {
+            for (int b = 0; b < keys.size(); b++) {
+                checkCancelled();
+                if (System.nanoTime() > deadline) break;
+                Block block = keys.get(b);
+                if (block.min != null && (block.max.compareTo(query) < 0 || block.min.compareTo(upper) > 0)) continue;
+                if (decoded + block.unpacked > MAX_BLOCK_BYTES) break;
+                decoded += block.unpacked;
+                for (Key key : keyBlock(b)) {
+                    String normalized = normalize(key.text);
+                    if (key.text.length() <= 128 && normalized.startsWith(query) && seen.add(normalized)) {
+                        matches.add(key.text);
+                        if (matches.size() == limit) return Collections.unmodifiableList(matches);
+                    }
+                }
+            }
+            return Collections.unmodifiableList(matches);
+        } finally { if (heavy) LARGE_READ.release(); }
     }
 
     private List<String> lookupText(String word, Set<String> path, int depth, long[] budget) throws IOException {

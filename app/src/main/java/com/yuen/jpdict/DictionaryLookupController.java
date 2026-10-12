@@ -155,7 +155,7 @@ final class DictionaryLookupController {
             }
             try {
                 web = new DictionaryEntryView(context, repository, dictionary, entries, navigation);
-                body.removeAllViews(); body.addView(web, new LinearLayout.LayoutParams(-1, dp(300)));
+                body.removeAllViews(); body.addView(web, new LinearLayout.LayoutParams(-1, 1));
                 rendered.add(this);
             } catch (RuntimeException error) { message("释义显示失败：" + error.getMessage()); }
         }

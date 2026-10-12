@@ -671,6 +671,7 @@ public class FloatingService extends Service {
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
         searchPanel = root;
         searchPanelLp = lp;
+        if (searchKeyboardRequested) root.prefillClipboardOnFocus();
         try {
             wm.addView(root, lp);
             root.requestApplyInsets();
@@ -1171,10 +1172,9 @@ public class FloatingService extends Service {
 
         LinearLayout headerActions = new LinearLayout(this);
         headerActions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-        for (ImageView action : new ImageView[]{replay, list, more}) {
+        for (ImageView action : new ImageView[]{favorite, replay, list, more}) {
             headerActions.addView(action, new LinearLayout.LayoutParams(dp(42), dp(48)));
         }
-        headerActions.addView(favorite, new LinearLayout.LayoutParams(dp(48), dp(48)));
         header.addView(headerActions, new LinearLayout.LayoutParams(-2, dp(48)));
 
         replay.setOnClickListener(v -> {
@@ -1240,7 +1240,9 @@ public class FloatingService extends Service {
                 imm.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
             });
         };
-        title.setOnClickListener(v -> enterEditMode.run());
+        title.setContentDescription(q + "，长按 700 毫秒修改");
+        title.setOnLongClickListener(v -> { enterEditMode.run(); return true; });
+        header.setOnLongClickListener(v -> { enterEditMode.run(); return true; });
 
         Runnable submitEdit = () -> {
             String next = editor.getText().toString().trim();
@@ -1309,9 +1311,6 @@ public class FloatingService extends Service {
         pronounceLabel.setOnClickListener(v -> speakLookup(q));
         pronounceLabel.setContentDescription("播放日语发音");
 
-        panel.addView(pronunciation, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
-
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(false);
@@ -1323,6 +1322,7 @@ public class FloatingService extends Service {
         scroll.addView(content, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
+        content.addView(pronunciation, new LinearLayout.LayoutParams(-1, dp(46)));
 
         LinearLayout localBody = new LinearLayout(this);
         localBody.setOrientation(LinearLayout.VERTICAL);

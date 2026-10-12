@@ -143,7 +143,7 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
         row.setPadding(dp(18), dp(10), dp(18), dp(10));
         row.setBackground(ripple(Color.WHITE, 0));
         row.addView(icon(kind), new LinearLayout.LayoutParams(dp(23), dp(23)));
-        LinearLayout labels = labels(title, subtitle, 15, false);
+        LinearLayout labels = labels(title, subtitle, 15, true);
         labels.setPadding(dp(18), 0, dp(8), 0);
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         if (action != null) row.setOnClickListener(v -> action.run());
@@ -233,7 +233,7 @@ public final class SearchSettingsActivity extends FloatingSearchPageActivity {
     }
 
     private void addSection(LinearLayout content, String title) {
-        TextView heading = text(title, 12, MUTED, false);
+        TextView heading = text(title, 12, MUTED, true);
         heading.setPadding(dp(18), dp(18), dp(18), dp(12));
         content.addView(heading);
     }

@@ -323,6 +323,25 @@ final class DictionaryRepository {
             return escaped;
         });
     }
+    List<String> suggest(String prefix) throws IOException {
+        LinkedHashMap<String, String> matches = new LinkedHashMap<>();
+        long deadline = System.nanoTime() + 300000000L;
+        int visited = 0;
+        for (Dictionary dictionary : snapshot) {
+            MdictReader.checkCancelled();
+            if (!dictionary.enabled) continue;
+            if (++visited > 8 || System.nanoTime() > deadline) break;
+            try {
+                for (String word : readers.read(dictionary.mdx(), reader -> reader.suggest(prefix, 6))) {
+                    matches.put(word.toLowerCase(Locale.ROOT), word);
+                    if (matches.size() == 6) return new ArrayList<>(matches.values());
+                }
+            } catch (MdictReader.Failure failure) {
+                if (failure.error == MdictReader.Error.CANCELLED) throw failure;
+            } catch (IOException unavailable) { /* A missing dictionary must not block typing. */ }
+        }
+        return new ArrayList<>(matches.values());
+    }
     long modified(Document file) {
         if ("file".equals(file.uri.getScheme())) return new File(file.uri.getPath()).lastModified();
         try (Cursor c = context.getContentResolver().query(file.uri,
