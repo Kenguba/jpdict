@@ -45,7 +45,30 @@ public final class FloatingBubbleAppearanceTest {
                 FloatingBubbleAppearance.withSavedStyle(new ArrayList<>(), imageA), imageB);
         check(images.size() == 2 && images.get(0).matches(imageB) && images.get(1).matches(imageA));
         check(FloatingBubbleAppearance.withSavedStyle(images, imageB).size() == 2);
+
+        // The mounted bubble must receive a draft before preview() returns, without Android
+        // broadcast delivery. Recreated editors must not be rolled back by an older owner.
+        Object owner = new Object(), replacement = new Object();
+        List<FloatingBubbleAppearance.Config> notifications = new ArrayList<>();
+        Runnable listener = () -> notifications.add(FloatingBubbleAppearance.isPreviewing()
+                ? FloatingBubbleAppearance.current(null) : null);
+        FloatingBubbleAppearance.addChangeListener(listener);
+        FloatingBubbleAppearance.addChangeListener(listener);
+        FloatingBubbleAppearance.preview(null, owner, defaults);
+        check(notifications.size() == 1 && notifications.get(0).matches(defaults));
+        FloatingBubbleAppearance.preview(null, replacement, defaults);
+        FloatingBubbleAppearance.endPreview(null, owner);
+        check(notifications.size() == 1 && FloatingBubbleAppearance.isPreviewing());
+        FloatingBubbleAppearance.preview(null, replacement, max);
+        check(notifications.size() == 2 && notifications.get(1).matches(max));
+        FloatingBubbleAppearance.endPreview(null, replacement);
+        check(notifications.size() == 3 && notifications.get(2) == null
+                && !FloatingBubbleAppearance.isPreviewing());
+        FloatingBubbleAppearance.removeChangeListener(listener);
+        FloatingBubbleAppearance.preview(null, owner, defaults);
+        FloatingBubbleAppearance.endPreview(null, owner);
+        check(notifications.size() == 3);
         System.out.println("FloatingBubbleAppearance: defaults, bounds, Unicode, image identity, "
-                + "newest-first ordering, deduplication and ten-style limit passed");
+                + "newest-first ordering, deduplication, ten-style limit and synchronous preview passed");
     }
 }
