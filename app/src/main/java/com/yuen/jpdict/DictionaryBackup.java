@@ -28,7 +28,7 @@ final class DictionaryBackup {
                 JSONObject record = new JSONObject().put("dictId", d.id).put("name", d.name)
                         .put("packageId", d.packageId).put("installedVersion", d.installedVersion)
                         .put("sourceType", d.source.name()).put("storageMode", d.storage.name())
-                        .put("enabled", d.enabled).put("sortOrder", d.order).put("fileFingerprint", d.fingerprint)
+                        .put("enabled", d.enabled).put("lookupExpanded", d.lookupExpanded).put("sortOrder", d.order).put("fileFingerprint", d.fingerprint)
                         .put("hasFiles", full && d.storage == DictionaryRepository.StorageMode.APP_PRIVATE && "INSTALLED".equals(d.status))
                         .put("installedAt", d.installedAt).put("updatedAt", d.updatedAt);
                 JSONArray files = new JSONArray();
@@ -166,6 +166,7 @@ final class DictionaryBackup {
                 v.put("dict_id", id); v.put("name", d.getString("name")); v.put("package_id", d.getString("packageId"));
                 v.put("installed_version", d.getString("installedVersion")); v.put("source_type", source.name()); v.put("storage_mode", storage.name());
                 v.put("enabled", d.getBoolean("enabled") ? 1 : 0); v.put("sort_order", d.getInt("sortOrder"));
+                v.put("lookup_expanded", d.optBoolean("lookupExpanded", false) ? 1 : 0);
                 v.put("index_state", hasFiles || existingFiles ? "按需索引" : "待重新关联"); v.put("install_state", hasFiles || existingFiles ? "INSTALLED" : "NEEDS_RELINK");
                 v.put("fingerprint", d.getString("fileFingerprint")); v.put("installed_at", d.getLong("installedAt"));
                 v.put("updated_at", System.currentTimeMillis()); v.put("files", DictionaryRepository.filesJson(documents).toString()); records.add(v);

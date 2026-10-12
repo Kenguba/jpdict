@@ -35,6 +35,14 @@ public final class DictionaryInstrumentation extends Instrumentation {
     private void integration() throws Exception {
         Context context = getTargetContext(); DictionaryRepository repo = DictionaryRepository.get(context); repo.reload();
         if (!repo.list().isEmpty()) throw new AssertionError("Use an empty disposable emulator registry for integration tests");
+        check(DictionaryBookIcon.letterFor("OALDPE 精装版").equals("精") && DictionaryBookIcon.letterFor("Longman").equals("L"), "Book badges prefer one Han character then one initial");
+        boolean contrast = true;
+        for (int i = 0; i < 10000; i++) {
+            int color = DictionaryBookIcon.colorFor("dictionary-" + i);
+            double luminance = .2126 * channel(android.graphics.Color.red(color)) + .7152 * channel(android.graphics.Color.green(color)) + .0722 * channel(android.graphics.Color.blue(color));
+            contrast &= 1.05 / (luminance + .05) >= 4.5;
+        }
+        check(contrast, "Ten thousand name-generated book colors retain readable white text");
         List<DictionaryRepository.Document> scanned = repo.scanTree(Uri.parse("content://com.yuen.jpdict.test.fixtures/tree/fixture"));
         check(scanned.size() == 2 && scanned.get(1).path.equals("assets/local.css"), "SAF tree preserves nested resource paths and skips hidden tool directories");
         try(DictionarySource source=new DictionarySource(context.getContentResolver(),Uri.parse("content://com.yuen.jpdict.test.fixtures/seek"))) {
@@ -66,6 +74,7 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 new DictionaryRepository.Document("assets/large.otf", Uri.fromFile(largeFont), largeFont.length()));
         long start = System.nanoTime();
         DictionaryRepository.Dictionary dictionary = repo.install(files,true,null,(m,d,t)->{}).get(0);
+        check(!dictionary.lookupExpanded, "New libraries default to collapsed lookup sections");
         check(dictionary.files.size()==7,"Multi-volume and nested resource association");
         File[] indexes = new File(context.getCacheDir(), "dict-indexes").listFiles((dir, name) -> name.endsWith(".idx"));
         check(indexes != null && indexes.length >= 3, "Import persists MDX and MDD indexes before the first lookup");
@@ -86,15 +95,19 @@ public final class DictionaryInstrumentation extends Instrumentation {
         check(repo.lookup(dictionary,"alpha").get(0).contains("English"),"Internal copy independent of originals");
         boolean traversal=false; try{repo.resource(dictionary,"../outside");}catch(IOException e){traversal=true;} check(traversal,"Resource traversal denied");
         String id=dictionary.id;
+        repo.setLookupExpanded(id, true); repo.reload();
+        check(repo.list().get(0).lookupExpanded, "Lookup expansion preference survives repository reload");
         File full=new File(originals,"full.zip"), light=new File(originals,"light.zip");
         DictionaryBackup.write(repo,Uri.fromFile(full),true,(m,d,t)->{});
         DictionaryBackup.write(repo,Uri.fromFile(light),false,(m,d,t)->{});
         DictionaryBackup.restore(repo,Uri.fromFile(light),(m,d,t)->{});repo.reload();
+        check(repo.list().get(0).lookupExpanded, "Light backup preserves lookup expansion preference");
         check(repo.lookup(repo.list().get(0),"alpha").get(0).contains("English"),"Light restore retains existing installed files");
         repo.delete(repo.list().get(0));repo.reload();
         DictionaryBackup.restore(repo,Uri.fromFile(light),(m,d,t)->{});repo.reload();
         check(repo.list().get(0).status.equals("NEEDS_RELINK"),"Light backup requires files");
         DictionaryBackup.restore(repo,Uri.fromFile(full),(m,d,t)->{});repo.reload();dictionary=repo.list().get(0);
+        check(dictionary.lookupExpanded, "Full restore preserves lookup expansion preference");
         check(dictionary.id.equals(id)&&dictionary.name.equals("重命名词典")&&dictionary.enabled,"Full restore preserves identity and settings");
         check(repo.lookup(dictionary,"alpha").get(0).contains("English"),"Full restore verified data");
         File attack=new File(originals,"bad.zip");
@@ -188,4 +201,5 @@ public final class DictionaryInstrumentation extends Instrumentation {
             public String getMethod(){return "GET";}public Map<String,String> getRequestHeaders(){return Collections.emptyMap();}
         };
     }
+    private static double channel(int value) { double x = value / 255.0; return x <= .04045 ? x / 12.92 : Math.pow((x + .055) / 1.055, 2.4); }
 }

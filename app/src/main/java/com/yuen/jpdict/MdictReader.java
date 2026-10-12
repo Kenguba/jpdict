@@ -365,6 +365,29 @@ public final class MdictReader implements Closeable {
         finally { if (heavy) LARGE_READ.release(); }
     }
 
+    /** Bounded headword page; skip block counts without loading preceding keys. */
+    public synchronized List<String> words(long offset, int limit) throws IOException {
+        ensureOpen();
+        if (resource || offset < 0 || limit < 1) return Collections.emptyList();
+        limit = Math.min(limit, 50);
+        List<String> words = new ArrayList<>();
+        boolean heavy = enterLargeRead();
+        try {
+            int decoded = 0;
+            for (int b = 0; b < keys.size(); b++) {
+                checkCancelled(); Block block = keys.get(b);
+                if (offset >= block.count) { offset -= block.count; continue; }
+                if (decoded + block.unpacked > MAX_BLOCK_BYTES) break;
+                decoded += block.unpacked;
+                List<Key> page = keyBlock(b);
+                for (int i = (int)offset; i < page.size() && words.size() < limit; i++) words.add(page.get(i).text);
+                offset = 0;
+                if (words.size() == limit) break;
+            }
+            return Collections.unmodifiableList(words);
+        } finally { if (heavy) LARGE_READ.release(); }
+    }
+
     /** Best-effort bounded completion; never reads Record blocks or rebuilds a full index. */
     public synchronized List<String> suggest(String prefix, int limit) throws IOException {
         ensureOpen();

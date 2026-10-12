@@ -258,8 +258,14 @@ public final class MdictReaderTest {
             check(r.suggest("日本", 6).size() == 2, "Unicode completion");
             check(r.suggest("missing", 6).isEmpty() && r.suggest("", 6).isEmpty(), "No invented or empty completions");
             check(r.lookup("outside").size() == 2, "Completions preserve duplicate exact lookup");
+            check(r.words(0, 50).equals(Arrays.asList(keys)), "Browser preserves headword order and duplicates across blocks");
+            check(r.words(2, 3).equals(Arrays.asList("outside", "日本語", "日本人")), "Headword page starts inside a block and spans the next");
+            check(r.words(keys.length, 50).isEmpty() && r.words(-1, 50).isEmpty(), "Headword page boundaries");
             Thread.currentThread().interrupt();
             try { fails(() -> r.suggest("out", 6), MdictReader.Error.CANCELLED); }
+            finally { Thread.interrupted(); }
+            Thread.currentThread().interrupt();
+            try { fails(() -> r.words(0, 50), MdictReader.Error.CANCELLED); }
             finally { Thread.interrupted(); }
         }
     }

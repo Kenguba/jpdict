@@ -37,7 +37,7 @@ final class DictionaryRepository {
         final String id, name, packageId, installedVersion, fingerprint, indexState, status;
         final SourceType source;
         final StorageMode storage;
-        final boolean enabled;
+        final boolean enabled, lookupExpanded;
         final int order;
         final long installedAt, updatedAt, bytes;
         final List<Document> files;
@@ -47,6 +47,7 @@ final class DictionaryRepository {
             storage = StorageMode.valueOf(c.getString(5)); enabled = c.getInt(6) != 0;
             order = c.getInt(7); indexState = c.getString(8); status = c.getString(9);
             fingerprint = c.getString(10); installedAt = c.getLong(11); updatedAt = c.getLong(12);
+            lookupExpanded = c.getInt(c.getColumnIndexOrThrow("lookup_expanded")) != 0;
             JSONArray array = new JSONArray(c.getString(13));
             List<Document> documents = new ArrayList<>(); long total = 0;
             for (int i = 0; i < array.length(); i++) {
@@ -115,6 +116,10 @@ final class DictionaryRepository {
     }
     void enable(String id, boolean enabled) {
         ContentValues values = new ContentValues(); values.put("enabled", enabled ? 1 : 0);
+        database.getWritableDatabase().update("dictionaries", values, "dict_id=?", new String[]{id});
+    }
+    void setLookupExpanded(String id, boolean expanded) {
+        ContentValues values = new ContentValues(); values.put("lookup_expanded", expanded ? 1 : 0);
         database.getWritableDatabase().update("dictionaries", values, "dict_id=?", new String[]{id});
     }
     void reorder(List<String> ids) throws IOException {
@@ -282,6 +287,7 @@ final class DictionaryRepository {
                 v.put("source_type", SourceType.USER_IMPORT.name());
                 v.put("storage_mode", copy ? StorageMode.APP_PRIVATE.name() : StorageMode.SAF_EXTERNAL.name());
                 v.put("enabled", old == null || old.enabled ? 1 : 0); v.put("sort_order", old == null ? snapshot.size() : old.order);
+                v.put("lookup_expanded", old != null && old.lookupExpanded ? 1 : 0);
                 v.put("index_state", "已建立索引"); v.put("install_state", "INSTALLED");
                 v.put("fingerprint", fingerprint); v.put("installed_at", old == null ? now : old.installedAt);
                 v.put("updated_at", now); v.put("files", filesJson(files).toString());
@@ -341,6 +347,14 @@ final class DictionaryRepository {
             } catch (IOException unavailable) { /* A missing dictionary must not block typing. */ }
         }
         return new ArrayList<>(matches.values());
+    }
+    static final class WordPage {
+        final List<String> words;
+        final long total;
+        WordPage(List<String> words, long total) { this.words = words; this.total = total; }
+    }
+    WordPage words(Dictionary dictionary, long offset) throws IOException {
+        return readers.read(dictionary.mdx(), reader -> new WordPage(reader.words(offset, 50), reader.getMetadata().entries));
     }
     long modified(Document file) {
         if ("file".equals(file.uri.getScheme())) return new File(file.uri.getPath()).lastModified();
@@ -471,10 +485,12 @@ final class DictionaryRepository {
     }
 
     static final class Database extends SQLiteOpenHelper {
-        Database(Context context) { super(context, "dictionaries.db", null, 1); }
+        Database(Context context) { super(context, "dictionaries.db", null, 2); }
         public void onCreate(SQLiteDatabase db) {
-            db.execSQL("CREATE TABLE dictionaries (dict_id TEXT PRIMARY KEY, name TEXT NOT NULL, package_id TEXT NOT NULL, installed_version TEXT NOT NULL, source_type TEXT NOT NULL, storage_mode TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, index_state TEXT NOT NULL, install_state TEXT NOT NULL, fingerprint TEXT NOT NULL, installed_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, files TEXT NOT NULL)");
+            db.execSQL("CREATE TABLE dictionaries (dict_id TEXT PRIMARY KEY, name TEXT NOT NULL, package_id TEXT NOT NULL, installed_version TEXT NOT NULL, source_type TEXT NOT NULL, storage_mode TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, index_state TEXT NOT NULL, install_state TEXT NOT NULL, fingerprint TEXT NOT NULL, installed_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, files TEXT NOT NULL, lookup_expanded INTEGER NOT NULL DEFAULT 0)");
         }
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { throw new IllegalStateException("未实现数据库迁移：" + oldVersion + " → " + newVersion); }
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            if (oldVersion < 2) db.execSQL("ALTER TABLE dictionaries ADD COLUMN lookup_expanded INTEGER NOT NULL DEFAULT 0");
+        }
     }
 }
