@@ -162,11 +162,7 @@ public class FloatingService extends Service {
         }
     };
 
-    private final BroadcastReceiver bubbleAppearanceReceiver = new BroadcastReceiver() {
-        @Override public void onReceive(Context context, Intent intent) {
-            applyBubbleAppearance();
-        }
-    };
+    private final Runnable bubbleAppearanceListener = this::applyBubbleAppearance;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -176,9 +172,7 @@ public class FloatingService extends Service {
         IntentFilter filter = new IntentFilter(MainActivity.ScreenCaptureService.ACTION_RESULT);
         ContextCompat.registerReceiver(this, ocrReceiver, filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED);
-        ContextCompat.registerReceiver(this, bubbleAppearanceReceiver,
-                new IntentFilter(FloatingBubbleAppearance.ACTION_APPEARANCE_CHANGED),
-                ContextCompat.RECEIVER_NOT_EXPORTED);
+        FloatingBubbleAppearance.addChangeListener(bubbleAppearanceListener);
 
         if (Settings.canDrawOverlays(this)) showBubble();
         else stopSelf();
@@ -2097,9 +2091,7 @@ public class FloatingService extends Service {
         try {
             unregisterReceiver(ocrReceiver);
         } catch (Exception ignored) {}
-        try {
-            unregisterReceiver(bubbleAppearanceReceiver);
-        } catch (Exception ignored) {}
+        FloatingBubbleAppearance.removeChangeListener(bubbleAppearanceListener);
 
         hideTargetBox();
         removeSearchPanel();

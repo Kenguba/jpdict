@@ -1,7 +1,6 @@
 package com.yuen.jpdict;
 
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -27,8 +26,6 @@ import org.json.JSONObject;
 
 /** Appearance facade shared by the editor, history, real bubble and its proxy. */
 public final class FloatingBubbleAppearance {
-    public static final String ACTION_APPEARANCE_CHANGED =
-            "com.yuen.jpdict.action.BUBBLE_APPEARANCE_CHANGED";
     public static final int STYLE_DEFAULT = 0;
     public static final int STYLE_SEARCH = 1;
     public static final int STYLE_CUSTOM = 2;
@@ -44,6 +41,7 @@ public final class FloatingBubbleAppearance {
     public static final int MAX_SAVED_STYLES = 10;
     private static Object previewOwner;
     private static Config previewConfig;
+    private static final Set<Runnable> changeListeners = new HashSet<>();
     private static WeakReference<Bitmap> imageCache = new WeakReference<>(null);
     private static String cachedImagePath;
     private static long cachedImageModified;
@@ -137,18 +135,24 @@ public final class FloatingBubbleAppearance {
 
     static boolean isPreviewing() { return previewConfig != null; }
 
+    // Appearance drafts and the Service live in the same process on the UI thread.
+    // Notify directly so an OEM-delayed broadcast cannot leave a mounted window stale.
+    static void addChangeListener(Runnable listener) { changeListeners.add(listener); }
+
+    static void removeChangeListener(Runnable listener) { changeListeners.remove(listener); }
+
     public static void preview(Context context, Object owner, Config config) {
         previewOwner = owner;
         if (config.matches(previewConfig)) return;
         previewConfig = config;
-        notifyChanged(context);
+        notifyChanged();
     }
 
     public static void endPreview(Context context, Object owner) {
         if (previewOwner != owner) return;
         previewOwner = null;
         previewConfig = null;
-        notifyChanged(context);
+        notifyChanged();
     }
 
     public static List<Config> savedStyles(Context context) {
@@ -218,14 +222,13 @@ public final class FloatingBubbleAppearance {
                 .putString("saved_styles", entries.toString()).commit();
         if (saved) {
             cleanupImages(context, config);
-            notifyChanged(context);
+            notifyChanged();
         }
         return saved;
     }
 
-    private static void notifyChanged(Context context) {
-        context.sendBroadcast(new Intent(ACTION_APPEARANCE_CHANGED)
-                .setPackage(context.getPackageName()));
+    private static void notifyChanged() {
+        for (Runnable listener : new ArrayList<>(changeListeners)) listener.run();
     }
 
     public static int sizePx(Context context) { return current(context).sizePx(context); }
@@ -243,19 +246,11 @@ public final class FloatingBubbleAppearance {
         visual.setElevation(dp(context, 12));
         visual.setClipToOutline(config.style == STYLE_IMAGE);
         visual.setContentDescription("悬浮搜索按钮");
-        if (config.style == STYLE_CUSTOM || config.color != DEFAULT_COLOR) {
-            GradientDrawable background = new GradientDrawable();
-            background.setColor(config.color);
-            background.setCornerRadius(config.sizePx(context) * config.roundnessPercent / 200f);
-            background.setStroke(dp(context, 1), 0x55ffffff);
-            visual.setBackground(background);
-        } else {
-            GradientDrawable background = (GradientDrawable) context.getDrawable(
-                    R.drawable.floating_bubble_bg).mutate();
-            background.setShape(GradientDrawable.RECTANGLE);
-            background.setCornerRadius(config.sizePx(context) * config.roundnessPercent / 200f);
-            visual.setBackground(background);
-        }
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(config.color);
+        background.setCornerRadius(config.sizePx(context) * config.roundnessPercent / 200f);
+        background.setStroke(dp(context, 1), 0x55ffffff);
+        visual.setBackground(background);
         if (config.style == STYLE_IMAGE) {
             Bitmap image = loadImage(context, config);
             if (image != null) {
