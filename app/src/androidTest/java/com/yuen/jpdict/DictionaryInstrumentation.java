@@ -16,14 +16,19 @@ import java.util.concurrent.atomic.AtomicReference;
 @android.annotation.SuppressLint("NewApi")
 public final class DictionaryInstrumentation extends Instrumentation {
     private int assertions;
+    private String ocrMode;
     private void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
     private static void write(File file, byte[] bytes) throws IOException {
         try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
     }
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); ocrMode = arguments == null ? null : arguments.getString("ocr"); start(); }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (ocrMode != null) {
+                result.putString("stream", OcrValidation.run(this, "fonts".equals(ocrMode)));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
             integration();
             result.putString("stream", "Dictionary integration: " + assertions + " assertions passed\n");
             finish(android.app.Activity.RESULT_OK, result);

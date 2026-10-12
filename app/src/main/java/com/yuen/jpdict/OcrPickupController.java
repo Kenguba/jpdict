@@ -12,7 +12,7 @@ import java.util.*;
 final class OcrPickupController implements AutoCloseable {
     interface Host {
         Rect position();
-        void move(int x, int y);
+        Rect move(int x, int y);
         void save();
         void tap();
         void authorize();
@@ -39,11 +39,23 @@ final class OcrPickupController implements AutoCloseable {
             }
             String error = intent.getStringExtra("error");
             if (error != null) { fail(error); return; }
+            if (intent.getBooleanExtra("refined", false)) {
+                String text = intent.getStringExtra("text");
+                cancel();
+                if (text != null && !text.trim().isEmpty()) host.lookup(text);
+                else Toast.makeText(context, "准星附近没有文字，请对准文字重试", Toast.LENGTH_SHORT).show();
+                return;
+            }
             String[] words = intent.getStringArrayExtra("words");
             int[] boxes = intent.getIntArrayExtra("boxes");
             if (words == null || boxes == null || boxes.length != words.length * 4) { fail("OCR 结果无效，请重试"); return; }
             waiting = false; main.removeCallbacks(timeout);
-            for (int i = 0; i < words.length; i++) regions.add(new MultilingualOcrRecognizer.Region(words[i], new Rect(boxes[i*4], boxes[i*4+1], boxes[i*4+2], boxes[i*4+3])));
+            float[] quality = intent.getFloatArrayExtra("quality");
+            for (int i = 0; i < words.length; i++) {
+                MultilingualOcrRecognizer.Region region = new MultilingualOcrRecognizer.Region(words[i], new Rect(boxes[i*4], boxes[i*4+1], boxes[i*4+2], boxes[i*4+3]));
+                if (quality != null && quality.length == words.length) region.quality = quality[i];
+                regions.add(region);
+            }
             select();
             if (released) finish(); else showOverlay();
         }
@@ -85,44 +97,47 @@ final class OcrPickupController implements AutoCloseable {
                     case MotionEvent.ACTION_MOVE:
                         int dx = Math.round(event.getRawX() - downX), dy = Math.round(event.getRawY() - downY);
                         if (Math.abs(dx) > slop || Math.abs(dy) > slop) { moved = true; main.removeCallbacks(hold); }
-                        if (moved) host.move(start.left + dx, start.top + dy);
-                        if (armed) { updateAim(); select(); }
+                        if (armed) {
+                            if (moved) updateAim(host.move(start.left + dx, start.top + dy));
+                            else updateAim();
+                            select();
+                        }
                         return true;
                     case MotionEvent.ACTION_UP:
                         main.removeCallbacks(hold); pressed = null;
-                        if (moved) host.save();
+                        if (armed && moved) host.save();
                         if (armed) { released = true; if (!waiting) finish(); }
                         else if (!held && !moved) host.tap();
+                        else if (!held) {
+                            String direction = swipeDirection(event.getRawX()-downX, event.getRawY()-downY, 32*density);
+                            if (direction != null) Toast.makeText(context, direction, Toast.LENGTH_SHORT).show();
+                        }
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         main.removeCallbacks(hold); pressed = null;
-                        if (moved) { host.move(start.left, start.top); }
+                        if (armed && moved) { host.move(start.left, start.top); }
                         cancel(); return true;
                     default: return true;
                 }
             }
         };
     }
+    static String swipeDirection(float dx, float dy, float threshold) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return null;
+        return Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? "向上滑动" : "向下滑动") : (dx < 0 ? "向左滑动" : "向右滑动");
+    }
     private void updateAim() {
-        Rect bubble = host.position(); aimX = bubble.exactCenterX(); aimY = Math.max(0, bubble.top - 12 * density);
+        updateAim(host.position());
+    }
+    private void updateAim(Rect bubble) {
+        aimX = bubble.exactCenterX(); aimY = Math.max(0, bubble.top - 12 * density);
     }
     private void select() {
         selected = regionAt(regions, aimX, aimY, 18*density);
         if (overlay != null) overlay.invalidate();
     }
     static MultilingualOcrRecognizer.Region regionAt(List<MultilingualOcrRecognizer.Region> regions, float x, float y, float tolerance) {
-        MultilingualOcrRecognizer.Region selected = null; double best = Double.MAX_VALUE;
-        for (MultilingualOcrRecognizer.Region region : regions) {
-            Rect b = region.bounds;
-            double dx = Math.max(Math.max(b.left - x, x - b.right), 0);
-            double dy = Math.max(Math.max(b.top - y, y - b.bottom), 0);
-            double distance = dx*dx + dy*dy;
-            // Never select distant text just because OCR found something elsewhere.
-            if (distance > tolerance*tolerance) continue;
-            double rank = distance + (double)b.width()*b.height()*0.0001;
-            if (rank < best) { best = rank; selected = region; }
-        }
-        return selected;
+        return MultilingualOcrRecognizer.regionAt(regions, x, y, tolerance);
     }
     private void showOverlay() {
         if (overlay != null || !armed) return;
@@ -138,12 +153,20 @@ final class OcrPickupController implements AutoCloseable {
         wm.addView(overlay, lp);
     }
     private void finish() {
-        String text = selected == null ? null : selected.text;
-        cancel();
-        if (text != null) host.lookup(text); else Toast.makeText(context, "准星附近没有文字，请对准文字重试", Toast.LENGTH_SHORT).show();
+        waiting = true;
+        Rect target = selected == null ? new Rect(Math.round(aimX-140*density), Math.round(aimY-36*density), Math.round(aimX+140*density), Math.round(aimY+36*density)) : selected.bounds;
+        Intent request = new Intent(context, MainActivity.ScreenCaptureService.class)
+                .setAction(MainActivity.ScreenCaptureService.ACT_OCR_REFINE).putExtra("session", session)
+                .putExtra("target", target).putExtra("aim_x", aimX).putExtra("aim_y", aimY).putExtra("tolerance", 18*density);
+        if (selected != null) request.putExtra("seed", selected.text).putExtra("quality", selected.quality);
+        context.startService(request);
+        main.removeCallbacks(timeout); main.postDelayed(timeout, 10000);
+        if (overlay != null) overlay.invalidate();
     }
     private void fail(String error) { cancel(); Toast.makeText(context, error, Toast.LENGTH_LONG).show(); }
     void cancel() {
+        if (armed && MainActivity.ScreenCaptureService.READY) context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
+                .setAction(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session", session));
         armed = waiting = released = false; session++;
         main.removeCallbacks(timeout); regions.clear(); selected = null;
         if (overlay != null) { wm.removeView(overlay); overlay = null; }
@@ -161,7 +184,7 @@ final class OcrPickupController implements AutoCloseable {
             }
             paint.setColor(selected == null ? 0xff168af2 : 0xff00a777);
             canvas.drawCircle(aimX, aimY, 3*density, paint);
-            String tip = waiting ? "识别中 · 继续按住并拖动" : selected == null ? "对准准星上方文字 · 松手取词" : "已选中文字 · 松手查词";
+            String tip = waiting ? (released ? "正在精读所选文字…" : "识别中 · 继续按住并拖动") : selected == null ? "移动准星对准文字 · 松手取词" : "已选中文字 · 松手查词";
             paint.setTextSize(12*density);
             float width = paint.measureText(tip) + 24*density;
             float left = Math.max(8*density, Math.min(aimX-width/2, getWidth()-width-8*density));

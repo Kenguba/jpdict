@@ -2,8 +2,10 @@ package com.yuen.jpdict;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.TypedValue;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
@@ -19,6 +21,7 @@ final class DictionaryBrowseDialog {
     private final EditText query;
     private final Button previous, next;
     private final TextView position;
+    private final ColorStateList positionColors;
     private final AlertDialog dialog;
     private DictionaryScheduler.Ticket ticket;
     private DictionaryEntryView entry;
@@ -29,15 +32,16 @@ final class DictionaryBrowseDialog {
 
     DictionaryBrowseDialog(Context context, DictionaryRepository repository, DictionaryRepository.Dictionary dictionary) {
         this.context = context; this.repository = repository; this.dictionary = dictionary;
-        LinearLayout root = new LinearLayout(context); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(12), 0, dp(12), 0);
+        LinearLayout root = new LinearLayout(context); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(16), dp(8), dp(16), dp(8));
         query = new EditText(context); query.setSingleLine(); query.setHint("输入词条查询本词库"); query.setTextSize(14); query.setImeOptions(EditorInfo.IME_ACTION_SEARCH); root.addView(query);
         ScrollView scroll = new ScrollView(context); scroll.setVerticalScrollBarEnabled(false);
         results = new LinearLayout(context); results.setOrientation(LinearLayout.VERTICAL); scroll.addView(results); root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(300)));
         LinearLayout navigation = new LinearLayout(context); root.addView(navigation);
         previous = new Button(context); previous.setText("上一页"); next = new Button(context); next.setText("下一页");
         position = new TextView(context); position.setGravity(android.view.Gravity.CENTER); position.setTextSize(11);
+        positionColors = position.getTextColors();
         navigation.addView(previous, new LinearLayout.LayoutParams(-2, dp(44))); navigation.addView(position, new LinearLayout.LayoutParams(0, dp(44), 1)); navigation.addView(next, new LinearLayout.LayoutParams(-2, dp(44)));
-        dialog = new AlertDialog.Builder(context).setTitle(dictionary.name).setView(root).setPositiveButton("返回词表", (d, which) -> {}).create();
+        dialog = new AlertDialog.Builder(context).setTitle(dictionary.name).setView(root).create();
         previous.setOnClickListener(v -> { if (!pages.isEmpty()) { offset = pages.remove(pages.size() - 1); loadPage(); } });
         next.setOnClickListener(v -> { pages.add(offset); offset = (Long)next.getTag(); loadPage(); });
         query.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_SEARCH) { lookup(query.getText().toString()); return true; } return false; });
@@ -45,16 +49,16 @@ final class DictionaryBrowseDialog {
     }
     void show() {
         dialog.show();
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> loadPage());
         loadPage();
     }
     private void reset() {
         if (ticket != null) ticket.cancel(); clearEntry(); results.removeAllViews();
         previous.setEnabled(false); next.setEnabled(false);
+        position.setOnClickListener(null); position.setClickable(false); position.setFocusable(false); position.setTextColor(positionColors);
         TextView loading = new TextView(context); loading.setText("正在读取词库…"); results.addView(loading);
     }
     private void loadPage() {
-        reset(); int request = ++generation;
+        reset(); position.setText("正在读取…"); int request = ++generation;
         ticket = repository.queries.submit(1, () -> {
             try {
                 DictionaryRepository.WordPage page = repository.words(dictionary, offset);
@@ -74,6 +78,9 @@ final class DictionaryBrowseDialog {
     private void lookup(String word) {
         ((InputMethodManager)context.getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(), 0);
         reset(); int request = ++generation;
+        position.setText("返回列表");
+        TypedValue accent = new TypedValue(); dialog.getContext().getTheme().resolveAttribute(android.R.attr.colorAccent, accent, true);
+        position.setTextColor(accent.data); position.setFocusable(true); position.setOnClickListener(v -> loadPage());
         ticket = repository.queries.submit(0, () -> {
             try {
                 List<String> html = repository.lookup(dictionary, word);
@@ -81,7 +88,7 @@ final class DictionaryBrowseDialog {
                 if (characters > 512 * 1024) throw new java.io.IOException("词条 HTML 超过 512 KB 显示限制");
                 main.post(() -> {
                     if (closed || request != generation) return;
-                    results.removeAllViews(); position.setText("本词库释义");
+                    results.removeAllViews();
                     if (html.isEmpty()) { TextView empty = new TextView(context); empty.setText("该词库未收录此词条"); results.addView(empty); }
                     else { entry = new DictionaryEntryView(context, repository, dictionary, html, this::lookup); results.addView(entry, new LinearLayout.LayoutParams(-1, 1)); }
                 });

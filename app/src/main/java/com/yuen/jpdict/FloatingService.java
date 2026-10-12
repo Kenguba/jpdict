@@ -138,6 +138,11 @@ public class FloatingService extends Service {
 
     private final BroadcastReceiver ocrReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
+            if (MainActivity.OcrActivity.ACTION_FINISHED.equals(intent.getAction()) || MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(intent.getAction())) {
+                projectionRequestInFlight = false;
+                if (MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(intent.getAction()) && pickup != null) pickup.cancel();
+                return;
+            }
             if (!MainActivity.ScreenCaptureService.ACTION_RESULT.equals(intent.getAction())) return;
 
             String text = intent.getStringExtra("text");
@@ -170,6 +175,8 @@ public class FloatingService extends Service {
         startAsForeground();
 
         IntentFilter filter = new IntentFilter(MainActivity.ScreenCaptureService.ACTION_RESULT);
+        filter.addAction(MainActivity.OcrActivity.ACTION_FINISHED);
+        filter.addAction(MainActivity.ScreenCaptureService.ACTION_STOPPED);
         ContextCompat.registerReceiver(this, ocrReceiver, filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED);
         FloatingBubbleAppearance.addChangeListener(bubbleAppearanceListener);
@@ -424,21 +431,24 @@ public class FloatingService extends Service {
         bubbleLp.y = sp.getInt("y", Math.max(dp(120), dm.heightPixels / 2));
 
         if (pickup == null) pickup = new OcrPickupController(this, new OcrPickupController.Host() {
+            private int screenOffsetX, screenOffsetY;
             @Override public Rect position() {
                 View owner = bubbleTopProxy != null ? bubbleTopProxy : bubble;
                 int[] location = new int[2]; owner.getLocationOnScreen(location);
+                screenOffsetX = location[0] - bubbleLp.x; screenOffsetY = location[1] - bubbleLp.y;
                 return new Rect(location[0], location[1], location[0] + bubbleLp.width, location[1] + bubbleLp.height);
             }
-            @Override public void move(int x, int y) {
-                Rect current = position();
+            @Override public Rect move(int x, int y) {
                 DisplayMetrics screen = new DisplayMetrics(); wm.getDefaultDisplay().getRealMetrics(screen);
-                bubbleLp.x = Math.max(0, Math.min(x - (current.left - bubbleLp.x), screen.widthPixels - bubbleLp.width));
-                bubbleLp.y = Math.max(0, Math.min(y - (current.top - bubbleLp.y), screen.heightPixels - bubbleLp.height));
+                bubbleLp.x = Math.max(0, Math.min(x - screenOffsetX, screen.widthPixels - bubbleLp.width));
+                bubbleLp.y = Math.max(0, Math.min(y - screenOffsetY, screen.heightPixels - bubbleLp.height));
                 wm.updateViewLayout(bubble, bubbleLp);
                 if (bubbleTopProxy != null && bubbleTopProxyLp != null) {
                     bubbleTopProxyLp.x = bubbleLp.x; bubbleTopProxyLp.y = bubbleLp.y;
                     wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp);
                 }
+                int left = bubbleLp.x + screenOffsetX, top = bubbleLp.y + screenOffsetY;
+                return new Rect(left, top, left + bubbleLp.width, top + bubbleLp.height);
             }
             @Override public void save() {
                 getSharedPreferences("float_pos", MODE_PRIVATE).edit().putInt("x", bubbleLp.x).putInt("y", bubbleLp.y).apply();

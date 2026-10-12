@@ -2,11 +2,15 @@ package com.yuen.jpdict;
 
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.content.Context;
 import java.util.ArrayList;
 import java.util.List;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
+import com.google.android.gms.common.moduleinstall.ModuleInstall;
+import com.google.android.gms.common.moduleinstall.ModuleInstallRequest;
+import com.google.mlkit.common.MlKitException;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
@@ -62,12 +66,63 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         korean = TextRecognition.getClient(
                 new KoreanTextRecognizerOptions.Builder().build());
     }
+    void prepareModels(Context context) {
+        // An accepted request is not proof of installation; process() still
+        // reports UNAVAILABLE until Play services finishes each model download.
+        ModuleInstall.getClient(context).installModules(ModuleInstallRequest.newBuilder()
+                .addApi(latin).addApi(chinese).addApi(japanese).addApi(korean).build());
+    }
 
     void recognize(Bitmap bitmap, Callback callback) {
         process(bitmap, callback, null);
     }
     void recognizeRegions(Bitmap bitmap, RegionsCallback callback) {
         process(bitmap, null, callback);
+    }
+    void recognizeSelection(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance, Callback callback) {
+        List<Region> found = new ArrayList<>();
+        if (seed != null) found.add(seed);
+        refineVariant(screen, target, seed, x, y, tolerance, false, found, callback);
+    }
+    private void refineVariant(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
+            boolean enhanced, List<Region> found, Callback callback) {
+        final OcrImagePreparation prepared;
+        try { prepared = OcrImagePreparation.prepare(screen, target, enhanced, seed == null ? 12 : seed.bounds.height()); }
+        catch (RuntimeException error) { completeSelection(found, seed, x, y, tolerance, callback, error); return; }
+        recognizeRegions(prepared.image, new RegionsCallback() {
+            public void onSuccess(List<Region> regions) {
+                for (Region region : regions) {
+                    Region mapped = new Region(region.text, prepared.toScreen(region.bounds));
+                    mapped.quality = region.quality; merge(found, mapped);
+                }
+                next(null);
+            }
+            public void onFailure(Exception error) { next(error); }
+            private void next(Exception error) {
+                prepared.close();
+                if (!enhanced) refineVariant(screen, target, seed, x, y, tolerance, true, found, callback);
+                else completeSelection(found, seed, x, y, tolerance, callback, error);
+            }
+        });
+    }
+    private static void completeSelection(List<Region> found, Region seed, float x, float y, float tolerance, Callback callback, Exception error) {
+        Region best = regionAt(found, x, y, tolerance);
+        if (seed != null && best != null && !best.text.equals(seed.text)
+                && (!preservesSelection(seed.bounds, best.bounds) || best.quality < seed.quality+0.05f)) best = seed;
+        if (best != null) callback.onSuccess(best.text);
+        else callback.onFailure(error != null ? error : new IllegalStateException("准星附近没有识别到文字"));
+    }
+    static Region regionAt(List<Region> regions, float x, float y, float tolerance) {
+        Region selected = null; double best = Double.MAX_VALUE;
+        for (Region region : regions) {
+            Rect b = region.bounds;
+            double dx = Math.max(Math.max(b.left-x, x-b.right), 0), dy = Math.max(Math.max(b.top-y, y-b.bottom), 0);
+            double distance = dx*dx+dy*dy;
+            if (distance > tolerance*tolerance) continue;
+            double rank = distance+(double)b.width()*b.height()*0.0001;
+            if (rank < best) { best = rank; selected = region; }
+        }
+        return selected;
     }
     private void process(Bitmap bitmap, Callback callback, RegionsCallback regionsCallback) {
         synchronized (lifecycleLock) {
@@ -98,7 +153,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                                 if (!found.isEmpty()) regionsCallback.onSuccess(found);
                                 else {
                                     Exception error = firstError(latinTask, chineseTask, japaneseTask, koreanTask);
-                                    regionsCallback.onFailure(error != null ? error : new IllegalStateException("没有识别到文字"));
+                                    fail(null, regionsCallback, error != null ? error : new IllegalStateException("没有识别到文字"));
                                 }
                                 return;
                             }
@@ -163,6 +218,8 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         }
     }
     private static void fail(Callback text, RegionsCallback regions, Exception error) {
+        if (error instanceof MlKitException && ((MlKitException)error).getErrorCode() == MlKitException.UNAVAILABLE)
+            error = new IllegalStateException("OCR 识别模型尚未就绪，请保持联网让 Google Play 服务完成中 / 日 / 英模型下载后重试", error);
         if (regions != null) regions.onFailure(error); else text.onFailure(error);
     }
     private static void addRegions(List<Region> regions, Task<Text> task, Script script) {
@@ -177,20 +234,32 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                 int letters = 0;
                 for (int i = 0; i < text.length(); i++) if (Character.isLetterOrDigit(text.charAt(i))) letters++;
                 candidate.quality = (float)score(text, script) / Math.max(1, letters) + element.getConfidence();
-                int replace = -1;
-                for (int i = 0; i < regions.size(); i++) {
-                    Region old = regions.get(i);
-                    if (!Rect.intersects(bounds, old.bounds)) continue;
-                    Rect overlap = new Rect(bounds); overlap.intersect(old.bounds);
-                    long area = (long)overlap.width()*overlap.height();
-                    long union = (long)bounds.width()*bounds.height()+(long)old.bounds.width()*old.bounds.height()-area;
-                    if (area >= union*0.55) { replace = i; break; }
-                }
-                if (replace >= 0) {
-                    if (candidate.quality > regions.get(replace).quality) regions.set(replace, candidate);
-                } else regions.add(candidate);
+                merge(regions, candidate);
             }
         }
+    }
+    private static boolean overlaps(Rect first, Rect second) {
+        if (!Rect.intersects(first, second)) return false;
+        Rect overlap = new Rect(first); overlap.intersect(second);
+        long area = (long)overlap.width()*overlap.height();
+        long union = (long)first.width()*first.height()+(long)second.width()*second.height()-area;
+        return area >= union*0.55;
+    }
+    private static boolean preservesSelection(Rect original, Rect refined) {
+        if (!overlaps(original, refined)) return false;
+        Rect intersection = new Rect(original); intersection.intersect(refined);
+        return (long)intersection.width()*intersection.height() >= (long)original.width()*original.height()*0.85;
+    }
+    private static void merge(List<Region> regions, Region candidate) {
+        for (int i = 0; i < regions.size(); i++) {
+            Region old = regions.get(i);
+            if (!overlaps(old.bounds, candidate.bounds)) continue;
+            if (old.text.equals(candidate.text)) {
+                old.quality = Math.max(old.quality, candidate.quality)+0.02f;
+            } else if (candidate.quality > old.quality) regions.set(i, candidate);
+            return;
+        }
+        regions.add(candidate);
     }
 
     @Override public void close() {
@@ -251,7 +320,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                 score += script == Script.KOREAN ? 6 : 1;
             } else if (isHan(c)) {
                 score += script == Script.CHINESE ? 5
-                        : script == Script.JAPANESE ? 4
+                        : script == Script.JAPANESE ? 5
                         : 1;
             } else if (Character.isDigit(c)) {
                 score += 2;

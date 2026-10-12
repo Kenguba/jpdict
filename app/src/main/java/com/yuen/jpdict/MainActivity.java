@@ -312,6 +312,7 @@ public class MainActivity extends Activity {
     }
 
     public static class OcrActivity extends Activity {
+        static final String ACTION_FINISHED="com.yuen.jpdict.OCR_PERMISSION_FINISHED";
         static final int REQ_CAPTURE=7001, REQ_NOTIFY=7002;
         @Override public void onCreate(Bundle b){ super.onCreate(b); ask(); }
         void ask(){
@@ -358,22 +359,31 @@ public class MainActivity extends Activity {
             }
             finish();
         }
+        @Override protected void onDestroy(){
+            if(isFinishing() && !isChangingConfigurations())sendBroadcast(new Intent(ACTION_FINISHED).setPackage(getPackageName()));
+            super.onDestroy();
+        }
     }
 
     public static class ScreenCaptureService extends Service {
         static final String CH="ocr_capture", ACT_OCR="ocr_now", ACT_STOP="ocr_stop";
         public static final String ACT_OCR_REGION="ocr_region";
         public static final String ACT_OCR_PREVIEW="ocr_preview";
+        public static final String ACT_OCR_REFINE="ocr_refine", ACT_OCR_CANCEL="ocr_cancel";
         public static final String ACTION_PREVIEW="com.yuen.jpdict.OCR_PREVIEW";
         public static final String ACTION_PREVIEW_FRAME="com.yuen.jpdict.OCR_PREVIEW_FRAME";
         public static final String ACTION_RESULT="com.yuen.jpdict.OCR_RESULT";
+        public static final String ACTION_STOPPED="com.yuen.jpdict.OCR_STOPPED";
         public static volatile boolean READY=false;
         MediaProjection projection; ImageReader reader; VirtualDisplay vd; int w,h,dpi;
         MultilingualOcrRecognizer ocrRecognizer;
         boolean previewInFlight;
+        long previewSession;
+        OcrPreviewFrame previewFrame;
         @Override public void onCreate(){
             super.onCreate();
             ocrRecognizer=new MultilingualOcrRecognizer();
+            ocrRecognizer.prepareModels(this);
             ensureChannel();
         }
         @Override public int onStartCommand(Intent in,int flags,int id){
@@ -383,6 +393,13 @@ public class MainActivity extends Activity {
             if(ACT_OCR.equals(a)){ captureOnce(null); return START_STICKY; }
             if(ACT_OCR_REGION.equals(a)){ captureOnce(in); return START_STICKY; }
             if(ACT_OCR_PREVIEW.equals(a)){ captureOnce(in); return START_STICKY; }
+            if(ACT_OCR_REFINE.equals(a)){ refinePreview(in); return START_STICKY; }
+            if(ACT_OCR_CANCEL.equals(a)){
+                long canceled=in.getLongExtra("session",-1);
+                if(previewSession==canceled)previewSession=0;
+                if(previewFrame!=null && previewFrame.session==canceled){previewFrame.close();previewFrame=null;}
+                return START_NOT_STICKY;
+            }
             Intent data=(Intent)in.getParcelableExtra("data"); int code=in.getIntExtra("code",Activity.RESULT_CANCELED);
             if(data!=null){
                 Notification n=notification("录屏 OCR 正在启动","准备屏幕捕获…");
@@ -407,7 +424,7 @@ public class MainActivity extends Activity {
             reader=ImageReader.newInstance(w,h,PixelFormat.RGBA_8888,2);
             vd=projection.createVirtualDisplay("jp-ocr",w,h,dpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,null);
             READY=true;
-            Notification n=notification("录屏 OCR 已开启","可拖动悬浮球取词，或点通知识别整屏");
+            Notification n=notification("录屏 OCR 已开启","长按 700ms 震动后拖动取词，或点通知识别整屏");
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(42,n);
         }
         void resizeCapture(int width,int height){
@@ -454,8 +471,9 @@ public class MainActivity extends Activity {
             final int rw=region?request.getIntExtra("w",w):w;
             final int rh=region?request.getIntExtra("h",h):h;
 
-            if(preview)previewInFlight=true;
+            if(preview){previewInFlight=true;previewSession=session;}
             new Handler(Looper.getMainLooper()).postDelayed(()->{
+                if(preview && session!=previewSession){previewInFlight=false;return;}
                 if(reader==null) { if(preview) sendPreview(session,null,"录屏会话已结束"); return; }
                 Image image=reader.acquireLatestImage();
                 if(image==null){
@@ -499,14 +517,45 @@ public class MainActivity extends Activity {
         }
         void recognizePreview(Bitmap bitmap,long session){
             if(ocrRecognizer==null){bitmap.recycle();sendPreview(session,null,"OCR 识别器尚未就绪");return;}
+            if(previewFrame!=null)previewFrame.close();
+            OcrPreviewFrame frame=new OcrPreviewFrame(session,bitmap);previewFrame=frame;
+            frame.borrow(session);
             ocrRecognizer.recognizeRegions(bitmap,new MultilingualOcrRecognizer.RegionsCallback(){
                 public void onSuccess(java.util.List<MultilingualOcrRecognizer.Region> regions){
-                    try{sendPreview(session,regions,null);}finally{bitmap.recycle();}
+                    try{sendPreview(session,regions,null);}finally{frame.release();}
                 }
                 public void onFailure(Exception error){
-                    try{sendPreview(session,null,"OCR 失败："+error.getMessage());}finally{bitmap.recycle();}
+                    // A missed full-screen detection can still succeed on the enlarged local crop.
+                    try{sendPreview(session,java.util.Collections.emptyList(),null);}finally{frame.release();}
                 }
             });
+        }
+        void refinePreview(Intent request){
+            long session=request.getLongExtra("session",-1);
+            android.graphics.Rect target=request.getParcelableExtra("target");
+            if(previewInFlight || session!=previewSession || target==null || target.isEmpty()){
+                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("refined",true).putExtra("error","取词会话已失效，请重新长按"));return;
+            }
+            OcrPreviewFrame frame=previewFrame;
+            Bitmap bitmap=frame==null?null:frame.borrow(session);
+            if(bitmap==null || ocrRecognizer==null){
+                if(bitmap!=null)frame.release();
+                sendRefined(session,null,"屏幕共享或截图已失效，请重新长按取词");return;
+            }
+            previewInFlight=true;
+            String seedText=request.getStringExtra("seed");
+            MultilingualOcrRecognizer.Region seed=seedText==null?null:new MultilingualOcrRecognizer.Region(seedText,target);
+            if(seed!=null)seed.quality=request.getFloatExtra("quality",0);
+            ocrRecognizer.recognizeSelection(bitmap,target,seed,request.getFloatExtra("aim_x",0),request.getFloatExtra("aim_y",0),request.getFloatExtra("tolerance",0),new MultilingualOcrRecognizer.Callback(){
+                public void onSuccess(String text){try{sendRefined(session,text,null);}finally{frame.close();frame.release();}}
+                public void onFailure(Exception error){try{sendRefined(session,null,error.getMessage());}finally{frame.close();frame.release();}}
+            });
+        }
+        void sendRefined(long session,String text,String error){
+            previewInFlight=false;
+            Intent out=new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("refined",true);
+            if(text!=null)out.putExtra("text",text);if(error!=null)out.putExtra("error",error);
+            sendBroadcast(out);
         }
         void sendPreview(long session,java.util.List<MultilingualOcrRecognizer.Region> regions,String error){
             previewInFlight=false;
@@ -515,12 +564,13 @@ public class MainActivity extends Activity {
                 int chars=0;for(MultilingualOcrRecognizer.Region region:regions)chars+=region.text.length();
                 if(regions.size()>4096 || chars>65536){error="屏幕文字过多，请缩放页面后重试";}
                 else{
-                    String[] words=new String[regions.size()];int[] boxes=new int[regions.size()*4];
+                    String[] words=new String[regions.size()];int[] boxes=new int[regions.size()*4];float[] quality=new float[regions.size()];
                     for(int i=0;i<regions.size();i++){
                         MultilingualOcrRecognizer.Region region=regions.get(i);words[i]=region.text;
+                        quality[i]=region.quality;
                         boxes[i*4]=region.bounds.left;boxes[i*4+1]=region.bounds.top;boxes[i*4+2]=region.bounds.right;boxes[i*4+3]=region.bounds.bottom;
                     }
-                    out.putExtra("words",words).putExtra("boxes",boxes);
+                    out.putExtra("words",words).putExtra("boxes",boxes).putExtra("quality",quality);
                 }
             }
             if(error!=null)out.putExtra("error",error);
@@ -599,10 +649,14 @@ public class MainActivity extends Activity {
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(43,n);
         }
         void stopCapture(){
+            boolean wasReady=READY;
+            previewSession=0;
+            if(previewFrame!=null){previewFrame.close();previewFrame=null;}
             VirtualDisplay v=vd; vd=null;
             ImageReader r=reader; reader=null;
             MediaProjection p=projection; projection=null;
             READY=false;
+            if(wasReady)sendBroadcast(new Intent(ACTION_STOPPED).setPackage(getPackageName()));
             if(v!=null) v.release();
             if(r!=null) r.close();
             if(p!=null) try{ p.stop(); }catch(Exception ignored){}
