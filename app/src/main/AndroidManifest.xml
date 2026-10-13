@@ -79,6 +79,13 @@
             android:theme="@style/Theme.LookupLinkBridge"/>
 
         <activity
+            android:name=".BubbleSvgPickerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.LookupLinkBridge"/>
+
+        <activity
             android:name=".SearchSettingsActivity"
             android:exported="false"
             android:excludeFromRecents="true"
