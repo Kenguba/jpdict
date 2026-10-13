@@ -136,7 +136,8 @@ public final class BubbleImagePickerActivity extends Activity {
                         Math.max(1, Math.round(bitmap.getHeight() * 256f / max)), true);
                 if (scaled != bitmap) { bitmap.recycle(); bitmap = scaled; }
             }
-            temporary = File.createTempFile("floating-bubble-image-", ".png", context.getFilesDir());
+            // Cleanup only considers published image names; never expose a partial copy.
+            temporary = File.createTempFile("bubble-import-", ".tmp", context.getCacheDir());
             try (FileOutputStream output = new FileOutputStream(temporary)) {
                 if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
                     throw new IOException("Image could not be saved");
@@ -144,9 +145,11 @@ public final class BubbleImagePickerActivity extends Activity {
                 output.flush();
                 output.getFD().sync();
             }
-            String name = temporary.getName();
+            File published = new File(context.getFilesDir(),
+                    "floating-bubble-image-" + java.util.UUID.randomUUID() + ".png");
+            if (!temporary.renameTo(published)) throw new IOException("Image could not be published");
             temporary = null; // Each immutable copy belongs to its draft or saved style.
-            return name;
+            return published.getName();
         } finally {
             bitmap.recycle();
             if (temporary != null && temporary.exists()) temporary.delete();
