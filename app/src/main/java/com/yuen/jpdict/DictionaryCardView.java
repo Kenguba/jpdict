@@ -26,7 +26,9 @@ final class DictionaryCardView extends LinearLayout {
     private final LinearLayout details;
     private final LinearLayout header;
     private final Switch enabled;
-    private Switch expanded;
+    private LinearLayout expanded;
+    private SearchIconView expandedIcon;
+    private TextView expandedLabel;
     private final String fileCount;
     private boolean lookupChecked;
     private final Actions actions;
@@ -95,24 +97,40 @@ final class DictionaryCardView extends LinearLayout {
         command(buttons, "浏览词库", SearchIconView.Kind.BOOK, false, () -> actions.browse(this));
         command(buttons, "重命名", SearchIconView.Kind.NEW_CHAT, false, () -> actions.rename(this));
         command(buttons, "文件管理", SearchIconView.Kind.FOLDER, false, () -> actions.files(this));
-        LinearLayout expand = tile(buttons, false);
-        expanded = toggle("在查词窗口默认展开 " + dictionary.name, lookupChecked);
-        expand.addView(expanded, new LayoutParams(dp(40), dp(30)));
-        TextView expandLabel = label("查词展开", 10, 0xff34455d); expandLabel.setGravity(Gravity.CENTER); expand.addView(expandLabel);
-        expanded.setOnCheckedChangeListener((b, checked) -> { lookupChecked = checked; actions.expandLookup(this, checked); });
-        expand.setOnClickListener(v -> expanded.setChecked(!expanded.isChecked()));
+        expanded = tile(buttons, false);
+        expandedIcon = new SearchIconView(context, SearchIconView.Kind.EYE); expandedIcon.setColor(0xff006bff);
+        expanded.addView(expandedIcon, new LayoutParams(dp(23), dp(28)));
+        expandedLabel = label("查词展开", 10, 0xff006bff); expandedLabel.setGravity(Gravity.CENTER);
+        expandedLabel.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO); expanded.addView(expandedLabel);
+        expanded.setContentDescription("在查词窗口默认展开 " + dictionary.name);
+        expanded.setFocusable(true); expanded.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
+        expanded.setAccessibilityDelegate(new AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(ToggleButton.class.getName()); info.setCheckable(true); info.setChecked(lookupChecked);
+            }
+        });
+        expanded.setOnClickListener(v -> { lookupChecked = !lookupChecked; updateLookupExpansion(); actions.expandLookup(this, lookupChecked); });
+        updateLookupExpansion();
         command(buttons, "卸载", SearchIconView.Kind.TRASH, true, () -> actions.uninstall(this));
     }
     void setOpen(boolean value) {
         if (open == value) return;
         open = value;
-        if (value) buildDetails(); else { details.removeAllViews(); expanded = null; }
+        if (value) buildDetails(); else { details.removeAllViews(); expanded = null; expandedIcon = null; expandedLabel = null; }
         details.setVisibility(value ? VISIBLE : GONE); setBackground(background(value));
         header.setContentDescription(dictionary.name + "，详情与管理，" + (value ? "已展开" : "已收起"));
     }
     boolean isOpen() { return open; }
     void restoreEnabled(boolean checked) { enabled.setOnCheckedChangeListener(null); enabled.setChecked(checked); enabled.setOnCheckedChangeListener((b, v) -> actions.enable(this, v)); }
-    void restoreExpanded(boolean checked) { lookupChecked = checked; if (expanded == null) return; expanded.setOnCheckedChangeListener(null); expanded.setChecked(checked); expanded.setOnCheckedChangeListener((b, v) -> { lookupChecked = v; actions.expandLookup(this, v); }); }
+    void restoreExpanded(boolean checked) { lookupChecked = checked; updateLookupExpansion(); }
+    private void updateLookupExpansion() {
+        if (expanded == null) return;
+        expanded.setSelected(lookupChecked); expandedIcon.setSelected(lookupChecked);
+        GradientDrawable bg = rounded(lookupChecked ? 0xffe2f0ff : 0xffffffff, 10);
+        bg.setStroke(dp(1), lookupChecked ? 0xffa7d2ff : 0xffdbe8fa); expanded.setBackground(bg);
+        expandedLabel.setTypeface(Typeface.DEFAULT, lookupChecked ? Typeface.BOLD : Typeface.NORMAL);
+    }
     private void metadata(LinearLayout parent, String label, String value) {
         LinearLayout row = new LinearLayout(getContext()); row.setGravity(Gravity.TOP); row.setPadding(0, dp(9), 0, dp(9));
         row.addView(label(label, 11, 0xff72777f), new LayoutParams(dp(66), -2));
