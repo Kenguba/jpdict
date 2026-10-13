@@ -13,7 +13,7 @@ public final class SearchIconView extends View {
         MENU, PRIVATE, PLUS, LIGHTNING, CHEVRON, MIC, VOICE, SEND, CLOSE, BACK,
         SEARCH, SETTINGS, NEW_CHAT, CLOCK, CAMERA, IMAGE, FILE, SKILLS,
         CONNECTOR, CHECK, BOT, PROJECT, TASK, MARK, MORE, HAPTICS, WIDGET, LANGUAGE, ADVANCED,
-        BOOK, FOLDER, TRASH, DRAG, REORDER, DATABASE, IMPORT
+        BOOK, FOLDER, TRASH, DRAG, REORDER, DATABASE, IMPORT, EYE
     }
 
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -45,6 +45,12 @@ public final class SearchIconView extends View {
 
     public int getColor() { return stroke.getColor(); }
 
+    @Override public void setSelected(boolean selected) {
+        if (isSelected() == selected) return;
+        super.setSelected(selected);
+        invalidate();
+    }
+
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int desired = Math.round(24 * getResources().getDisplayMetrics().density);
         setMeasuredDimension(resolveSize(desired + getPaddingLeft() + getPaddingRight(), widthMeasureSpec),
@@ -65,6 +71,21 @@ public final class SearchIconView extends View {
         canvas.scale(size / 24f, size / 24f);
         path.reset();
         switch (kind) {
+            case EYE:
+                path.moveTo(1.5f, 12);
+                path.cubicTo(4, 8, 7.5f, 5, 12, 5);
+                path.cubicTo(16.5f, 5, 20, 8, 22.5f, 12);
+                path.cubicTo(20, 16, 16.5f, 19, 12, 19);
+                path.cubicTo(7.5f, 19, 4, 16, 1.5f, 12); path.close();
+                if (isSelected()) {
+                    stroke.setStyle(Paint.Style.FILL); canvas.drawPath(path, stroke);
+                    stroke.setStyle(Paint.Style.STROKE);
+                }
+                canvas.drawPath(path, stroke);
+                int eyeColor = stroke.getColor();
+                if (isSelected()) stroke.setColor(0xffffffff);
+                circle(canvas, 12, 12, 4);
+                stroke.setColor(eyeColor); break;
             case BOOK:
                 poly(canvas, 12, 5, 8, 3, 3, 4, 3, 20, 8, 19, 12, 21, 16, 19, 21, 20, 21, 4, 16, 3, 12, 5);
                 line(canvas, 12, 5, 12, 21); break;
