@@ -30,7 +30,7 @@ final class BubbleImageEditorView extends LinearLayout {
     BubbleImageEditorView(Context context) {
         super(context);
         setOrientation(VERTICAL);
-        setPadding(dp(8), dp(10), dp(8), dp(12));
+        setPadding(dp(8), dp(5), dp(8), dp(12));
         GradientDrawable background = new GradientDrawable();
         background.setColor(0xfff4f5f6); background.setCornerRadius(dp(12));
         setBackground(background);
@@ -51,11 +51,11 @@ final class BubbleImageEditorView extends LinearLayout {
         LayoutParams wrapParams = new LayoutParams(-1, -2);
         wrapParams.topMargin = dp(7); wrapParams.bottomMargin = dp(5);
         addView(cropWrap, wrapParams);
-        zoom = addSlider("大小", "图片大小，20 至 300 百分比", 280);
+        zoom = addSlider("大小", "图片大小，20 至 300 百分比", 280, 0);
         zoomThumb = (BubbleSliderStyle.ValueThumb)zoom.getThumb();
-        horizontal = addSlider("水平", "图片水平位置，负 100 至正 100 百分比", 200);
+        horizontal = addSlider("水平", "图片水平位置，负 100 至正 100 百分比", 200, 20);
         horizontalThumb = (BubbleSliderStyle.ValueThumb)horizontal.getThumb();
-        vertical = addSlider("垂直", "图片垂直位置，负 100 至正 100 百分比", 200);
+        vertical = addSlider("垂直", "图片垂直位置，负 100 至正 100 百分比", 200, 20);
         verticalThumb = (BubbleSliderStyle.ValueThumb)vertical.getThumb();
         TextView help = text("单指移动，双指缩放，滑块微调", 10, 0xff8995a5, false);
         help.setGravity(Gravity.CENTER); help.setSingleLine(true);
@@ -215,10 +215,10 @@ final class BubbleImageEditorView extends LinearLayout {
         @Override public boolean performClick() { super.performClick(); return true; }
     }
 
-    private SeekBar addSlider(String label, String description, int max) {
+    private SeekBar addSlider(String label, String description, int max, int inset) {
         LinearLayout row = row(); row.addView(text(label, 11, 0xff60718a, true), new LayoutParams(dp(29), -2));
         SeekBar slider = new SeekBar(getContext()); slider.setMax(max); slider.setContentDescription(description);
-        BubbleSliderStyle.applyLabeled(slider, "0%");
+        BubbleSliderStyle.applyLabeled(slider, "0%", inset);
         row.addView(slider, new LayoutParams(0, dp(36), 1));
         LayoutParams params = new LayoutParams(-1, -2); params.topMargin = dp(7); addView(row, params); return slider;
     }
