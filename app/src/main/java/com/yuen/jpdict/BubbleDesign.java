@@ -15,7 +15,7 @@ final class BubbleDesign {
     int icon;
     int iconSize = 100;
     int imageZoom = 100, imageX, imageY;
-    String svg = "", svgName = "";
+    String svg = "", svgName = "", label = "搜索";
     final ColorSpec background = new ColorSpec(0xff168af2);
     final ColorSpec foreground = new ColorSpec(Color.WHITE);
 
@@ -91,7 +91,7 @@ final class BubbleDesign {
             o.put("v",1).put("shape",shape).put("icon",icon)
               .put("iconSize",iconSize).put("imageZoom",imageZoom)
               .put("imageX",imageX).put("imageY",imageY)
-              .put("svg",svg).put("svgName",svgName)
+              .put("svg",svg).put("svgName",svgName).put("label",label)
               .put("background",background.json()).put("foreground",foreground.json());
         }catch(org.json.JSONException ignored){}
         return o;
@@ -115,6 +115,8 @@ final class BubbleDesign {
         d.svg=svg.length()<=120*1024?svg:"";
         String label=o.optString("svgName","");
         d.svgName=label.length()<=120?label:"";
+        String text=o.optString("label","搜索");
+        d.label=text.codePointCount(0,text.length())<=8?text:"搜索";
         d.background.read(o.optJSONObject("background"));
         d.foreground.read(o.optJSONObject("foreground"));
         if(d.icon==6 && d.svg.isEmpty())d.icon=0;
