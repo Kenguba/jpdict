@@ -32,8 +32,8 @@ public final class FloatingBubbleAppearance {
     public static final int STYLE_IMAGE = 3;
     public static final int SHAPE_CIRCLE = 0;
     public static final int SHAPE_ROUNDED = 1;
-    public static final int MIN_SIZE_DP = 32;
-    public static final int MAX_SIZE_DP = 88;
+    public static final int MIN_SIZE_DP = 24;
+    public static final int MAX_SIZE_DP = 100;
     public static final int MIN_OPACITY = 0;
     public static final int DEFAULT_COLOR = 0xff168af2;
     private static final String PREFS = "floating_bubble_appearance";
@@ -57,6 +57,7 @@ public final class FloatingBubbleAppearance {
         public final String text;
         public final int color;
         public final String imageName;
+        public final BubbleDesign design;
 
         public Config(int sizeDp, int opacityPercent, int style, int roundnessPercent,
                 String text, int color) {
@@ -65,6 +66,12 @@ public final class FloatingBubbleAppearance {
 
         public Config(int sizeDp, int opacityPercent, int style, int roundnessPercent,
                 String text, int color, String imageName) {
+            this(sizeDp,opacityPercent,style,roundnessPercent,text,color,imageName,null);
+        }
+
+        Config(int sizeDp, int opacityPercent, int style, int roundnessPercent,
+                String text, int color, String imageName, BubbleDesign design) {
+            this.design = design == null ? null : design.copy();
             this.sizeDp = Math.max(MIN_SIZE_DP, Math.min(MAX_SIZE_DP, sizeDp));
             this.opacityPercent = Math.max(MIN_OPACITY, Math.min(100, opacityPercent));
             this.style = style >= STYLE_DEFAULT && style <= STYLE_IMAGE ? style : STYLE_DEFAULT;
@@ -88,7 +95,9 @@ public final class FloatingBubbleAppearance {
                     && opacityPercent == other.opacityPercent && style == other.style
                     && roundnessPercent == other.roundnessPercent && text.equals(other.text)
                     && color == other.color
-                    && (style != STYLE_IMAGE || imageName.equals(other.imageName));
+                    && (style != STYLE_IMAGE || imageName.equals(other.imageName))
+                    && (design == null ? other.design == null
+                        : other.design != null && design.json().toString().equals(other.design.json().toString()));
         }
 
         public Bundle toBundle() {
@@ -100,6 +109,7 @@ public final class FloatingBubbleAppearance {
             state.putString("text", text);
             state.putInt("color", color);
             state.putString("image_name", imageName);
+            if (design != null) state.putString("design_json", design.json().toString());
             return state;
         }
     }
@@ -110,6 +120,7 @@ public final class FloatingBubbleAppearance {
 
     public static Config load(Context context) {
         SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String spec=preferences.getString("design_json",null);
         return new Config(preferences.getInt("size_dp", 44),
                 preferences.getInt("opacity_percent", 25),
                 preferences.getInt("style", STYLE_DEFAULT),
@@ -117,7 +128,8 @@ public final class FloatingBubbleAppearance {
                         preferences.getInt("shape", SHAPE_CIRCLE) == SHAPE_ROUNDED ? 56 : 100),
                 preferences.getString("text", "あ"),
                 preferences.getInt("color", DEFAULT_COLOR),
-                preferences.getString("image_name", IMAGE_FILE));
+                preferences.getString("image_name", IMAGE_FILE),
+                spec == null ? null : BubbleDesign.parse(spec));
     }
 
     public static Config fromBundle(Bundle state) {
@@ -125,7 +137,9 @@ public final class FloatingBubbleAppearance {
         return new Config(state.getInt("size_dp", 44), state.getInt("opacity_percent", 25),
                 state.getInt("style", STYLE_DEFAULT), state.getInt("roundness_percent", 100),
                 state.getString("text", "あ"), state.getInt("color", DEFAULT_COLOR),
-                state.getString("image_name", IMAGE_FILE));
+                state.getString("image_name", IMAGE_FILE),
+                state.containsKey("design_json")
+                    ? BubbleDesign.parse(state.getString("design_json")) : null);
     }
 
     /** Drafts are process-local. A process restart always restores the committed appearance. */
@@ -173,7 +187,9 @@ public final class FloatingBubbleAppearance {
                     config = new Config(entry.getInt("size_dp"), entry.getInt("opacity_percent"),
                             entry.getInt("style"), entry.getInt("roundness_percent"),
                             entry.getString("text"), entry.getInt("color"),
-                            entry.optString("image_name", IMAGE_FILE));
+                            entry.optString("image_name", IMAGE_FILE),
+                            entry.has("design_json")
+                                ? BubbleDesign.parse(entry.optJSONObject("design_json")) : null);
                 } catch (JSONException invalidEntry) { continue; }
                 if (config.style == STYLE_IMAGE && !hasCustomImage(context, config)) continue;
                 boolean duplicate = false;
@@ -196,35 +212,64 @@ public final class FloatingBubbleAppearance {
         return history;
     }
 
+    /** Preserve the existing legacy newest-first + dedup saving entry point. */
     public static boolean save(Context context, Config config) {
-        if (config.style == STYLE_IMAGE && !hasCustomImage(context, config)) return false;
-        List<Config> history = withSavedStyle(savedStyles(context), config);
-        JSONArray entries = new JSONArray();
+        if (config.style == STYLE_IMAGE && !hasCustomImage(context,config)) return false;
+        return commitHistory(context,withSavedStyle(savedStyles(context),config),config);
+    }
+
+    /** V18: update selected preset in place; never append a second copy. */
+    static boolean replaceStyle(Context context,int index,Config config) {
+        List<Config> items=savedStyles(context);
+        if(index<0||index>=items.size()||!validImage(context,config))return false;
+        items.set(index,config);
+        return commitHistory(context,items,config);
+    }
+
+    /** V18: '+' is the exclusive new-preset action; cap at ten. */
+    static boolean addStyle(Context context,Config config) {
+        List<Config> items=savedStyles(context);
+        if(items.size()>=MAX_SAVED_STYLES||!validImage(context,config))return false;
+        items.add(0,config);
+        return commitHistory(context,items,config);
+    }
+
+    static boolean deleteStyle(Context context,int index) {
+        List<Config> items=savedStyles(context);
+        if(index<0||index>=items.size())return false;
+        items.remove(index);
+        return commitHistory(context,items,load(context));
+    }
+
+    private static boolean validImage(Context context,Config config) {
+        return config.style!=STYLE_IMAGE||hasCustomImage(context,config);
+    }
+
+    private static boolean commitHistory(Context context,List<Config> items,Config active) {
+        JSONArray entries=new JSONArray();
         try {
-            for (Config item : history) {
-                JSONObject entry = new JSONObject();
-                entry.put("size_dp", item.sizeDp).put("opacity_percent", item.opacityPercent)
-                        .put("style", item.style).put("roundness_percent", item.roundnessPercent)
-                        .put("text", item.text).put("color", item.color)
-                        .put("image_name", item.imageName);
+            for(Config item:items) {
+                JSONObject entry=new JSONObject();
+                entry.put("size_dp",item.sizeDp).put("opacity_percent",item.opacityPercent)
+                     .put("style",item.style).put("roundness_percent",item.roundnessPercent)
+                     .put("text",item.text).put("color",item.color)
+                     .put("image_name",item.imageName);
+                if(item.design!=null)entry.put("design_json",item.design.json());
                 entries.put(entry);
             }
-        } catch (JSONException error) { return false; }
-        boolean saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putInt("size_dp", config.sizeDp)
-                .putInt("opacity_percent", config.opacityPercent)
-                .putInt("style", config.style)
-                .putInt("roundness_percent", config.roundnessPercent)
-                .remove("shape")
-                .putString("text", config.text)
-                .putInt("color", config.color)
-                .putString("image_name", config.imageName)
-                .putString("saved_styles", entries.toString()).commit();
-        if (saved) {
-            cleanupImages(context, config);
-            notifyChanged();
-        }
-        return saved;
+        }catch(JSONException ex){return false;}
+        SharedPreferences.Editor edit=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
+                .putInt("size_dp",active.sizeDp).putInt("opacity_percent",active.opacityPercent)
+                .putInt("style",active.style).putInt("roundness_percent",active.roundnessPercent)
+                .remove("shape").putString("text",active.text).putInt("color",active.color)
+                .putString("image_name",active.imageName)
+                .putString("saved_styles",entries.toString());
+        if(active.design==null)edit.remove("design_json");
+        else edit.putString("design_json",active.design.json().toString());
+        if(!edit.commit())return false;
+        cleanupImages(context,active);
+        notifyChanged();
+        return true;
     }
 
     private static void notifyChanged() {
@@ -244,6 +289,14 @@ public final class FloatingBubbleAppearance {
         Context context = visual.getContext();
         visual.removeAllViews();
         visual.setElevation(dp(context, 12));
+        if(config.design!=null) {
+            visual.setBackground(null);
+            visual.setClipToOutline(false);
+            Bitmap raster=config.style==STYLE_IMAGE?loadImage(context,config):null;
+            visual.addView(new BubbleCanvasView(context,config,raster),
+                new FrameLayout.LayoutParams(-1,-1));
+            return;
+        }
         visual.setClipToOutline(config.style == STYLE_IMAGE);
         visual.setContentDescription("悬浮搜索按钮");
         GradientDrawable background = new GradientDrawable();
