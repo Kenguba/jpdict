@@ -26,7 +26,7 @@ import org.json.JSONObject;
 public final class FloatingBubbleAppearance {
     public static final int STYLE_DEFAULT=0, STYLE_SEARCH=1, STYLE_CUSTOM=2, STYLE_IMAGE=3;
     public static final int SHAPE_CIRCLE=0, SHAPE_ROUNDED=1, SHAPE_PILL=2,
-            SHAPE_HEXAGON=3, SHAPE_DIAMOND=4, SHAPE_STAR=5, SHAPE_LEGACY=6;
+            SHAPE_HEXAGON=3, SHAPE_DIAMOND=4, SHAPE_STAR=5, SHAPE_LEGACY=6, SHAPE_HEART=7;
     public static final int ICON_THIN=0, ICON_BOLD=1, ICON_ROUNDED=2, ICON_PLUS=3,
             ICON_FILLED=4, ICON_SCAN=5, ICON_CUSTOM=6;
     public static final int COLOR_SOLID=0, COLOR_LINEAR=1, COLOR_FREE=2;
@@ -113,7 +113,7 @@ public final class FloatingBubbleAppearance {
             opacityPercent=Math.max(0,Math.min(100,b.opacityPercent));
             style=b.style>=STYLE_DEFAULT && b.style<=STYLE_IMAGE?b.style:STYLE_DEFAULT;
             roundnessPercent=Math.max(0,Math.min(100,b.roundnessPercent));
-            shape=b.shape>=SHAPE_CIRCLE && b.shape<=SHAPE_LEGACY?b.shape:SHAPE_CIRCLE;
+            shape=b.shape>=SHAPE_CIRCLE && b.shape<=SHAPE_HEART?b.shape:SHAPE_CIRCLE;
             icon=b.icon>=ICON_THIN && b.icon<=ICON_CUSTOM?b.icon:ICON_THIN;
             iconSizePercent=Math.max(50,Math.min(150,b.iconSizePercent));
             String label=b.text==null?"":b.text;

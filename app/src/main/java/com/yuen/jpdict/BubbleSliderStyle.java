@@ -7,6 +7,7 @@ import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
+import android.graphics.Typeface;
 import android.graphics.Shader;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
@@ -20,6 +21,17 @@ final class BubbleSliderStyle {
     private BubbleSliderStyle() { }
 
     static void apply(SeekBar slider) {
+        apply(slider, standardTrack(slider));
+    }
+
+    static ValueThumb applyLabeled(SeekBar slider, String value) {
+        ValueThumb thumb = new ValueThumb(slider.getResources().getDisplayMetrics().density,
+                slider.getResources().getDisplayMetrics().scaledDensity, value);
+        apply(slider, standardTrack(slider), thumb, 20);
+        return thumb;
+    }
+
+    private static LayerDrawable standardTrack(SeekBar slider) {
         GradientDrawable remaining = track(slider, new int[]{0xffe5e5ea, 0xffe5e5ea});
         ClipDrawable filled = new ClipDrawable(track(slider, new int[]{0xff007aff, 0xff007aff}),
                 Gravity.START, ClipDrawable.HORIZONTAL);
@@ -30,7 +42,7 @@ final class BubbleSliderStyle {
             layers.setLayerHeight(i, dp(slider, 4));
             layers.setLayerGravity(i, Gravity.CENTER_VERTICAL);
         }
-        apply(slider, layers);
+        return layers;
     }
 
     static void applyHue(SeekBar slider) {
@@ -49,15 +61,19 @@ final class BubbleSliderStyle {
     }
 
     private static void apply(SeekBar slider, Drawable track) {
+        apply(slider, track, new Thumb(slider.getResources().getDisplayMetrics().density), 18);
+    }
+
+    private static void apply(SeekBar slider, Drawable track, Drawable thumb, int inset) {
         slider.setProgressTintList(null);
         slider.setProgressBackgroundTintList(null);
         slider.setThumbTintList(null);
         slider.setProgressDrawable(track);
-        slider.setThumb(new Thumb(slider.getResources().getDisplayMetrics().density));
-        slider.setThumbOffset(dp(slider, 18));
+        slider.setThumb(thumb);
+        slider.setThumbOffset(dp(slider, inset));
         slider.setSplitTrack(false);
         slider.setBackground(null);
-        slider.setPadding(dp(slider, 18), 0, dp(slider, 18), 0);
+        slider.setPadding(dp(slider, inset), 0, dp(slider, inset), 0);
     }
 
     private static final class Thumb extends Drawable {
@@ -102,6 +118,63 @@ final class BubbleSliderStyle {
             face.setColorFilter(filter);
             shadow.setColorFilter(filter);
             invalidateSelf();
+        }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    }
+
+    static final class ValueThumb extends Drawable {
+        private final float density;
+        private final Paint face = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private String value;
+        private int alpha = 255;
+
+        ValueThumb(float density, float scaledDensity, String value) {
+            this.density = density;
+            this.value = value == null ? "" : value;
+            label.setColor(0xff53657a);
+            label.setTextSize(9 * scaledDensity);
+            label.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+            label.setTextAlign(Paint.Align.CENTER);
+        }
+
+        void setValue(String value) {
+            this.value = value == null ? "" : value;
+            invalidateSelf();
+        }
+
+        @Override public void draw(Canvas canvas) {
+            Rect bounds = getBounds();
+            if (bounds.isEmpty()) return;
+            float radius = bounds.height() / 2f;
+            face.setStyle(Paint.Style.FILL);
+            face.setColor(0x22000000);
+            face.setAlpha(Math.round(alpha * .13f));
+            canvas.drawRoundRect(bounds.left, bounds.top + density * .8f, bounds.right,
+                    bounds.bottom + density * .8f, radius, radius, face);
+            face.setColor(0xffffffff);
+            face.setAlpha(alpha);
+            canvas.drawRoundRect(bounds.left, bounds.top, bounds.right, bounds.bottom,
+                    radius, radius, face);
+            face.setColor(0xffe3e7ec);
+            face.setAlpha(alpha);
+            face.setStyle(Paint.Style.STROKE);
+            face.setStrokeWidth(Math.max(.5f, density * .55f));
+            canvas.drawRoundRect(bounds.left + face.getStrokeWidth() / 2,
+                    bounds.top + face.getStrokeWidth() / 2,
+                    bounds.right - face.getStrokeWidth() / 2,
+                    bounds.bottom - face.getStrokeWidth() / 2, radius, radius, face);
+            label.setAlpha(alpha);
+            Paint.FontMetrics metrics = label.getFontMetrics();
+            canvas.drawText(value, bounds.exactCenterX(),
+                    bounds.exactCenterY() - (metrics.ascent + metrics.descent) / 2, label);
+        }
+
+        @Override public int getIntrinsicWidth() { return Math.round(40 * density); }
+        @Override public int getIntrinsicHeight() { return Math.round(24 * density); }
+        @Override public void setAlpha(int alpha) { this.alpha = alpha; invalidateSelf(); }
+        @Override public void setColorFilter(ColorFilter filter) {
+            face.setColorFilter(filter); label.setColorFilter(filter); invalidateSelf();
         }
         @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
