@@ -33,6 +33,15 @@ public final class BubbleAppearanceRenderer {
                 polygon(path,w,h,.5f,0,1,.5f,.5f,1,0,.5f); break;
             case FloatingBubbleAppearance.SHAPE_STAR:
                 polygon(path,w,h,.5f,0,.62f,.31f,.95f,.35f,.70f,.57f,.78f,.91f,.5f,.73f,.22f,.91f,.30f,.57f,.05f,.35f,.38f,.31f); break;
+            case FloatingBubbleAppearance.SHAPE_HEART:
+                path.moveTo(w*.5f,h*.92f);
+                path.cubicTo(w*.43f,h*.85f,w*.04f,h*.55f,w*.04f,h*.29f);
+                path.cubicTo(w*.04f,h*.12f,w*.18f,h*.04f,w*.33f,h*.04f);
+                path.cubicTo(w*.42f,h*.04f,w*.48f,h*.10f,w*.5f,h*.19f);
+                path.cubicTo(w*.52f,h*.10f,w*.58f,h*.04f,w*.67f,h*.04f);
+                path.cubicTo(w*.82f,h*.04f,w*.96f,h*.12f,w*.96f,h*.29f);
+                path.cubicTo(w*.96f,h*.55f,w*.57f,h*.85f,w*.5f,h*.92f);
+                path.close(); break;
             case FloatingBubbleAppearance.SHAPE_LEGACY:
                 float radius=Math.min(w,h)*c.roundnessPercent/200f;
                 path.addRoundRect(0,0,w,h,radius,radius,Path.Direction.CW); break;
@@ -162,7 +171,8 @@ public final class BubbleAppearanceRenderer {
         @Override public void setAlpha(int alpha) { this.alpha=alpha; invalidateSelf(); }
         @Override public void getOutline(Outline outline) {
             int width=getBounds().width(),height=getBounds().height();
-            if (width<=0||height<=0 || config.shape==FloatingBubbleAppearance.SHAPE_STAR) { outline.setEmpty(); return; }
+            if (width<=0||height<=0 || config.shape==FloatingBubbleAppearance.SHAPE_STAR
+                    || config.shape==FloatingBubbleAppearance.SHAPE_HEART) { outline.setEmpty(); return; }
             Path path=shapePath(config,width,height); path.offset(getBounds().left,getBounds().top);
             outline.setConvexPath(path); outline.setAlpha(alpha/255f);
         }

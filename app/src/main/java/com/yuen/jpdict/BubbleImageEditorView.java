@@ -22,7 +22,7 @@ final class BubbleImageEditorView extends LinearLayout {
     interface Listener { void onChanged(FloatingBubbleAppearance.Config config); }
     private final CropWorkspace crop;
     private final SeekBar zoom, horizontal, vertical;
-    private final TextView zoomValue, horizontalValue, verticalValue;
+    private final BubbleSliderStyle.ValueThumb zoomThumb, horizontalThumb, verticalThumb;
     private FloatingBubbleAppearance.Config config = FloatingBubbleAppearance.defaults();
     private Listener listener;
     private boolean binding;
@@ -49,16 +49,16 @@ final class BubbleImageEditorView extends LinearLayout {
         FrameLayout.LayoutParams cropParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
         cropWrap.addView(crop, cropParams);
         LayoutParams wrapParams = new LayoutParams(-1, -2);
-        wrapParams.topMargin = dp(13); wrapParams.bottomMargin = dp(5);
+        wrapParams.topMargin = dp(7); wrapParams.bottomMargin = dp(5);
         addView(cropWrap, wrapParams);
-        zoomValue = text("", 10, 0xff34475e, false);
-        horizontalValue = text("", 10, 0xff34475e, false);
-        verticalValue = text("", 10, 0xff34475e, false);
-        zoom = addSlider("大小", "图片大小，20 至 300 百分比", 280, zoomValue);
-        horizontal = addSlider("水平", "图片水平位置，负 100 至正 100 百分比", 200, horizontalValue);
-        vertical = addSlider("垂直", "图片垂直位置，负 100 至正 100 百分比", 200, verticalValue);
-        TextView help = text("单指拖动位置，双指捏合缩放，也可使用滑块调整", 10, 0xff8995a5, false);
-        help.setGravity(Gravity.CENTER); help.setLineSpacing(dp(2), 1);
+        zoom = addSlider("大小", "图片大小，20 至 300 百分比", 280);
+        zoomThumb = (BubbleSliderStyle.ValueThumb)zoom.getThumb();
+        horizontal = addSlider("水平", "图片水平位置，负 100 至正 100 百分比", 200);
+        horizontalThumb = (BubbleSliderStyle.ValueThumb)horizontal.getThumb();
+        vertical = addSlider("垂直", "图片垂直位置，负 100 至正 100 百分比", 200);
+        verticalThumb = (BubbleSliderStyle.ValueThumb)vertical.getThumb();
+        TextView help = text("单指移动，双指缩放，滑块微调", 10, 0xff8995a5, false);
+        help.setGravity(Gravity.CENTER); help.setSingleLine(true);
         LayoutParams hintParams = new LayoutParams(-1, -2); hintParams.topMargin = dp(10);
         addView(help, hintParams);
         reset.setOnClickListener(v -> change(100, 0, 0));
@@ -99,9 +99,9 @@ final class BubbleImageEditorView extends LinearLayout {
         zoom.setProgress(Math.round(config.imageZoomPercent) - 20);
         horizontal.setProgress(Math.round(config.imageXPercent) + 100);
         vertical.setProgress(Math.round(config.imageYPercent) + 100);
-        zoomValue.setText(Math.round(config.imageZoomPercent) + "%");
-        horizontalValue.setText(Math.round(config.imageXPercent) + "%");
-        verticalValue.setText(Math.round(config.imageYPercent) + "%");
+        zoomThumb.setValue(Math.round(config.imageZoomPercent) + "%");
+        horizontalThumb.setValue(Math.round(config.imageXPercent) + "%");
+        verticalThumb.setValue(Math.round(config.imageYPercent) + "%");
         crop.setContentDescription("图片裁切工作区，水平 " + Math.round(config.imageXPercent)
                 + "%，垂直 " + Math.round(config.imageYPercent) + "%，大小 "
                 + Math.round(config.imageZoomPercent) + "%，单指拖动或双指捏合调整");
@@ -215,10 +215,11 @@ final class BubbleImageEditorView extends LinearLayout {
         @Override public boolean performClick() { super.performClick(); return true; }
     }
 
-    private SeekBar addSlider(String label, String description, int max, TextView output) {
+    private SeekBar addSlider(String label, String description, int max) {
         LinearLayout row = row(); row.addView(text(label, 11, 0xff60718a, true), new LayoutParams(dp(29), -2));
-        SeekBar slider = new SeekBar(getContext()); slider.setMax(max); slider.setContentDescription(description); BubbleSliderStyle.apply(slider);
-        row.addView(slider, new LayoutParams(0, dp(36), 1)); output.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); row.addView(output, new LayoutParams(dp(36), -2));
+        SeekBar slider = new SeekBar(getContext()); slider.setMax(max); slider.setContentDescription(description);
+        BubbleSliderStyle.applyLabeled(slider, "0%");
+        row.addView(slider, new LayoutParams(0, dp(36), 1));
         LayoutParams params = new LayoutParams(-1, -2); params.topMargin = dp(7); addView(row, params); return slider;
     }
     private SeekBar.OnSeekBarChangeListener sliderListener(Runnable change) { return new SeekBar.OnSeekBarChangeListener() { public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { if (fromUser && !binding) change.run(); } public void onStartTrackingTouch(SeekBar bar) { } public void onStopTrackingTouch(SeekBar bar) { } }; }

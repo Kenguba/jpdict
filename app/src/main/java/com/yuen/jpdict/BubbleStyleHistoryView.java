@@ -34,7 +34,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
         super(context);
         this.listener = listener;
         setOrientation(VERTICAL);
-        setPadding(dp(10), dp(11), dp(10), dp(8));
+        setPadding(dp(10), dp(6), dp(10), dp(5));
         setBackground(shape(0xffffffff, 18));
         scroll = new HorizontalScrollView(context) {
             @Override protected void onScrollChanged(int x, int y, int oldX, int oldY) {
@@ -47,9 +47,9 @@ final class BubbleStyleHistoryView extends LinearLayout {
         scroll.setClipToPadding(false);
         slots = new LinearLayout(context);
         slots.setGravity(Gravity.CENTER_VERTICAL);
-        slots.setPadding(dp(3), dp(3), dp(3), dp(9));
+        slots.setPadding(dp(3), dp(3), dp(3), dp(5));
         scroll.addView(slots, new HorizontalScrollView.LayoutParams(-2, -1));
-        addView(scroll, new LayoutParams(-1, dp(76)));
+        addView(scroll, new LayoutParams(-1, dp(72)));
         pager = new Pager(context);
         LayoutParams track = new LayoutParams(dp(72), dp(4));
         track.gravity = Gravity.CENTER_HORIZONTAL;

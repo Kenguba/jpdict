@@ -2,6 +2,8 @@ package com.yuen.jpdict;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.Configuration;
+import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -14,6 +16,7 @@ import android.text.InputFilter;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -31,12 +34,13 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private final PreviewListener onPreview;
     private final Runnable onChooseImage, onChooseSvg;
     private final LinearLayout header, savedHeader, appearance, gesture, editor, shapeSidebar;
-    private final TextView appearanceTab, gestureTab, styleCount, sizeValue, opacityValue, iconSizeValue;
+    private final TextView appearanceTab, gestureTab, styleCount, sizeValue, opacityValue;
     private final BubbleStyleHistoryView savedStyles;
     private final TextView[] modeButtons=new TextView[3];
-    private final LinearLayout[] shapeButtons=new LinearLayout[6];
+    private final LinearLayout[] shapeButtons=new LinearLayout[7];
     private final IconChoice[] iconButtons=new IconChoice[7];
     private final SeekBar size, opacity, iconSize;
+    private final BubbleSliderStyle.ValueThumb iconSizeThumb;
     private final IconStrip iconStrip;
     private final LinearLayout textFields, imageFields, svgTools;
     private final LinearLayout iconSizeRow;
@@ -93,7 +97,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         });
         savedHeader.addView(savedStyles,new LayoutParams(-1,-2)); header.addView(savedHeader);
         appearance=column(); addView(appearance,new LayoutParams(-1,-2));
-        LinearLayout sliders=column(); sliders.setPadding(dp(14),dp(10),dp(14),dp(10));
+        LinearLayout sliders=column(); sliders.setPadding(dp(14),dp(6),dp(14),dp(6));
         sliders.setBackground(background(0xffffffff,18));
         sizeValue=text("",13,MUTED,false); opacityValue=text("",13,MUTED,false);
         size=settingSlider(sliders,"大小",sizeValue,76,47,43,44);
@@ -107,13 +111,13 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         shapeSidebar=column(); shapeSidebar.setPadding(dp(3),dp(3),dp(3),dp(3));
         shapeSidebar.setBackground(background(SOFT,18));
         editor.addView(shapeSidebar,new LayoutParams(dp(narrow?85:94),-2));
-        String[] shapeNames={"圆形","圆角方形","胶囊形","六边形","菱形","星形"};
+        String[] shapeNames={"圆形","圆角方形","胶囊形","六边形","菱形","星形","爱心形"};
         Paint shapeLabelMeasure=new Paint(Paint.ANTI_ALIAS_FLAG);
         shapeLabelMeasure.setTypeface(Typeface.DEFAULT_BOLD);
         shapeLabelMeasure.setTextSize((narrow?10:11)*getResources().getDisplayMetrics().scaledDensity);
         int shapeLabelWidth=(int)Math.ceil(shapeLabelMeasure.measureText("圆角方形"));
         for(int i=0;i<shapeNames.length;i++) {
-            final int shape=i;
+            final int shape=shapeValueForIndex(i);
             LinearLayout choice=row(); choice.setGravity(Gravity.CENTER);
             choice.setPadding(dp(narrow?3:5),0,dp(narrow?3:5),0);
             ShapeSymbol symbol=new ShapeSymbol(context,i); choice.addView(symbol,new LayoutParams(dp(narrow?21:23),dp(25)));
@@ -167,8 +171,9 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
             iconStrip.addIcon(icon);
             icon.setOnClickListener(v->selectIcon(index));
         }
-        iconSizeValue=text("",11,MUTED,false); iconSizeRow=row();
-        iconSize=settingSlider(iconSizeRow,"Icon 大小",iconSizeValue,100,59,37,32);
+        iconSizeRow=row();
+        iconSize=settingLabeledSlider(iconSizeRow,"Icon 大小",100,59,32);
+        iconSizeThumb=(BubbleSliderStyle.ValueThumb)iconSize.getThumb();
         LayoutParams iconSizeParams=new LayoutParams(-1,-2); iconSizeParams.topMargin=dp(7);
         settings.addView(iconSizeRow,iconSizeParams);
         svgTools=column(); svgName=text("",10,MUTED,false); svgName.setSingleLine(true);
@@ -310,12 +315,13 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         size.setProgress(config.sizeDp-24); opacity.setProgress(config.opacityPercent);
         iconSize.setProgress(config.iconSizePercent-50);
         sizeValue.setText(config.sizeDp+" dp"); opacityValue.setText(config.opacityPercent+"%");
-        iconSizeValue.setText(config.iconSizePercent+"%");
+        iconSizeThumb.setValue(config.iconSizePercent+"%");
         if(!customText.getText().toString().equals(config.text))customText.setText(config.text);
         int mode=config.style==FloatingBubbleAppearance.STYLE_IMAGE?2:config.style==FloatingBubbleAppearance.STYLE_CUSTOM?1:0;
         for(int i=0;i<3;i++)selected(modeButtons[i],i==mode);
-        for(int i=0;i<6;i++) {
-            boolean active=config.shape==i || (i==1 && config.shape==FloatingBubbleAppearance.SHAPE_LEGACY);
+        for(int i=0;i<shapeButtons.length;i++) {
+            boolean active=config.shape==shapeValueForIndex(i)
+                    || (i==1 && config.shape==FloatingBubbleAppearance.SHAPE_LEGACY);
             shapeButtons[i].setSelected(active); shapeButtons[i].setBackground(new ShapeBackground(active));
             ((TextView)shapeButtons[i].getChildAt(1)).setTextColor(active?BLUE:0xff667185);
             ((TextView)shapeButtons[i].getChildAt(1)).setTypeface(active?Typeface.DEFAULT_BOLD:Typeface.DEFAULT);
@@ -371,20 +377,20 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private void confirmDeletion(String id) {
         if(deleteDialog!=null && deleteDialog.isShowing())return;
         finishEditing();
-        LinearLayout content=column(); content.setPadding(dp(22),dp(20),dp(22),dp(20));
+        LinearLayout content=column(); content.setPadding(dp(22),dp(16),dp(22),dp(16));
         FrameLayout symbol=new FrameLayout(getContext()); symbol.setBackground(background(0xfffff0f3,18));
         SearchIconView trash=new SearchIconView(getContext(),SearchIconView.Kind.TRASH); trash.setColor(0xffdf5366);
         symbol.addView(trash,new FrameLayout.LayoutParams(dp(23),dp(23),Gravity.CENTER));
-        LayoutParams symbolParams=new LayoutParams(dp(51),dp(51)); symbolParams.gravity=Gravity.CENTER_HORIZONTAL;
-        symbolParams.bottomMargin=dp(13); content.addView(symbol,symbolParams);
+        LayoutParams symbolParams=new LayoutParams(dp(48),dp(48)); symbolParams.gravity=Gravity.CENTER_HORIZONTAL;
+        symbolParams.bottomMargin=dp(8); content.addView(symbol,symbolParams);
         TextView title=text("删除已保存样式？",18,INK,true); title.setGravity(Gravity.CENTER);
-        content.addView(title,new LayoutParams(-1,dp(42)));
-        TextView detail=text("删除后将无法恢复此配置，当前编辑的设置不会受到影响。",12,MUTED,false);
-        detail.setGravity(Gravity.CENTER); detail.setLineSpacing(dp(4),1); content.addView(detail,new LayoutParams(-1,-2));
-        LinearLayout actions=row(); LayoutParams actionsParams=new LayoutParams(-1,dp(43)); actionsParams.topMargin=dp(21);
+        content.addView(title,new LayoutParams(-1,dp(36)));
+        TextView detail=text("删除后无法恢复，当前编辑内容不受影响",14,MUTED,false);
+        detail.setGravity(Gravity.CENTER); detail.setLineSpacing(dp(2),1); content.addView(detail,new LayoutParams(-1,-2));
+        LinearLayout actions=row(); LayoutParams actionsParams=new LayoutParams(-1,dp(44)); actionsParams.topMargin=dp(16);
         TextView cancel=button("取消",14), remove=button("删除样式",14);
         cancel.setTextColor(0xff55657a); remove.setTextColor(0xffcb4355); remove.setBackground(background(0xfffce8ec,14));
-        addWeighted(actions,cancel,43,0); addWeighted(actions,remove,43,10); content.addView(actions,actionsParams);
+        addWeighted(actions,cancel,44,0); addWeighted(actions,remove,44,10); content.addView(actions,actionsParams);
         deleteDialog=new AlertDialog.Builder(getContext()).setView(content).create();
         cancel.setOnClickListener(v->deleteDialog.dismiss());
         remove.setOnClickListener(v->{
@@ -393,7 +399,10 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
             deleteDialog.dismiss(); savedStyles.reload(); refresh(); toast("已删除保存的样式");
         });
         deleteDialog.show();
-        if(deleteDialog.getWindow()!=null)deleteDialog.getWindow().setBackgroundDrawable(background(0xffffffff,18));
+        if(deleteDialog.getWindow()!=null) {
+            deleteDialog.getWindow().setBackgroundDrawable(background(0xffffffff,18));
+            deleteDialog.getWindow().setLayout(standardDialogWidth(),WindowManager.LayoutParams.WRAP_CONTENT);
+        }
         cancel.requestFocus();
     }
     private void setGesturePage(boolean value) {
@@ -432,6 +441,37 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         sliderParams.rightMargin=dp(6); line.addView(slider,sliderParams);
         output.setGravity(Gravity.END|Gravity.CENTER_VERTICAL); line.addView(output,new LayoutParams(dp(outputWidth),-1));
         parent.addView(line,new LayoutParams(-1,dp(height))); return slider;
+    }
+    private SeekBar settingLabeledSlider(LinearLayout parent,String label,int maximum,
+            int labelWidth,int height) {
+        LinearLayout line=row();
+        line.addView(text(label,11,0xff60718a,true),new LayoutParams(dp(labelWidth),-1));
+        SeekBar slider=new SeekBar(getContext()); slider.setMax(maximum); slider.setContentDescription(label);
+        BubbleSliderStyle.applyLabeled(slider,"100%");
+        LayoutParams sliderParams=new LayoutParams(0,dp(height),1); sliderParams.leftMargin=dp(6);
+        sliderParams.rightMargin=dp(6); line.addView(slider,sliderParams);
+        parent.addView(line,new LayoutParams(-1,dp(height))); return slider;
+    }
+    private int standardDialogWidth() {
+        int screenWidth=getResources().getDisplayMetrics().widthPixels;
+        int widthAttribute=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE
+                ? android.R.attr.windowMinWidthMajor : android.R.attr.windowMinWidthMinor;
+        TypedArray values=getContext().obtainStyledAttributes(new int[]{widthAttribute});
+        float themedWidth=values.getFraction(0,screenWidth,screenWidth,0);
+        values.recycle();
+        if(themedWidth<=0 || themedWidth>screenWidth) themedWidth=screenWidth*.88f;
+        return Math.min(Math.round(themedWidth),Math.max(0,screenWidth-dp(32)));
+    }
+    private static int shapeValueForIndex(int index) {
+        switch(index) {
+            case 0: return FloatingBubbleAppearance.SHAPE_CIRCLE;
+            case 1: return FloatingBubbleAppearance.SHAPE_ROUNDED;
+            case 2: return FloatingBubbleAppearance.SHAPE_PILL;
+            case 3: return FloatingBubbleAppearance.SHAPE_HEXAGON;
+            case 4: return FloatingBubbleAppearance.SHAPE_DIAMOND;
+            case 5: return FloatingBubbleAppearance.SHAPE_STAR;
+            default: return FloatingBubbleAppearance.SHAPE_HEART;
+        }
     }
     private void addGesture(String title,String description) {
         TextView label=text(title,13,INK,true); LayoutParams labelParams=new LayoutParams(-1,dp(36));
@@ -518,6 +558,15 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
                 case 3: path.reset(); path.moveTo(12,2); path.lineTo(21,7); path.lineTo(21,17); path.lineTo(12,22); path.lineTo(3,17); path.lineTo(3,7); path.close(); c.drawPath(path,paint); break;
                 case 4: c.rotate(45,12,12); c.drawRoundRect(4.5f,4.5f,19.5f,19.5f,2,2,paint); break;
                 case 5: path.reset(); path.moveTo(12,2.5f); path.lineTo(15,8.6f); path.lineTo(21.7f,9.6f); path.lineTo(16.85f,14.3f); path.lineTo(18,21); path.lineTo(12,17.85f); path.lineTo(6,21); path.lineTo(7.15f,14.3f); path.lineTo(2.3f,9.6f); path.lineTo(9,8.6f); path.close(); c.drawPath(path,paint); break;
+                case 6:
+                    path.reset(); path.moveTo(12,22);
+                    path.cubicTo(10.3f,20.4f,2.5f,14.8f,2.5f,8.4f);
+                    path.cubicTo(2.5f,4.3f,5.6f,2f,8.6f,2f);
+                    path.cubicTo(10.2f,2f,11.5f,3.1f,12,4.5f);
+                    path.cubicTo(12.5f,3.1f,13.8f,2f,15.4f,2f);
+                    path.cubicTo(18.4f,2f,21.5f,4.3f,21.5f,8.4f);
+                    path.cubicTo(21.5f,14.8f,13.7f,20.4f,12,22);
+                    path.close(); c.drawPath(path,paint); break;
                 default: break;
             }
             c.restore();
