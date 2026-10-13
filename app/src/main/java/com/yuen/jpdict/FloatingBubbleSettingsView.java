@@ -228,7 +228,9 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         imageDrop.setOnClickListener(v->chooseImage()); imageLabel.setOnClickListener(v->chooseImage());
         imageFields.addView(imageDrop,new LayoutParams(-1,-2));
         imageEditor=new BubbleImageEditorView(context); imageEditor.setListener(this::change);
-        imageFields.addView(imageEditor,new LayoutParams(-1,-2));
+        LayoutParams imageEditorParams=new LayoutParams(-1,-2);
+        imageEditorParams.topMargin=dp(8);
+        imageFields.addView(imageEditor,imageEditorParams);
         colorSeparator=new View(context); colorSeparator.setBackgroundColor(0xffe9edf3);
         LayoutParams separator=new LayoutParams(-1,dp(1)); separator.topMargin=dp(16); separator.bottomMargin=dp(16);
         settings.addView(colorSeparator,separator);
@@ -449,7 +451,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         SeekBar slider=new SeekBar(getContext()); slider.setMax(maximum); slider.setContentDescription(label);
         BubbleSliderStyle.applyLabeled(slider,"100%",0);
         LayoutParams sliderParams=new LayoutParams(0,dp(height),1); sliderParams.leftMargin=dp(6);
-        sliderParams.rightMargin=dp(6); line.addView(slider,sliderParams);
+        line.addView(slider,sliderParams);
         parent.addView(line,new LayoutParams(-1,dp(height))); return slider;
     }
     private int standardDialogWidth() {
