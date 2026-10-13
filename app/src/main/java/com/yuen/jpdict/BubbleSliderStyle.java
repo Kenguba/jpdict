@@ -25,9 +25,13 @@ final class BubbleSliderStyle {
     }
 
     static ValueThumb applyLabeled(SeekBar slider, String value) {
+        return applyLabeled(slider, value, 20);
+    }
+
+    static ValueThumb applyLabeled(SeekBar slider, String value, int inset) {
         ValueThumb thumb = new ValueThumb(slider.getResources().getDisplayMetrics().density,
                 slider.getResources().getDisplayMetrics().scaledDensity, value);
-        apply(slider, standardTrack(slider), thumb, 20);
+        apply(slider, standardTrack(slider), thumb, inset);
         return thumb;
     }
 

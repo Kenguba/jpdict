@@ -447,7 +447,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         LinearLayout line=row();
         line.addView(text(label,11,0xff60718a,true),new LayoutParams(dp(labelWidth),-1));
         SeekBar slider=new SeekBar(getContext()); slider.setMax(maximum); slider.setContentDescription(label);
-        BubbleSliderStyle.applyLabeled(slider,"100%");
+        BubbleSliderStyle.applyLabeled(slider,"100%",0);
         LayoutParams sliderParams=new LayoutParams(0,dp(height),1); sliderParams.leftMargin=dp(6);
         sliderParams.rightMargin=dp(6); line.addView(slider,sliderParams);
         parent.addView(line,new LayoutParams(-1,dp(height))); return slider;
