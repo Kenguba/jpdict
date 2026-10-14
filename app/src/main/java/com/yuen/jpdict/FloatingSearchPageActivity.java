@@ -31,6 +31,10 @@ abstract class FloatingSearchPageActivity extends Activity {
     }
 
     protected final LinearLayout createPage(String title, boolean close) {
+        return createPage(title, close, 48);
+    }
+
+    protected final LinearLayout createPage(String title, boolean close, int toolbarHeightDp) {
         getWindow().setStatusBarColor(0xfff2f2f2);
         getWindow().setNavigationBarColor(0xfff2f2f2);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
@@ -55,7 +59,7 @@ abstract class FloatingSearchPageActivity extends Activity {
         label.setIncludeFontPadding(false);
         label.setPadding(pageDp(6), 0, 0, 0);
         toolbar.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
-        root.addView(toolbar, new LinearLayout.LayoutParams(-1, pageDp(48)));
+        root.addView(toolbar, new LinearLayout.LayoutParams(-1, pageDp(toolbarHeightDp)));
         return root;
     }
 
