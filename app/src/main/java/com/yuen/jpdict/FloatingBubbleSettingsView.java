@@ -247,8 +247,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         gesture.setBackground(background(0xffffffff,18));
         gesture.addView(text("悬浮按钮手势",16,INK,true),new LayoutParams(-1,dp(36)));
         addGesture("轻点","打开桌面全局搜索");
-        addGesture("长按 700ms 后拖动","振动后将准星移到文字，高亮后松手查词；未授权时先请求屏幕共享");
-        addGesture("短滑动","保留向上、向下、向左、向右的方向提示");
+        addGesture("拖动停留 300ms","移动按钮，对准文字停留后识别；来回划选、高亮后松手查词，授权失效时重新申请");
+        addGesture("长按 700ms","打开方向摇杆，上方句子、右侧日语、下方英语单词；回到中心或向左取消");
         TextView returnAppearance=button("返回外观设置",13);
         returnAppearance.setOnClickListener(v->setGesturePage(false)); gesture.addView(returnAppearance,new LayoutParams(-1,dp(44)));
         addView(gesture,new LayoutParams(-1,-2));

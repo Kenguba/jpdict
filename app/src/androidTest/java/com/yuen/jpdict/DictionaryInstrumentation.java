@@ -18,6 +18,8 @@ public final class DictionaryInstrumentation extends Instrumentation {
     private int assertions;
     private String ocrMode;
     private String htmlEditingMode;
+    private boolean composerMode;
+    private boolean operationMode;
     private void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
     private static void write(File file, byte[] bytes) throws IOException {
         try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
@@ -26,11 +28,21 @@ public final class DictionaryInstrumentation extends Instrumentation {
         super.onCreate(arguments);
         ocrMode = arguments == null ? null : arguments.getString("ocr");
         htmlEditingMode = arguments == null ? null : arguments.getString("html_editing");
+        composerMode = arguments != null && arguments.containsKey("composer");
+        operationMode = arguments != null && arguments.containsKey("dictionary_operation");
         start();
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (operationMode) {
+                result.putString("stream", DictionaryOperationValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
+            if (composerMode) {
+                result.putString("stream", SearchComposerValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
             if (htmlEditingMode != null) {
                 result.putString("stream", DictionaryEditingValidation.run(this));
                 finish(android.app.Activity.RESULT_OK, result); return;
@@ -198,7 +210,7 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 @Override public void onReceivedHttpError(android.webkit.WebView v,WebResourceRequest request,WebResourceResponse error){if(request.isForMainFrame())pageError.set("HTTP "+error.getStatusCode());}
             });
             check(view.getSettings().getJavaScriptEnabled(),"Local dictionary JavaScript enabled");
-            check(view.getSettings().getBlockNetworkLoads() && !view.getSettings().getDomStorageEnabled(), "Network and persistent DOM storage disabled");
+                check(view.getSettings().getBlockNetworkLoads() && view.getSettings().getDomStorageEnabled(), "Network remains blocked while dictionary-origin DOM storage is enabled");
             check(!view.getSettings().getAllowFileAccess()&&!view.getSettings().getAllowContentAccess(),"Private file access disabled");
             client.shouldOverrideUrlLoading(view,"entry://%E6%97%A5%E6%9C%AC%E8%AA%9E");
             check("日本語".equals(navigation.get()),"Entry navigation decodes Unicode");

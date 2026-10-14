@@ -143,6 +143,15 @@
             android:foregroundServiceType="mediaProjection"/>
 
         <service
+            android:name=".DictionaryOperationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started dictionary import, validation or backup with a global draggable progress bubble"/>
+        </service>
+
+        <service
             android:name=".FloatingService"
             android:exported="false"
             android:foregroundServiceType="specialUse">

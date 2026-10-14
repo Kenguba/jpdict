@@ -12,7 +12,6 @@ import android.os.Bundle;
 import android.view.*;
 import android.widget.*;
 import java.util.*;
-import java.util.concurrent.Future;
 
 /** Native library page using the existing floating-page route and lifecycle. */
 public final class DictionaryActivity extends FloatingSearchPageActivity {
@@ -26,10 +25,9 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
     private final TextView[] tabButtons = new TextView[2];
     private boolean copy = true, picking, fullBackup, downloads;
     private String replaceId;
-    private Future<?> operation;
-    private AlertDialog progressDialog;
-    private long lastProgress;
-    private int pageGeneration, operationGeneration;
+    private DictionaryOperation operations;
+    private int pageGeneration;
+    private boolean started, wasStarted;
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private TextView text(String value, int size, int color) {
@@ -49,6 +47,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         repository = DictionaryRepository.get(this);
+        operations = DictionaryOperation.get(this);
         if (state != null) {
             copy = state.getBoolean("copy", true); picking = state.getBoolean("picking");
             fullBackup = state.getBoolean("full"); replaceId = state.getString("replace"); downloads = state.getBoolean("downloads");
@@ -204,7 +203,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             } else if (which == 1) chooseImport(d.id);
             else if (which == 2) {
                 if (d.storage == DictionaryRepository.StorageMode.APP_PRIVATE) info("存储", "此词典已在 JPDict 内部存储。");
-                else runOperation(() -> repository.install(d.files, true, d.id, this::progress));
+                else runOperation(() -> repository.install(d.files, true, d.id, operations::progress));
             } else moveDictionary(d, which == 3 ? -1 : 1);
         });
     }
@@ -214,7 +213,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
                 .setPositiveButton("确定", (x,y) -> runOperation(() -> repository.delete(d))).setNegativeButton("取消", null).show();
     }
     private void chooseImport(String id) {
-        if (operation != null && !operation.isDone()) { info("操作进行中", "请等待或取消当前操作。"); return; }
+        if (operations.running()) { info("操作进行中", "当前操作正在后台继续，点按进度浮球查看。"); return; }
         replaceId = id;
         choices("词库存储位置", new String[]{"导入到 JPDict（独立内部副本）", "外部直接读取（保留 URI 授权）"}, (d, which) -> {
             copy = which == 0;
@@ -256,8 +255,8 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         if (request == BACKUP || request == RESTORE) {
             Uri uri = data.getData(); if (uri == null) return;
             runOperation(() -> {
-                if (request == BACKUP) DictionaryBackup.write(repository, uri, fullBackup, this::progress);
-                else DictionaryBackup.restore(repository, uri, this::progress);
+                if (request == BACKUP) DictionaryBackup.write(repository, uri, fullBackup, operations::progress);
+                else DictionaryBackup.restore(repository, uri, operations::progress);
             }); return;
         }
         List<Uri> uris = new ArrayList<>();
@@ -269,18 +268,19 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         }
         String id = replaceId; boolean copyFiles = copy;
         List<DictionaryRepository.Document> files = new ArrayList<>();
-        if (request == TREE) runOperation(() -> files.addAll(repository.scanTree(uris.get(0))),
-                () -> chooseTreeBooks(files, copyFiles, id));
+        DictionaryRepository backend = repository;
+        if (request == TREE) runOperation(() -> files.addAll(backend.scanTree(uris.get(0))),
+                page -> page.chooseTreeBooks(files, copyFiles, id));
         else runOperation(() -> {
             for (Uri uri : uris) files.add(repository.document(uri, ""));
-            repository.install(files, copyFiles, id, this::progress);
+            repository.install(files, copyFiles, id, operations::progress);
         });
     }
     private void chooseTreeBooks(List<DictionaryRepository.Document> files, boolean copyFiles, String id) {
         List<DictionaryRepository.Document> books = new ArrayList<>();
         for (DictionaryRepository.Document f : files) if (f.path.toLowerCase(Locale.ROOT).endsWith(".mdx")) books.add(f);
         if (books.isEmpty()) { report(new java.io.IOException("所选文件夹中没有 MDX 词库")); return; }
-        if (books.size() == 1) { runOperation(() -> repository.install(files, copyFiles, id, this::progress)); return; }
+        if (books.size() == 1) { runOperation(() -> repository.install(files, copyFiles, id, operations::progress)); return; }
         String[] names = new String[books.size()]; boolean[] checked = new boolean[books.size()];
         for (int i = 0; i < names.length; i++) names[i] = books.get(i).path;
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle(id == null ? "选择要安装的词库" : "选择要替换的词库（一本）")
@@ -293,32 +293,20 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             if (count == 0 || (id != null && count != 1)) {
                 Toast.makeText(this, id == null ? "请至少选择一本词库" : "替换时请选择一本词库", Toast.LENGTH_SHORT).show(); return;
             }
-            dialog.dismiss(); runOperation(() -> repository.install(selected, copyFiles, id, this::progress));
+            dialog.dismiss(); runOperation(() -> repository.install(selected, copyFiles, id, operations::progress));
         }));
         dialog.show();
     }
     private void runOperation(DictionaryRepository.Work work) {
         runOperation(work, null);
     }
-    private void runOperation(DictionaryRepository.Work work, Runnable after) {
-        if (operation != null && !operation.isDone()) { info("操作进行中", "请等待或取消当前操作。"); return; }
-        int generation = ++operationGeneration;
-        progressDialog = new AlertDialog.Builder(this).setTitle("词库操作").setMessage("准备中…").setCancelable(false)
-                .setNegativeButton("取消", (dialog, which) -> { if (operation != null) operation.cancel(true); }).show();
-        operation = repository.execute(work, error -> {
-            if (isDestroyed() || operationGeneration != generation) return;
-            if (progressDialog != null) progressDialog.dismiss(); progressDialog = null;
-            report(error);
-            if (error == null && after == null) Toast.makeText(this, "操作完成", Toast.LENGTH_SHORT).show();
-            refresh();
-            if (error == null && after != null) after.run();
-        });
-    }
-    private void progress(String message, long done, long total) {
-        long now = android.os.SystemClock.uptimeMillis(); if (now - lastProgress < 100) return; lastProgress = now;
-        runOnUiThread(() -> {
-            if (progressDialog != null && !isDestroyed()) progressDialog.setMessage(message + (total > 0 ? "\n" + done + " / " + total + " bytes" : ""));
-        });
+    private void runOperation(DictionaryRepository.Work work, DictionaryOperation.Continuation after) {
+        java.lang.ref.WeakReference<DictionaryActivity> activity = new java.lang.ref.WeakReference<>(this);
+        operations.start(this, repository, work, error -> {
+            DictionaryActivity page = activity.get();
+            if (page == null || !page.started || page.isDestroyed() || page.isFinishing()) return;
+            page.refresh();
+        }, after);
     }
     private void report(Exception error) {
         if (error != null && !isDestroyed() && !isFinishing()) info("词库操作失败", error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
@@ -331,8 +319,23 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         state.putString("expanded", expandedId); state.putString("filter", filter);
         state.putString("replace", replaceId); state.putBoolean("downloads", downloads); super.onSaveInstanceState(state);
     }
-    @Override protected void onDestroy() {
-        if (operation != null && !operation.isDone()) operation.cancel(true);
-        if (progressDialog != null) progressDialog.dismiss(); super.onDestroy();
+    @Override protected void onStart() {
+        super.onStart();
+        boolean refreshOnReturn = wasStarted; started = wasStarted = true;
+        if (operations != null) {
+            operations.attach(this);
+            if (getIntent().getBooleanExtra("show_dictionary_progress", false)) {
+                getIntent().removeExtra("show_dictionary_progress"); operations.restore();
+            }
+        }
+        if (refreshOnReturn) refresh();
     }
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent); setIntent(intent);
+        if (operations != null && intent.getBooleanExtra("show_dictionary_progress", false)) {
+            intent.removeExtra("show_dictionary_progress"); operations.attach(this); operations.restore();
+        }
+    }
+    @Override protected void onStop() { started = false; if (operations != null) operations.background(this); super.onStop(); }
+    @Override protected void onDestroy() { if (operations != null) operations.detach(this); super.onDestroy(); }
 }

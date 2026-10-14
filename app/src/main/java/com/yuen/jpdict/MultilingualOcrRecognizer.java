@@ -79,29 +79,36 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     }
 
     void recognize(Bitmap bitmap, Callback callback) {
-        process(bitmap, language(), callback, null);
+        process(bitmap, language(), false, callback, null);
     }
     void recognizeRegions(Bitmap bitmap, RegionsCallback callback) {
         recognizeRegions(bitmap, language(), callback);
     }
     void recognizeRegions(Bitmap bitmap, OcrLanguageSettings.Language language, RegionsCallback callback) {
-        process(bitmap, language, null, callback);
+        recognizeRegions(bitmap, language, false, callback);
+    }
+    void recognizeRegions(Bitmap bitmap, OcrLanguageSettings.Language language, boolean sentences, RegionsCallback callback) {
+        process(bitmap, language, sentences, null, callback);
     }
     void recognizeSelection(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance, Callback callback) {
         recognizeSelection(screen, target, seed, x, y, tolerance, language(), callback);
     }
     void recognizeSelection(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
             OcrLanguageSettings.Language language, Callback callback) {
+        recognizeSelection(screen,target,seed,x,y,tolerance,language,false,callback);
+    }
+    void recognizeSelection(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
+            OcrLanguageSettings.Language language, boolean sentences, Callback callback) {
         List<Region> found = new ArrayList<>();
         if (seed != null) found.add(seed);
-        refineVariant(screen, target, seed, x, y, tolerance, language, false, found, callback);
+        refineVariant(screen, target, seed, x, y, tolerance, language, sentences, false, found, callback);
     }
     private void refineVariant(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
-            OcrLanguageSettings.Language language, boolean enhanced, List<Region> found, Callback callback) {
+            OcrLanguageSettings.Language language, boolean sentences, boolean enhanced, List<Region> found, Callback callback) {
         final OcrImagePreparation prepared;
         try { prepared = OcrImagePreparation.prepare(screen, target, enhanced, seed == null ? 12 : seed.bounds.height()); }
         catch (RuntimeException error) { completeSelection(found, seed, x, y, tolerance, callback, error); return; }
-        process(prepared.image, language, null, new RegionsCallback() {
+        process(prepared.image, language, sentences, null, new RegionsCallback() {
             public void onSuccess(List<Region> regions) {
                 for (Region region : regions) {
                     Region mapped = new Region(region.text, prepared.toScreen(region.bounds));
@@ -112,7 +119,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             public void onFailure(Exception error) { next(error); }
             private void next(Exception error) {
                 prepared.close();
-                if (!enhanced) refineVariant(screen, target, seed, x, y, tolerance, language, true, found, callback);
+                if (!enhanced) refineVariant(screen, target, seed, x, y, tolerance, language, sentences, true, found, callback);
                 else completeSelection(found, seed, x, y, tolerance, callback, error);
             }
         });
@@ -158,7 +165,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         }
     }
 
-    private void process(Bitmap bitmap, OcrLanguageSettings.Language language, Callback callback, RegionsCallback regionsCallback) {
+    private void process(Bitmap bitmap, OcrLanguageSettings.Language language, boolean sentences, Callback callback, RegionsCallback regionsCallback) {
         synchronized (lifecycleLock) {
             if (closeRequested || closed) {
                 fail(callback, regionsCallback, new IllegalStateException("OCR 识别器已关闭"));
@@ -184,7 +191,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                         try {
                             if (regionsCallback != null) {
                                 List<Region> found = new ArrayList<>();
-                                for (int i = 0; i < scripts.length; i++) addRegions(found, tasks.get(i), scripts[i]);
+                                for (int i = 0; i < scripts.length; i++) addRegions(found, tasks.get(i), scripts[i], sentences);
                                 if (!found.isEmpty()) regionsCallback.onSuccess(found);
                                 else {
                                     Exception error = firstError(tasks);
@@ -229,21 +236,22 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             error = new IllegalStateException("OCR 识别模型尚未就绪，请保持联网让 Google Play 服务完成所选语言模型下载后重试", error);
         if (regions != null) regions.onFailure(error); else text.onFailure(error);
     }
-    private static void addRegions(List<Region> regions, Task<Text> task, Script script) {
+    private static void addRegions(List<Region> regions, Task<Text> task, Script script, boolean sentences) {
         if (!task.isSuccessful() || task.getResult() == null) return;
         Text result = task.getResult();
         for (Text.TextBlock block : result.getTextBlocks()) for (Text.Line line : block.getLines()) {
-            for (Text.Element element : line.getElements()) {
-                Rect bounds = element.getBoundingBox();
-                String text = element.getText();
-                if (bounds == null || bounds.isEmpty() || text.trim().isEmpty()) continue;
-                Region candidate = new Region(text, bounds);
-                int letters = 0;
-                for (int i = 0; i < text.length(); i++) if (Character.isLetterOrDigit(text.charAt(i))) letters++;
-                candidate.quality = (float)score(text, script) / Math.max(1, letters) + element.getConfidence();
-                merge(regions, candidate);
-            }
+            if (sentences) addRegion(regions, line.getText(), line.getBoundingBox(), script, line.getConfidence());
+            else for (Text.Element element : line.getElements())
+                addRegion(regions, element.getText(), element.getBoundingBox(), script, element.getConfidence());
         }
+    }
+    private static void addRegion(List<Region> regions, String text, Rect bounds, Script script, float confidence) {
+        if (bounds == null || bounds.isEmpty() || text.trim().isEmpty()) return;
+        Region candidate = new Region(text, bounds);
+        int letters = 0;
+        for (int i = 0; i < text.length(); i++) if (Character.isLetterOrDigit(text.charAt(i))) letters++;
+        candidate.quality = (float)score(text, script) / Math.max(1, letters) + confidence;
+        merge(regions, candidate);
     }
     private static boolean overlaps(Rect first, Rect second) {
         if (!Rect.intersects(first, second)) return false;

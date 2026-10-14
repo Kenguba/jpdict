@@ -24,6 +24,11 @@ final class OcrPickupController implements AutoCloseable {
     private final int slop;
     private final float density;
     private SelectionView overlay;
+    private OcrJoystickView joystick;
+    private final OcrSweepSelection sweep = new OcrSweepSelection();
+    private OcrPickupMode mode = OcrPickupMode.WORD;
+    private boolean pendingAuthorization;
+    private long gestureGeneration;
     private final List<MultilingualOcrRecognizer.Region> regions = new ArrayList<>();
     private MultilingualOcrRecognizer.Region selected;
     private long session;
@@ -32,7 +37,25 @@ final class OcrPickupController implements AutoCloseable {
     private final Runnable timeout = () -> fail("OCR 超时，请确认识别模型已下载后重试");
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent intent) {
-            if (closed || !armed || intent.getLongExtra("session", -1) != session) return;
+            if (closed) return;
+            String action = intent.getAction();
+            if (MainActivity.ScreenCaptureService.ACTION_READY.equals(action)) {
+                if (pendingAuthorization) main.postDelayed(() -> {
+                    if (!pendingAuthorization || closed) return;
+                    pendingAuthorization = false; startPickup(true);
+                }, 300);
+                return;
+            }
+            if (MainActivity.OcrActivity.ACTION_FINISHED.equals(action)) {
+                if (pendingAuthorization && !intent.getBooleanExtra("granted", false)) cancel();
+                return;
+            }
+            if (MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(action)) {
+                if (armed) cancel();
+                return;
+            }
+            if (!armed || intent.getLongExtra("session", -1) != session) return;
+            if (intent.getBooleanExtra("permission_required", false)) { requestAuthorization(); return; }
             if (MainActivity.ScreenCaptureService.ACTION_PREVIEW_FRAME.equals(intent.getAction())) {
                 showOverlay(); return;
             }
@@ -66,81 +89,112 @@ final class OcrPickupController implements AutoCloseable {
         slop = ViewConfiguration.get(context).getScaledTouchSlop();
         IntentFilter filter = new IntentFilter(MainActivity.ScreenCaptureService.ACTION_PREVIEW);
         filter.addAction(MainActivity.ScreenCaptureService.ACTION_PREVIEW_FRAME);
+        filter.addAction(MainActivity.ScreenCaptureService.ACTION_READY);
+        filter.addAction(MainActivity.ScreenCaptureService.ACTION_STOPPED);
+        filter.addAction(MainActivity.OcrActivity.ACTION_FINISHED);
         ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
     View.OnTouchListener listener() {
         return new View.OnTouchListener() {
             float downX, downY;
             Rect start;
-            int lastX, lastY;
+            int lastX, lastY, direction;
             View pressed;
             boolean moved, held, ocrRequested;
+            long generation;
+            final OcrDwellGate dwell = new OcrDwellGate(Math.max(slop, 12*density));
+            final Runnable activate = () -> {
+                if (pressed == null || !moved || held || closed || ocrRequested || generation != gestureGeneration) return;
+                ocrRequested = true;
+                startPickup(false);
+            };
             final Runnable hold = () -> {
-                if (pressed == null || moved || closed) return;
+                if (pressed == null || moved || closed || generation != gestureGeneration) return;
                 held = true;
                 pressed.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                joystick = new OcrJoystickView(context, start);
+                wm.addView(joystick, overlayParams());
             };
             private void drag(MotionEvent event) {
-                int dx = Math.round(event.getRawX() - downX), dy = Math.round(event.getRawY() - downY);
+                float dx = event.getRawX()-downX, dy = event.getRawY()-downY;
+                if (held) {
+                    int next = OcrPickupMode.direction(dx, dy, 28*density);
+                    if (next != direction) {
+                        direction = next;
+                        if (pressed != null && next >= 0) pressed.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                    }
+                    float distance = (float)Math.hypot(dx, dy), travel = 26*density;
+                    float scale = distance > travel ? travel/distance : 1;
+                    Rect knob=host.move(start.left+Math.round(dx*scale), start.top+Math.round(dy*scale));
+                    if (joystick != null) joystick.select(direction, knob);
+                    return;
+                }
                 if (Math.abs(dx) > slop || Math.abs(dy) > slop) {
                     moved = true; main.removeCallbacks(hold);
                 }
-                if (!moved || held) return;
-                int x = start.left + dx, y = start.top + dy;
+                if (!moved) return;
+                int x = start.left+Math.round(dx), y = start.top+Math.round(dy);
                 if (x != lastX || y != lastY) {
                     updateAim(host.move(x, y)); lastX = x; lastY = y;
                 }
-                // An ordinary drag always moves the bubble, but never requests screen sharing.
-                if (!ocrRequested && MainActivity.ScreenCaptureService.READY) {
-                    ocrRequested = true;
-                    startPickup();
+                if (!ocrRequested) {
+                    long remaining = dwell.move(aimX, aimY, SystemClock.uptimeMillis());
+                    main.removeCallbacks(activate); main.postDelayed(activate, remaining);
                 }
                 if (armed) select();
-            }
-            private void startPickup() {
-                armed = waiting = true; released = false;
-                session = SystemClock.elapsedRealtimeNanos();
-                context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
-                        .setAction(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session", session));
-                main.postDelayed(timeout, 10000);
             }
             @Override public boolean onTouch(View view, MotionEvent event) {
                 if (closed) return true;
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
-                        cancel(); main.removeCallbacks(hold);
+                        cancel(); main.removeCallbacks(hold); main.removeCallbacks(activate);
+                        mode = OcrPickupMode.WORD;
                         downX = event.getRawX(); downY = event.getRawY(); start = host.position();
-                        lastX = start.left; lastY = start.top;
-                        moved = held = ocrRequested = false; pressed = view;
+                        updateAim(start); lastX = start.left; lastY = start.top; direction = -1;
+                        moved = held = ocrRequested = false; pressed = view; dwell.reset();
+                        generation = gestureGeneration;
                         main.postDelayed(hold, 700); return true;
                     case MotionEvent.ACTION_MOVE:
-                        drag(event);
-                        return true;
+                        if (generation == gestureGeneration) drag(event); return true;
                     case MotionEvent.ACTION_UP:
-                        main.removeCallbacks(hold); pressed = null;
-                        drag(event);
-                        if (moved && !held) host.save();
-                        if (armed) { released = true; if (!waiting) finish(); }
-                        else if (!held && !moved) host.tap();
-                        else if (held) {
-                            String direction = swipeDirection(event.getRawX()-downX, event.getRawY()-downY, 32*density);
-                            if (direction != null) Toast.makeText(context, direction, Toast.LENGTH_SHORT).show();
-                        }
-                        /* Ordinary touch swipes used to show direction Toasts; only held swipes do now.
-                        else if (!held) {
-                            String direction = swipeDirection(event.getRawX()-downX, event.getRawY()-downY, 32*density);
-                            if (direction != null) Toast.makeText(context, direction, Toast.LENGTH_SHORT).show();
-                        }
-                        */
+                        main.removeCallbacks(hold); main.removeCallbacks(activate);
+                        if (generation != gestureGeneration) { pressed = null; return true; }
+                        drag(event); pressed = null; main.removeCallbacks(activate);
+                        if (held) {
+                            hideJoystick(); updateAim(host.move(start.left, start.top));
+                            OcrPickupMode chosen = OcrPickupMode.forDirection(direction);
+                            if (chosen != null) { mode = chosen; startPickup(true); }
+                        } else if (moved) {
+                            host.save();
+                            if (armed) { released = true; if (!waiting) finish(); }
+                        } else host.tap();
                         return true;
                     case MotionEvent.ACTION_CANCEL:
-                        main.removeCallbacks(hold); pressed = null;
-                        if (moved && !held) { host.move(start.left, start.top); }
+                        main.removeCallbacks(hold); main.removeCallbacks(activate); pressed = null;
+                        if (moved || held) host.move(start.left, start.top);
                         cancel(); return true;
                     default: return true;
                 }
             }
         };
+    }
+    private void startPickup(boolean immediatelyRelease) {
+        if (!MainActivity.ScreenCaptureService.READY) { requestAuthorization(); return; }
+        armed = waiting = true; released = immediatelyRelease;
+        sweep.clear(); regions.clear(); selected = null;
+        session = SystemClock.elapsedRealtimeNanos();
+        context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
+                .setAction(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
+                .putExtra("session", session).putExtra("pickup_mode", mode.value));
+        main.removeCallbacks(timeout); main.postDelayed(timeout, 10000);
+    }
+    private void requestAuthorization() {
+        cancel(); pendingAuthorization = true;
+        context.startActivity(new Intent(context, MainActivity.OcrActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+    }
+    private void hideJoystick() {
+        if (joystick != null) { wm.removeView(joystick); joystick = null; }
     }
     static String swipeDirection(float dx, float dy, float threshold) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return null;
@@ -150,7 +204,12 @@ final class OcrPickupController implements AutoCloseable {
         aimX = bubble.exactCenterX(); aimY = Math.max(0, bubble.top - 12 * density);
     }
     private void select() {
-        selected = regionAt(regions, aimX, aimY, 18*density);
+        MultilingualOcrRecognizer.Region touched = regionAt(regions, aimX, aimY, 12*density);
+        if (touched == null && !sweep.picked.isEmpty()) {
+            Rect nearby=sweep.bounds(); int gap=Math.round(24*density);nearby.inset(-gap,-gap);
+            if (!nearby.contains(Math.round(aimX),Math.round(aimY))) sweep.clear();
+        }
+        sweep.touch(touched, mode); selected = sweep.combined();
         if (overlay != null) overlay.invalidate();
     }
     static MultilingualOcrRecognizer.Region regionAt(List<MultilingualOcrRecognizer.Region> regions, float x, float y, float tolerance) {
@@ -159,6 +218,9 @@ final class OcrPickupController implements AutoCloseable {
     private void showOverlay() {
         if (overlay != null || !armed) return;
         overlay = new SelectionView(context);
+        wm.addView(overlay, overlayParams());
+    }
+    private WindowManager.LayoutParams overlayParams() {
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(-1, -1,
                 Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
@@ -167,14 +229,14 @@ final class OcrPickupController implements AutoCloseable {
         lp.gravity = Gravity.TOP | Gravity.START;
         if (Build.VERSION.SDK_INT >= 28) lp.layoutInDisplayCutoutMode = Build.VERSION.SDK_INT >= 30
                 ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-        wm.addView(overlay, lp);
+        return lp;
     }
     private void finish() {
         waiting = true;
         Rect target = selected == null ? new Rect(Math.round(aimX-140*density), Math.round(aimY-36*density), Math.round(aimX+140*density), Math.round(aimY+36*density)) : selected.bounds;
         Intent request = new Intent(context, MainActivity.ScreenCaptureService.class)
                 .setAction(MainActivity.ScreenCaptureService.ACT_OCR_REFINE).putExtra("session", session)
-                .putExtra("target", target).putExtra("aim_x", aimX).putExtra("aim_y", aimY).putExtra("tolerance", 18*density);
+                .putExtra("target", target).putExtra("aim_x", aimX).putExtra("aim_y", aimY).putExtra("tolerance", 12*density);
         if (selected != null) request.putExtra("seed", selected.text).putExtra("quality", selected.quality);
         context.startService(request);
         main.removeCallbacks(timeout); main.postDelayed(timeout, 10000);
@@ -184,7 +246,8 @@ final class OcrPickupController implements AutoCloseable {
     void cancel() {
         if (armed && MainActivity.ScreenCaptureService.READY) context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
                 .setAction(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session", session));
-        armed = waiting = released = false; session++;
+        armed = waiting = released = pendingAuthorization = false; session++; gestureGeneration++;
+        hideJoystick(); sweep.clear();
         main.removeCallbacks(timeout); regions.clear(); selected = null;
         if (overlay != null) { wm.removeView(overlay); overlay = null; }
     }
@@ -197,11 +260,13 @@ final class OcrPickupController implements AutoCloseable {
             int[] location = new int[2]; getLocationOnScreen(location);
             canvas.save(); canvas.translate(-location[0], -location[1]);
             if (selected != null) {
-                paint.setColor(0x6639c99a); canvas.drawRoundRect(new RectF(selected.bounds), 3*density, 3*density, paint);
+                paint.setColor(0x6639c99a);
+                for (MultilingualOcrRecognizer.Region region : sweep.picked)
+                    canvas.drawRoundRect(new RectF(region.bounds), 3*density, 3*density, paint);
             }
             paint.setColor(selected == null ? 0xff168af2 : 0xff00a777);
             canvas.drawCircle(aimX, aimY, 3*density, paint);
-            String tip = waiting ? (released ? "正在精读所选文字…" : "识别中 · 继续按住并拖动") : selected == null ? "移动准星对准文字 · 松手取词" : "已选中文字 · 松手查词";
+            String tip = waiting ? (released ? "正在精读所选文字…" : "识别中 · 继续按住并拖动") : selected == null ? "移动准星对准文字 · 松手取词" : mode.label+" · 可来回划选 · 松手查词";
             paint.setTextSize(12*density);
             float width = paint.measureText(tip) + 24*density;
             float left = Math.max(8*density, Math.min(aimX-width/2, getWidth()-width-8*density));

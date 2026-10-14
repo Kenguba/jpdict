@@ -7,6 +7,8 @@ import android.content.Context;
 import android.content.ClipboardManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -15,6 +17,7 @@ import android.os.Build;
 import android.os.LocaleList;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.Layout;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -74,6 +77,11 @@ final class FloatingSearchView extends FrameLayout {
     private final GridLayout suggestionWords;
     private final FrameLayout suggestionArea;
     private final SearchSuggestionsController suggestions;
+    private final SearchDraftChips draftChips;
+    private final LinearLayout draftTrash;
+    private final SearchTextExplosionView textExplosion;
+    private final SearchTextExplosionController explosionController;
+    private boolean draftDragging;
     private ClipboardManager clipboard;
     private boolean clipboardListening, clipboardSuspended;
     private final ClipboardManager.OnPrimaryClipChangedListener clipboardChanged = () -> readClipboard(true);
@@ -235,8 +243,27 @@ final class FloatingSearchView extends FrameLayout {
             return true;
         });
         modelButton.setOnTouchListener(this::onLanguageTouch);
-        View spacer = new View(context);
-        tools.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+        draftTrash = new LinearLayout(context);
+        draftTrash.setGravity(Gravity.CENTER);
+        draftTrash.setBackground(ripple(0xfffff0f2, 18));
+        draftTrash.setContentDescription("删除暂存文字，拖到此处松手删除");
+        draftTrash.addView(icon(SearchIconView.Kind.TRASH, 0xffd5465d), new LinearLayout.LayoutParams(dp(21), dp(24)));
+        TextView trashLabel = text("拖到这里删除", 13, 0xffd5465d, true);
+        trashLabel.setPadding(dp(8), 0, 0, 0); draftTrash.addView(trashLabel);
+        draftTrash.setVisibility(GONE);
+        draftChips = new SearchDraftChips(context, input, this, draftTrash, new SearchDraftChips.DragUi() {
+            public void editing() { swipeEligible = false; closeMenu(); callback.onEditingChanged(true); }
+            public void caret(int offset) { input.setDragCaret(offset); }
+            public void dragging(boolean active) {
+                draftDragging = active;
+                draftTrash.setVisibility(active ? VISIBLE : GONE);
+                if (active) { draftTrash.setAlpha(0); draftTrash.setTranslationY(dp(6));
+                    draftTrash.animate().alpha(1).translationY(0).setDuration(140).start(); }
+                else { draftTrash.animate().cancel(); draftTrash.setScaleX(1); draftTrash.setScaleY(1); }
+                updateCompactLayout();
+            }
+        });
+        tools.addView(draftChips, new LinearLayout.LayoutParams(0, dp(36), 1));
         SearchIconView mic = button(SearchIconView.Kind.MIC, "语音转文字，尚未接入", SOFT);
         tools.addView(mic, new LinearLayout.LayoutParams(dp(36), dp(36)));
         mic.setOnClickListener(v -> unavailable("语音转文字"));
@@ -251,10 +278,27 @@ final class FloatingSearchView extends FrameLayout {
         LinearLayout.LayoutParams composerLp = new LinearLayout.LayoutParams(-1, -2);
         composerLp.setMargins(dp(8), 0, dp(8), 0);
         bottom.addView(composer, composerLp);
+        LinearLayout.LayoutParams trashLp = new LinearLayout.LayoutParams(-1, dp(44));
+        trashLp.setMargins(dp(16), dp(8), dp(16), 0);
+        bottom.addView(draftTrash, trashLp);
         LinearLayout.LayoutParams recommendationsLp = new LinearLayout.LayoutParams(-1, dp(42));
         recommendationsLp.topMargin = dp(8);
         bottom.addView(recommendations, recommendationsLp);
         page.addView(bottom, new LinearLayout.LayoutParams(-1, -2));
+
+        textExplosion = new SearchTextExplosionView(context, new SearchTextExplosionView.Actions() {
+            public void lookup(String word) {
+                if (disposed) return;
+                closeMenu(); hideKeyboard(); callback.onLookup(word, state.isPrivateMode());
+            }
+            public void page(int offset) { explosionController.showPage(offset); }
+        });
+        body.addView(textExplosion, new FrameLayout.LayoutParams(-1, -1));
+        explosionController = new SearchTextExplosionController(context, (textPage, parts, loading) -> {
+            textExplosion.show(textPage, parts, loading);
+            textExplosion.bringToFront();
+            if (emptyView != null) emptyView.setVisibility(textExplosion.hasText() ? INVISIBLE : VISIBLE);
+        });
 
         drawerDismiss = new View(context);
         drawerDismiss.setContentDescription("收起侧栏");
@@ -263,6 +307,7 @@ final class FloatingSearchView extends FrameLayout {
         addView(drawerDismiss, new FrameLayout.LayoutParams(-1, -1));
         drawer = new SearchDrawerView(context, new SearchDrawerView.Callback() {
             public void onNewChat() {
+                draftChips.clear();
                 input.setText("");
                 hideKeyboard();
                 drawer.endSearch();
@@ -295,6 +340,7 @@ final class FloatingSearchView extends FrameLayout {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             public void onTextChanged(CharSequence s, int start, int before, int count) {
                 callback.onQueryChanged(s.toString()); updateAction(); suggestions.update(s.toString());
+                explosionController.update(s.toString());
             }
             public void afterTextChanged(Editable s) {}
         });
@@ -319,6 +365,7 @@ final class FloatingSearchView extends FrameLayout {
         });
         applyPrivateMode(false);
         suggestions.update(input.getText().toString());
+        explosionController.update(input.getText().toString());
         installInsets();
     }
 
@@ -421,13 +468,7 @@ final class FloatingSearchView extends FrameLayout {
     private void readClipboard(boolean changed) {
         if (disposed || clipboardSuspended || !hasWindowFocus()) return;
         String copied = SearchClipboard.recentText(getContext(), changed);
-        if (copied != null) appendClipboardText(copied);
-    }
-
-    private void appendClipboardText(String copied) {
-        if (input.length() > 0 && input.getText().charAt(input.length() - 1) != '\n') input.append("\n");
-        input.append(copied);
-        input.setSelection(input.length());
+        if (copied != null) draftChips.replaceFromClipboard(copied);
     }
 
     @Override protected void onDetachedFromWindow() {
@@ -580,6 +621,7 @@ final class FloatingSearchView extends FrameLayout {
         clipboardSuspended = true;
         stopClipboard();
         suggestions.pause();
+        explosionController.pause();
         closeMenu();
         if (drawerAnimator != null) drawerAnimator.cancel();
         applyDrawerProgress(state.isDrawerOpen() ? 1 : 0);
@@ -588,6 +630,7 @@ final class FloatingSearchView extends FrameLayout {
     void resumeAfterLookup() {
         clipboardSuspended = false;
         suggestions.resume();
+        explosionController.resume();
         if (hasWindowFocus()) startClipboard();
     }
 
@@ -607,7 +650,7 @@ final class FloatingSearchView extends FrameLayout {
                 EditorInfo.IME_FLAG_NO_FULLSCREEN |
                 (privacy && Build.VERSION.SDK_INT >= 26 ? EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING : 0));
         if (input.isFocused()) ((InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).restartInput(input);
-        recommendations.setVisibility(privacy ? GONE : VISIBLE);
+        recommendations.setVisibility(privacy || draftDragging ? GONE : VISIBLE);
         updateCompactLayout();
         drawer.setPrivateMode(privacy);
         updateAction();
@@ -630,6 +673,8 @@ final class FloatingSearchView extends FrameLayout {
         }
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER);
         body.addView(empty, lp); emptyView = empty;
+        textExplosion.bringToFront();
+        if (textExplosion.hasText()) empty.setVisibility(INVISIBLE);
         if (animate) {
             empty.setAlpha(0f); empty.setTranslationY(dp(5));
             empty.animate().alpha(1).translationY(0).setDuration(180).start();
@@ -1031,7 +1076,7 @@ final class FloatingSearchView extends FrameLayout {
         int available = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
                 ? page.getLayoutParams().height : getHeight() - topInset - composerBottomSpace();
         header.setVisibility(available < dp(240) ? GONE : VISIBLE);
-        recommendations.setVisibility(!state.isPrivateMode() && available >= dp(320) ? VISIBLE : GONE);
+        recommendations.setVisibility(!draftDragging && !state.isPrivateMode() && available >= dp(320) ? VISIBLE : GONE);
         boolean tight = available < dp(240);
         suggestionArea.setVisibility(!tight ? VISIBLE : GONE);
         if (tight != compactComposer) {
@@ -1114,16 +1159,20 @@ final class FloatingSearchView extends FrameLayout {
 
     @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
         super.onLayout(changed, l, t, r, b);
-        if (emptyView != null) emptyView.setVisibility(body.getHeight() >= dp(state.isPrivateMode() ? 230 : 84) ? VISIBLE : INVISIBLE);
+        if (emptyView != null) emptyView.setVisibility(!textExplosion.hasText()
+                && body.getHeight() >= dp(state.isPrivateMode() ? 230 : 84) ? VISIBLE : INVISIBLE);
+        textExplosion.setVisibility(textExplosion.hasText() && body.getHeight() >= dp(80) ? VISIBLE : GONE);
         if (changed && menuCard != null) post(this::positionMenu);
     }
 
     void dispose() {
         stopClipboard();
         suggestions.close();
+        explosionController.close();
         removeCallbacks(commitLegacyIme);
         drawer.dispose();
         disposed = true;
+        draftChips.dispose();
         ViewTreeObserver observer = getViewTreeObserver();
         if (observer.isAlive()) {
             if (legacyLayoutListener != null) observer.removeOnGlobalLayoutListener(legacyLayoutListener);
@@ -1146,7 +1195,22 @@ final class FloatingSearchView extends FrameLayout {
 
     @android.annotation.SuppressLint("AppCompatCustomView")
     private final class Editor extends EditText {
+        private int dragCaret = -1;
+        private final Paint dragCaretPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         Editor(Context context) { super(context); }
+        void setDragCaret(int offset) { dragCaret = offset; invalidate(); }
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            Layout layout = getLayout();
+            if (dragCaret < 0 || layout == null) return;
+            int offset = Math.min(length(), dragCaret), line = layout.getLineForOffset(offset);
+            float x = layout.getPrimaryHorizontal(offset) + getTotalPaddingLeft() - getScrollX();
+            float top = layout.getLineTop(line) + getTotalPaddingTop() - getScrollY();
+            float bottom = layout.getLineBottom(line) + getTotalPaddingTop() - getScrollY();
+            dragCaretPaint.setColor(0xff7945a1); dragCaretPaint.setStrokeWidth(dp(2));
+            canvas.drawLine(x, top, x, bottom, dragCaretPaint);
+            canvas.drawCircle(x, top, dp(3), dragCaretPaint);
+        }
         @Override public InputConnection onCreateInputConnection(EditorInfo info) {
             InputConnection connection = super.onCreateInputConnection(info);
             if (Build.VERSION.SDK_INT >= 24) info.hintLocales = ocrLanguage.language() == OcrLanguageSettings.Language.ENGLISH

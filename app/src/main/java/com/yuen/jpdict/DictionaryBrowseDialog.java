@@ -83,14 +83,13 @@ final class DictionaryBrowseDialog {
         position.setTextColor(accent.data); position.setFocusable(true); position.setOnClickListener(v -> loadPage());
         ticket = repository.queries.submit(0, () -> {
             try {
-                List<String> html = repository.lookup(dictionary, word);
-                long characters = 0; for (String value : html) characters += value.length();
-                if (characters > 512 * 1024) throw new java.io.IOException("词条 HTML 超过 512 KB 显示限制");
+                DictionaryHtmlDocument html = repository.lookupDocument(dictionary, word);
                 main.post(() -> {
-                    if (closed || request != generation) return;
+                    if (closed || request != generation) { html.close(); return; }
                     results.removeAllViews();
-                    if (html.isEmpty()) { TextView empty = new TextView(context); empty.setText("该词库未收录此词条"); results.addView(empty); }
-                    else { entry = new DictionaryEntryView(context, repository, dictionary, html, this::lookup); results.addView(entry, new LinearLayout.LayoutParams(-1, 1)); }
+                    if (html.entries == 0) { TextView empty = new TextView(context); empty.setText("该词库未收录此词条"); results.addView(empty); }
+                    else { entry = new DictionaryEntryView(context, repository, dictionary, html, this::lookup, null); results.addView(entry, new LinearLayout.LayoutParams(-1, 1)); }
+                    html.close();
                 });
             } catch (Exception error) { fail(request, error); }
         });

@@ -9,6 +9,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PushbackReader;
+import java.io.Writer;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -38,7 +43,6 @@ public final class MdictReader implements Closeable {
     static final int MAX_BLOCK_BYTES = 8 * 1024 * 1024;
     static final int MAX_RESOURCE_BYTES = 16 * 1024 * 1024;
     private static final int MAX_INDEX_BYTES = 4 * 1024 * 1024;
-    private static final int MAX_RESULT_BYTES = 2 * 1024 * 1024;
     private static final java.util.concurrent.Semaphore LARGE_READ = new java.util.concurrent.Semaphore(1, true);
     private static final int MAX_BLOCKS = 100000;
     private static final int MAX_MATCHES = 256;
@@ -124,10 +128,11 @@ public final class MdictReader implements Closeable {
     private Metadata metadata;
     private final File indexFile;
     private final String indexFingerprint;
+    private final File scratch;
     private boolean boundsReady;
 
-    private MdictReader(Source source, File index, String fingerprint) throws IOException {
-        this.source = source;
+    private MdictReader(Source source, File index, String fingerprint, File scratch) throws IOException {
+        this.source = source; this.scratch = scratch;
         indexFile = index; indexFingerprint = fingerprint;
         size = source.size();
         if (!restoreIndex(index, fingerprint)) {
@@ -140,7 +145,10 @@ public final class MdictReader implements Closeable {
         return open(source, null, "");
     }
     static MdictReader open(Source source, File index, String fingerprint) throws IOException {
-        try { return new MdictReader(source, index, fingerprint); }
+        return open(source, index, fingerprint, null);
+    }
+    static MdictReader open(Source source, File index, String fingerprint, File scratch) throws IOException {
+        try { return new MdictReader(source, index, fingerprint, scratch); }
         catch (IOException | RuntimeException failure) {
             try { source.close(); } catch (IOException close) { failure.addSuppressed(close); }
             throw failure;
@@ -152,8 +160,7 @@ public final class MdictReader implements Closeable {
     interface ValidationProgress { void update(long complete, long total); }
     /** Import verification visits each block once, without retaining definitions. */
     synchronized void validate(ValidationProgress progress) throws IOException {
-        ensureOpen(); boolean heavy = enterLargeRead();
-        try {
+        ensureOpen();
         long previous = -1, completed = 0, total = keys.size() + records.size();
         for (int i = 0; i < keys.size(); i++) {
             for (Key key : keyBlock(i)) {
@@ -163,11 +170,14 @@ public final class MdictReader implements Closeable {
             progress.update(++completed, total);
         }
         for (Block block : records) {
-            checkCancelled(); unpack(read(block.position, block.packed), block.unpacked);
+            checkCancelled();
+            MdictBlockDecoder.decode(source, block.position, block.packed, block.unpacked, new java.io.OutputStream() {
+                @Override public void write(int value) {}
+                @Override public void write(byte[] bytes, int offset, int length) {}
+            });
             progress.update(++completed, total);
         }
         boundsReady = true; saveIndex(indexFile, indexFingerprint);
-        } finally { if (heavy) LARGE_READ.release(); }
     }
 
     private boolean restoreIndex(File file, String fingerprint) {
@@ -188,7 +198,7 @@ public final class MdictReader implements Closeable {
             for (int i = 0; i < count; i++) attributes.put(in.readUTF(), in.readUTF());
             count = bounded(in.readInt(), MAX_BLOCKS, "缓存 Key 数量"); long entries = 0;
             for (int i = 0; i < count; i++) {
-                Block block = readIndexBlock(in); block.count = in.readLong(); block.first = in.readUTF(); block.last = in.readUTF();
+                Block block = readIndexBlock(in, false); block.count = in.readLong(); block.first = in.readUTF(); block.last = in.readUTF();
                 block.min = in.readUTF(); block.max = in.readUTF();
                 block.filter = new byte[filterBytes(count)]; in.readFully(block.filter);
                 if (block.min.compareTo(block.max) > 0) throw corrupt("缓存词头范围无效");
@@ -198,7 +208,7 @@ public final class MdictReader implements Closeable {
             if (entries != entryCount) throw corrupt("缓存 Key 汇总无效");
             count = bounded(in.readInt(), MAX_BLOCKS, "缓存 Record 数量"); long decoded = 0;
             for (int i = 0; i < count; i++) {
-                Block block = readIndexBlock(in); block.start = in.readLong();
+                Block block = readIndexBlock(in, true); block.start = in.readLong();
                 if (block.start != decoded) throw corrupt("缓存 Record 汇总无效");
                 decoded = add(decoded, block.unpacked); records.add(block);
             }
@@ -211,10 +221,10 @@ public final class MdictReader implements Closeable {
             return false;
         }
     }
-    private Block readIndexBlock(DataInputStream in) throws IOException {
+    private Block readIndexBlock(DataInputStream in, boolean record) throws IOException {
         Block block = new Block(); block.position = in.readLong();
-        block.packed = bounded(in.readInt(), blockLimit() + 65536, "缓存压缩块");
-        block.unpacked = bounded(in.readInt(), blockLimit(), "缓存解压块");
+        block.packed = bounded(in.readInt(), record ? Integer.MAX_VALUE : blockLimit() + 65536, "缓存压缩块");
+        block.unpacked = bounded(in.readInt(), record ? Integer.MAX_VALUE : blockLimit(), "缓存解压块");
         checkRange(block.position, block.packed); return block;
     }
     private void saveIndex(File file, String fingerprint) {
@@ -333,8 +343,8 @@ public final class MdictReader implements Closeable {
         long recordPosition = position;
         for (int i = 0; i < recordCount; i++) {
             Block block = new Block();
-            block.packed = bounded(ri.number(), blockLimit() + 65536, "Record 压缩块");
-            block.unpacked = bounded(ri.number(), blockLimit(), "Record 解压块");
+            block.packed = bounded(ri.number(), Integer.MAX_VALUE, "Record 压缩块");
+            block.unpacked = bounded(ri.number(), Integer.MAX_VALUE, "Record 解压块");
             block.position = recordPosition;
             block.start = totalRecords;
             recordPosition = add(recordPosition, block.packed);
@@ -447,9 +457,13 @@ public final class MdictReader implements Closeable {
         if (!resource) throw unsupported("MDX 请使用词条查询接口");
         boolean heavy = enterLargeRead();
         try {
-            List<byte[]> found = find(path.replace('/', '\\'), new long[1]);
-            if (found.isEmpty() && !path.startsWith("\\") && !path.startsWith("/")) found = find("\\" + path.replace('/', '\\'), new long[1]);
-            return found.isEmpty() ? null : found.get(0);
+            List<Record> found = findRecords(path.replace('/', '\\'), false);
+            if (found.isEmpty() && !path.startsWith("\\") && !path.startsWith("/")) found = findRecords("\\" + path.replace('/', '\\'), false);
+            if (found.isEmpty()) return null;
+            // The public resource API has always returned the first duplicate.
+            // Resolve its range first rather than allocating every duplicate body.
+            Record first = found.get(0);
+            return record(first.offset, bounded(first.length, MAX_RESOURCE_BYTES, "单条资源"));
         } finally { if (heavy) LARGE_READ.release(); }
     }
 
@@ -467,38 +481,10 @@ public final class MdictReader implements Closeable {
     }
     private List<byte[]> find(String word, long[] budget, boolean exactSpelling) throws IOException {
         List<byte[]> result = new ArrayList<>();
-        String query = normalize(word);
-        long resultBytes = 0;
-        // Auxiliary ranges use actual keys, independent of dictionary collation.
-        if (!boundsReady) {
-            long previous = -1;
-            for (int i = 0; i < keys.size(); i++) {
-                List<Key> actual = keyBlock(i);
-                if (actual.get(0).offset < previous) throw corrupt("跨 Key Block 的记录偏移逆序");
-                previous = actual.get(actual.size() - 1).offset;
-            }
-            boundsReady = true; saveIndex(indexFile, indexFingerprint);
-        }
-        for (int b = 0; b < keys.size(); b++) {
-            checkCancelled();
-            Block block = keys.get(b);
-            if (query.compareTo(block.min) < 0 || query.compareTo(block.max) > 0) continue;
-            if (!filter(block.filter, query, false)) continue;
-            List<Key> entries = keyBlock(b);
-            for (int k = 0; k < entries.size(); k++) {
-                Key key = entries.get(k);
-                if (!normalize(key.text).equals(query)) continue;
-                if (exactSpelling && !key.text.equals(word)) continue;
-                long end = k + 1 < entries.size() ? entries.get(k + 1).offset
-                        : b + 1 < keys.size() ? keyBlock(b + 1).get(0).offset : totalRecords;
-                if (end < key.offset || end > totalRecords) throw corrupt("记录偏移逆序或越界");
-                int length = bounded(end - key.offset, blockLimit(), "单条记录");
-                resultBytes += length;
-                budget[0] += length;
-                int allowed = resource ? MAX_RESOURCE_BYTES : MAX_RESULT_BYTES;
-                if (result.size() >= MAX_MATCHES || resultBytes > allowed || budget[0] > allowed) throw limit("查询结果或重定向超出内存限制");
-                result.add(record(key.offset, length));
-            }
+        for (Record row : findRecords(word, exactSpelling)) {
+            int length = bounded(row.length, resource ? MAX_RESOURCE_BYTES : Integer.MAX_VALUE, "单条记录");
+            budget[0] = add(budget[0], length);
+            result.add(record(row.offset, length));
         }
         return result;
     }
@@ -558,37 +544,204 @@ public final class MdictReader implements Closeable {
 
     private byte[] record(long offset, int length) throws IOException {
         byte[] output = new byte[length];
-        int written = 0, low = 0, high = records.size();
-        while (low < high) {
-            int mid = (low + high) >>> 1;
-            Block block = records.get(mid);
-            if (block.start + block.unpacked <= offset) low = mid + 1;
-            else high = mid;
+        try (InputStream stream = recordStream(offset, length)) {
+            int written = 0;
+            while (written < length) {
+                int count = stream.read(output, written, length - written);
+                if (count < 0) throw corrupt("记录数据不完整");
+                written += count;
+            }
         }
-        for (int i = low; written < length && i < records.size(); i++) {
-            checkCancelled();
-            Block block = records.get(i);
-            int start = (int) (offset - block.start);
-            if (start < 0 || start > block.unpacked) throw corrupt("跨块记录偏移");
-            byte[] decoded = recordCache.get(i);
-            if (decoded == null) {
-                decoded = unpack(read(block.position, block.packed), block.unpacked);
-                if (decoded.length <= CACHE_BYTES) {
-                    while (cachedBytes + decoded.length > CACHE_BYTES && !recordCache.isEmpty()) {
-                        Integer oldest = recordCache.keySet().iterator().next();
-                        cachedBytes -= recordCache.remove(oldest).length;
+        return output;
+    }
+
+    /** UTF-8 HTML is written directly to a file-backed caller; large entries never
+     * become a Java String or byte array. Redirect and Unicode validation stay intact. */
+    synchronized int writeHtml(String word, Writer output) throws IOException {
+        ensureOpen();
+        if (resource) throw unsupported("MDD 请使用资源读取接口");
+        if (word == null || word.length() > 65536) throw limit("查询词头为空或过长");
+        return writeText(word, output, new HashSet<>(), 0);
+    }
+
+    /** Batched key matching shares each decoded Key block and never loads Record data. */
+    synchronized Set<String> containsKeys(List<String> candidates) throws IOException {
+        ensureOpen();
+        Set<String> found = new HashSet<>();
+        ensureBounds();
+        Map<String, List<String>> normalized = new HashMap<>();
+        for (String value : candidates) if (value != null && !value.isEmpty() && value.length() <= 65536) {
+            String key = normalize(value);
+            List<String> originals = normalized.get(key);
+            if (originals == null) { originals = new ArrayList<>(); normalized.put(key, originals); }
+            originals.add(value);
+        }
+        for (int b = 0; b < keys.size(); b++) {
+            checkCancelled(); Block block = keys.get(b);
+            boolean possible = false;
+            for (String value : normalized.keySet()) if (value.compareTo(block.min) >= 0
+                    && value.compareTo(block.max) <= 0 && filter(block.filter, value, false)) { possible = true; break; }
+            if (!possible) continue;
+            for (Key key : keyBlock(b)) {
+                List<String> originals = normalized.get(normalize(key.text));
+                if (originals != null) found.addAll(originals);
+            }
+        }
+        return found;
+    }
+
+    private int writeText(String word, Writer output, Set<String> path, int depth) throws IOException {
+        if (depth >= 32) throw corrupt("@@@LINK 超过 32 层");
+        List<Record> found = findRecords(word, depth > 0);
+        if (depth > 0 && found.isEmpty()) found = findRecords(word, false);
+        int count = 0;
+        for (Record row : found) {
+            try (PushbackReader input = new PushbackReader(new InputStreamReader(recordStream(row.offset, row.length),
+                    charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)), 8)) {
+                char[] prefix = new char[8]; int size = 0, n;
+                while (size < prefix.length && (n = input.read(prefix, size, prefix.length - size)) > 0) size += n;
+                if (size == 8 && "@@@LINK=".equals(new String(prefix))) {
+                    StringBuilder target = new StringBuilder(); char[] buffer = new char[1024];
+                    while ((n = input.read(buffer)) != -1) {
+                        checkCancelled();
+                        if (target.length() + n > 65536) throw limit("@@@LINK 目标词头过长");
+                        target.append(buffer, 0, n);
                     }
-                    recordCache.put(i, decoded);
-                    cachedBytes += decoded.length;
+                    String name = target.toString().replace("\u0000", "").trim();
+                    if (!path.add(name)) throw corrupt("@@@LINK 循环：" + name);
+                    int links;
+                    try { links = writeText(name, output, path, depth + 1); }
+                    finally { path.remove(name); }
+                    if (links == 0) throw corrupt("@@@LINK 目标不存在：" + name);
+                    count += links;
+                } else {
+                    input.unread(prefix, 0, size);
+                    boolean text = "Text".equalsIgnoreCase(metadata.format);
+                    output.write(text ? "<section><pre>" : "<section>");
+                    char[] buffer = new char[8192], zeroes = new char[8192]; long pendingZeroes = 0;
+                    while ((n = input.read(buffer)) != -1) {
+                        checkCancelled();
+                        int end = n; while (end > 0 && buffer[end - 1] == 0) end--;
+                        if (end > 0) {
+                            while (pendingZeroes > 0) {
+                                int amount = (int)Math.min(zeroes.length, pendingZeroes); output.write(zeroes, 0, amount); pendingZeroes -= amount;
+                            }
+                            writeCharacters(output, buffer, end, text);
+                        }
+                        pendingZeroes += n - end; // Only trailing terminators are omitted.
+                    }
+                    output.write(text ? "</pre></section>" : "</section>"); count++;
+                }
+                if (count > MAX_MATCHES) throw limit("重复词条或重定向结果过多");
+            } catch (CharacterCodingException invalid) { throw corrupt("无效 Unicode 或文字编码"); }
+        }
+        return count;
+    }
+    private static void writeCharacters(Writer output, char[] buffer, int length, boolean text) throws IOException {
+        if (!text) { output.write(buffer, 0, length); return; }
+        int start = 0;
+        for (int i = 0; i < length; i++) {
+            String escape = buffer[i] == '&' ? "&amp;" : buffer[i] == '<' ? "&lt;" : buffer[i] == '>' ? "&gt;" : null;
+            if (escape != null) { output.write(buffer, start, i - start); output.write(escape); start = i + 1; }
+        }
+        output.write(buffer, start, length - start);
+    }
+    private static final class Record {
+        final long offset, length;
+        Record(long offset, long length) { this.offset = offset; this.length = length; }
+    }
+    private void ensureBounds() throws IOException {
+        if (boundsReady) return;
+        long previous = -1;
+        for (int i = 0; i < keys.size(); i++) {
+            List<Key> actual = keyBlock(i);
+            if (actual.get(0).offset < previous) throw corrupt("跨 Key Block 的记录偏移逆序");
+            previous = actual.get(actual.size() - 1).offset;
+        }
+        boundsReady = true; saveIndex(indexFile, indexFingerprint);
+    }
+    private List<Record> findRecords(String word, boolean exactSpelling) throws IOException {
+        ensureBounds();
+        List<Record> rows = new ArrayList<>(); String query = normalize(word);
+        for (int b = 0; b < keys.size(); b++) {
+            checkCancelled(); Block block = keys.get(b);
+            if (query.compareTo(block.min) < 0 || query.compareTo(block.max) > 0 || !filter(block.filter, query, false)) continue;
+            List<Key> entries = keyBlock(b);
+            for (int k = 0; k < entries.size(); k++) {
+                Key key = entries.get(k);
+                if (!normalize(key.text).equals(query) || (exactSpelling && !key.text.equals(word))) continue;
+                long end = k + 1 < entries.size() ? entries.get(k + 1).offset
+                        : b + 1 < keys.size() ? keyBlock(b + 1).get(0).offset : totalRecords;
+                if (end < key.offset || end > totalRecords) throw corrupt("记录偏移逆序或越界");
+                if (rows.size() >= MAX_MATCHES) throw limit("重复词条或重定向结果过多");
+                rows.add(new Record(key.offset, end - key.offset));
+            }
+        }
+        return rows;
+    }
+    private InputStream recordStream(long offset, long length) throws IOException {
+        return new InputStream() {
+            long position = offset, remaining = length;
+            int blockIndex = -1;
+            byte[] bytes;
+            File spill;
+            RandomAccessFile disk;
+            private void select() throws IOException {
+                if (blockIndex >= 0 && position < records.get(blockIndex).start + records.get(blockIndex).unpacked) return;
+                if (disk != null) { disk.close(); disk = null; }
+                if (spill != null) { spill.delete(); spill = null; }
+                bytes = null;
+                int low = 0, high = records.size();
+                while (low < high) {
+                    int mid = (low + high) >>> 1; Block block = records.get(mid);
+                    if (block.start + block.unpacked <= position) low = mid + 1; else high = mid;
+                }
+                if (low >= records.size()) throw corrupt("记录数据不完整");
+                blockIndex = low; Block block = records.get(low);
+                if (block.unpacked <= MAX_BLOCK_BYTES && block.packed <= MAX_BLOCK_BYTES + 65536) {
+                    bytes = recordCache.get(low);
+                    if (bytes == null) {
+                        final byte[] decoded = new byte[block.unpacked];
+                        MdictBlockDecoder.decode(source, block.position, block.packed, block.unpacked, new java.io.OutputStream() {
+                            private int position;
+                            @Override public void write(int value) { decoded[position++] = (byte)value; }
+                            @Override public void write(byte[] values, int offset, int length) {
+                                System.arraycopy(values, offset, decoded, position, length); position += length;
+                            }
+                        });
+                        bytes = decoded;
+                        if (bytes.length <= CACHE_BYTES) {
+                            while (cachedBytes + bytes.length > CACHE_BYTES && !recordCache.isEmpty()) {
+                                Integer oldest = recordCache.keySet().iterator().next(); cachedBytes -= recordCache.remove(oldest).length;
+                            }
+                            recordCache.put(low, bytes); cachedBytes += bytes.length;
+                        }
+                    }
+                } else {
+                    spill = File.createTempFile("mdict-block-", ".tmp", scratch);
+                    try (FileOutputStream out = new FileOutputStream(spill)) {
+                        MdictBlockDecoder.decode(source, block.position, block.packed, block.unpacked, out);
+                    } catch (IOException | RuntimeException error) { spill.delete(); spill = null; throw error; }
+                    disk = new RandomAccessFile(spill, "r");
                 }
             }
-            int count = Math.min(length - written, decoded.length - start);
-            System.arraycopy(decoded, start, output, written, count);
-            written += count;
-            offset += count;
-        }
-        if (written != length) throw corrupt("记录数据不完整");
-        return output;
+            @Override public int read() throws IOException { byte[] one = new byte[1]; return read(one, 0, 1) < 0 ? -1 : one[0] & 255; }
+            @Override public int read(byte[] target, int start, int count) throws IOException {
+                if (count == 0) return 0;
+                checkCancelled(); if (remaining == 0) return -1;
+                select(); Block block = records.get(blockIndex);
+                int index = (int)(position - block.start);
+                int n = (int)Math.min(count, Math.min(remaining, block.unpacked - index));
+                if (disk != null) { disk.seek(index); disk.readFully(target, start, n); }
+                else System.arraycopy(bytes, index, target, start, n);
+                position += n; remaining -= n; return n;
+            }
+            @Override public void close() throws IOException {
+                try { if (disk != null) disk.close(); }
+                finally { if (spill != null) spill.delete(); bytes = null; }
+            }
+        };
     }
 
     static byte[] unpack(byte[] input, int expected) throws IOException {
