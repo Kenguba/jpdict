@@ -17,14 +17,24 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class DictionaryInstrumentation extends Instrumentation {
     private int assertions;
     private String ocrMode;
+    private String htmlEditingMode;
     private void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
     private static void write(File file, byte[] bytes) throws IOException {
         try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
     }
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); ocrMode = arguments == null ? null : arguments.getString("ocr"); start(); }
+    @Override public void onCreate(Bundle arguments) {
+        super.onCreate(arguments);
+        ocrMode = arguments == null ? null : arguments.getString("ocr");
+        htmlEditingMode = arguments == null ? null : arguments.getString("html_editing");
+        start();
+    }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (htmlEditingMode != null) {
+                result.putString("stream", DictionaryEditingValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
             if (ocrMode != null) {
                 result.putString("stream", OcrValidation.run(this, "fonts".equals(ocrMode)));
                 finish(android.app.Activity.RESULT_OK, result); return;
@@ -136,6 +146,11 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 "/>", " Compat=\"Yes\"/>"));
         DictionaryRepository.Dictionary linked=repo.install(Collections.singletonList(new DictionaryRepository.Document("external.mdx",Uri.fromFile(external),external.length())),false,null,(m,d,t)->{}).get(0);
         check(repo.lookup(linked,"external").get(0).equals("external-original"),"External storage lookup");
+        long originalModified = external.lastModified();
+        write(external, MdictReaderTest.headerChange(MdictReaderTest.fixture(8, StandardCharsets.UTF_8, 0, false,
+                new String[]{"external"}, new byte[][]{"external-updated!".getBytes(StandardCharsets.UTF_8)}), "/>", " Compat=\"Yes\"/>"));
+        check(external.setLastModified(originalModified), "External fixture preserves its timestamp for fingerprint invalidation");
+        check(repo.lookup(linked, "external").get(0).equals("external-updated!"), "External fingerprint changes invalidate cached definitions even at the same timestamp");
         repo.delete(linked);repo.reload();check(external.exists(),"Unlink never deletes external original");
         linked=repo.install(Collections.singletonList(new DictionaryRepository.Document("external.mdx",Uri.fromFile(external),external.length())),false,null,(m,d,t)->{}).get(0);
         external.delete();boolean missing=false;try{repo.lookup(linked,"external");}catch(IOException expected){missing=true;}check(missing,"Missing external original reported");repo.delete(linked);repo.reload();
@@ -148,7 +163,19 @@ public final class DictionaryInstrumentation extends Instrumentation {
         check(repo.list().size()==30,"Thirty independently registered dictionaries");
         List<String> ids=new ArrayList<>();for(DictionaryRepository.Dictionary d:repo.list())ids.add(d.id);
         Collections.reverse(ids);repo.reorder(ids);repo.reload();check(repo.list().get(0).id.equals(ids.get(0)),"Display order persistence");
+        long coldStart = System.nanoTime();
+        for (DictionaryRepository.Dictionary d : repo.list()) repo.lookup(d, "alpha");
+        long coldElapsed = System.nanoTime() - coldStart;
+        DictionaryRepository.Dictionary cachedDictionary = repo.list().get(0);
+        List<String> cachedDefinition = repo.lookup(cachedDictionary, "alpha");
+        long warmStart = System.nanoTime();
+        for (DictionaryRepository.Dictionary d : repo.list()) repo.lookup(d, "alpha");
+        long warmElapsed = System.nanoTime() - warmStart;
+        check(cachedDefinition == repo.lookup(cachedDictionary, "alpha"), "Definition cache survives two-parser eviction across thirty dictionaries");
+        System.out.println("Device generated-fixture lookup 30 libraries: first=" + coldElapsed / 1000000.0 + "ms, cached=" + warmElapsed / 1000000.0 + "ms");
         System.out.println("Device 30 registrations heap delta bytes="+((Runtime.getRuntime().totalMemory()-Runtime.getRuntime().freeMemory())-memoryBefore));
+        DictionaryLoadingValidation.run(this, repo, originals);
+        check(true, "Evicted offscreen definitions wait for visibility before reloading, then load successfully");
         for(DictionaryRepository.Dictionary d:new ArrayList<>(repo.list()))if(!d.id.equals(id))repo.delete(d);
         repo.reload();dictionary=repo.list().get(0);
         List<DictionaryCatalog.Package> catalog=DictionaryCatalog.load(context);
@@ -206,10 +233,24 @@ public final class DictionaryInstrumentation extends Instrumentation {
         runOnMainSync(()->check(closedHost.get().getChildCount()==0,"Closed lookup does not receive asynchronous UI updates"));
         AtomicReference<DictionaryLookupController> retainedController = new AtomicReference<>();
         AtomicReference<LinearLayout> retainedHost = new AtomicReference<>();
-        runOnMainSync(() -> {
-            LinearLayout host = new LinearLayout(context); retainedHost.set(host);
-            retainedController.set(new DictionaryLookupController(context, host, "alpha", navigation::set));
-        });
+        java.util.concurrent.CountDownLatch workersBlocked = new java.util.concurrent.CountDownLatch(2), releaseQueries = new java.util.concurrent.CountDownLatch(1);
+        Runnable holdQuery = () -> {
+            workersBlocked.countDown();
+            try { releaseQueries.await(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        };
+        repo.queries.submit(0, holdQuery); repo.queries.submit(0, holdQuery);
+        try {
+            check(workersBlocked.await(5, java.util.concurrent.TimeUnit.SECONDS), "Lookup loading probe occupies both workers");
+            runOnMainSync(() -> {
+                LinearLayout host = new LinearLayout(context); retainedHost.set(host);
+                retainedController.set(new DictionaryLookupController(context, host, "alpha", navigation::set));
+            });
+            runOnMainSync(() -> {
+                LinearLayout host = retainedHost.get();
+                check(host.getChildCount() == 2 && host.getChildAt(1).getVisibility() == android.view.View.GONE,
+                        "A saved expanded preference stays collapsed while its query is queued");
+            });
+        } finally { releaseQueries.countDown(); }
         AtomicReference<android.view.View> retainedWeb = new AtomicReference<>();
         for (int attempt = 0; attempt < 50 && retainedWeb.get() == null; attempt++) {
             Thread.sleep(100);
@@ -217,7 +258,8 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 LinearLayout host = retainedHost.get();
                 if (host.getChildCount() < 2) return;
                 LinearLayout body = (LinearLayout)host.getChildAt(1);
-                if (body.getChildCount() > 0 && body.getChildAt(0) instanceof DictionaryEntryView) retainedWeb.set(body.getChildAt(0));
+                if (body.getVisibility() == android.view.View.VISIBLE && body.getChildCount() > 0
+                        && body.getChildAt(0) instanceof DictionaryEntryView) retainedWeb.set(body.getChildAt(0));
             });
         }
         runOnMainSync(() -> {

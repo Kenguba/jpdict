@@ -47,6 +47,8 @@ public class QuickLookupActivity extends Activity {
     private String query;
     private boolean closing;
     private DictionaryLookupController dictionaryLookup;
+    private DictionaryEntryView htmlEditor;
+    private android.window.OnBackInvokedCallback backCallback;
     private boolean popupMode;
     private long observedKeyRevision = -1L;
     private int aiRequestGeneration;
@@ -199,10 +201,24 @@ public class QuickLookupActivity extends Activity {
         dictionarySections.setOrientation(LinearLayout.VERTICAL);
         content.addView(dictionarySections, new LinearLayout.LayoutParams(-1, -2));
         dictionaryLookup = new DictionaryLookupController(this, dictionarySections, query,
-                word -> {
-                    startActivity(new Intent(this, QuickLookupActivity.class).putExtra("query", word)
-                            .putExtra(FloatingService.EXTRA_POPUP_MODE, popupMode));
-                    finish();
+                new DictionaryEntryView.Navigation() {
+                    @Override public void lookup(String word) {
+                        startActivity(new Intent(QuickLookupActivity.this, QuickLookupActivity.class).putExtra("query", word)
+                                .putExtra(FloatingService.EXTRA_POPUP_MODE, popupMode));
+                        finish();
+                    }
+                    @Override public void editingChanged(DictionaryEntryView editor, boolean editing) {
+                        if (closing || isFinishing()) return;
+                        if (editing) {
+                            if (htmlEditor != null && htmlEditor != editor) htmlEditor.stopEditing();
+                            htmlEditor = editor;
+                            updateBackHandler(true);
+                        } else if (htmlEditor == editor) {
+                            htmlEditor = null;
+                            updateBackHandler(false);
+                        }
+                    }
+                    @Override public boolean closeOnBack() { closeLookupTask(); return true; }
                 });
 
         addSectionHeader(content, "Groq AI");
@@ -314,16 +330,23 @@ public class QuickLookupActivity extends Activity {
     }
 
     private void installBackHandler() {
+        updateBackHandler(false);
+    }
+
+    private void updateBackHandler(boolean editing) {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (backCallback != null) getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            backCallback = this::closeLookupTask;
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                    this::closeLookupTask);
+                    editing ? android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY
+                            : android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
         }
     }
 
     private void closeLookupTask() {
         if (closing) return;
         closing = true;
+        if (htmlEditor != null) { htmlEditor.stopEditing(); htmlEditor = null; }
         if (dictionaryLookup != null) dictionaryLookup.close();
 
         Intent source = getIntent();
@@ -364,6 +387,8 @@ public class QuickLookupActivity extends Activity {
 
     private void configureWindow() {
         Window w = getWindow();
+        w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
 
         if (popupMode) {
             w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));

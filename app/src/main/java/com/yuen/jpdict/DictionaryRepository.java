@@ -80,6 +80,7 @@ final class DictionaryRepository {
             TimeUnit.SECONDS, new ArrayBlockingQueue<>(4), r -> new Thread(r, "jpdict-install"));
     final DictionaryScheduler queries = new DictionaryScheduler();
     private final DictionaryReaderPool readers;
+    private final DictionaryResultCache lookupCache = new DictionaryResultCache();
     private volatile List<Dictionary> snapshot = Collections.emptyList();
     private volatile boolean loaded;
 
@@ -327,13 +328,21 @@ final class DictionaryRepository {
         } catch (SecurityException e) { throw new IOException("外部文件授权已失效，请重新关联", e); }
     }
     List<String> lookup(Dictionary d, String word) throws IOException {
-        return readers.read(d.mdx(), reader -> {
+        MdictReader.checkCancelled();
+        Document document = d.mdx();
+        String identity = readers.resultIdentity(document);
+        List<String> cached = lookupCache.get(identity, word);
+        if (cached != null) return cached;
+        List<String> result = readers.read(document, reader -> {
             List<String> entries = reader.lookup(word);
             if (!"Text".equalsIgnoreCase(reader.getMetadata().format)) return entries;
             List<String> escaped = new ArrayList<>();
             for (String entry : entries) escaped.add("<pre>" + entry.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</pre>");
             return escaped;
         });
+        MdictReader.checkCancelled();
+        lookupCache.put(identity, word, result);
+        return result;
     }
     List<String> suggest(String prefix) throws IOException {
         WordSuggestions matches = new WordSuggestions(prefix, WordSuggestions.LIMIT);
@@ -456,7 +465,7 @@ final class DictionaryRepository {
     File directory() { return root; }
     Context context() { return context; }
     Database database() { return database; }
-    void closeReaders() { readers.clear(); }
+    void closeReaders() { readers.clear(); lookupCache.clear(); }
 
     private void recoverStorage(List<Dictionary> installed) throws IOException {
         if (!root.isDirectory()) return;

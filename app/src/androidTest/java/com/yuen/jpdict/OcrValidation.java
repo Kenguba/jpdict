@@ -17,7 +17,7 @@ final class OcrValidation {
         OcrValidation test = new OcrValidation();
         test.images(); test.gestures(instrumentation);
         String measured = fonts ? test.fonts(instrumentation) : "";
-        return "OCR: " + test.checks + " assertions passed\n" + measured;
+        return "OCR: " + test.checks + " assertions passed\n" + OcrLanguageValidation.run(instrumentation) + measured;
     }
     private void images() {
         Bitmap screen = Bitmap.createBitmap(1024, 512, Bitmap.Config.ARGB_8888);
@@ -54,11 +54,13 @@ final class OcrValidation {
     private void gestures(Instrumentation instrumentation) throws Exception {
         Context app = instrumentation.getTargetContext();
         AtomicReference<Intent> request = new AtomicReference<>();
+        int[] activities = {0};
         Context capture = new ContextWrapper(app) {
             @Override public ComponentName startService(Intent intent) {
                 if (!MainActivity.ScreenCaptureService.ACT_OCR_CANCEL.equals(intent.getAction())) request.set(new Intent(intent));
                 return new ComponentName(getPackageName(), MainActivity.ScreenCaptureService.class.getName());
             }
+            @Override public void startActivity(Intent intent) { activities[0]++; }
         };
         final Rect position = new Rect(400, 700, 444, 744);
         final Rect rendered = new Rect(position);
@@ -68,13 +70,12 @@ final class OcrValidation {
             public Rect move(int x, int y) { position.offsetTo(x, y); moves[0]++; return new Rect(position); }
             public void save() { saves[0]++; }
             public void tap() { taps[0]++; }
-            public void authorize() { throw new AssertionError("Unexpected authorization in READY fixture"); }
             public void lookup(String text) { query.set(text); }
         };
         AtomicReference<OcrPickupController> owner = new AtomicReference<>(); AtomicReference<View.OnTouchListener> listener = new AtomicReference<>();
         AtomicReference<View> view = new AtomicReference<>();
         boolean wasReady = MainActivity.ScreenCaptureService.READY;
-        MainActivity.ScreenCaptureService.READY = true;
+        MainActivity.ScreenCaptureService.READY = false;
         try {
             instrumentation.runOnMainSync(() -> { owner.set(new OcrPickupController(capture, host)); listener.set(owner.get().listener()); view.set(new View(app)); });
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
@@ -82,21 +83,46 @@ final class OcrValidation {
             Thread.sleep(760);
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 520, 720);
             instrumentation.runOnMainSync(() -> {
-                check(moves[0] == 0 && saves[0] == 0 && position.left == 400, "Swipe before long press leaves bubble and saved position fixed");
-                check(request.get() == null && taps[0] == 0, "Short swipe neither starts OCR nor opens search");
+                check(moves[0] == 1 && saves[0] == 1 && position.left == 500, "Ordinary drag moves and saves before screen sharing is authorized");
+                check(request.get() == null && activities[0] == 0 && taps[0] == 0, "Unauthorised drag never starts OCR, authorization or search");
+                position.set(rendered); moves[0] = 0;
+            });
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_CANCEL, 520, 720);
+            instrumentation.runOnMainSync(() -> {
+                check(position.equals(rendered) && saves[0] == 1, "Cancel restores an ordinary drag without saving its temporary position");
+                check(request.get() == null && activities[0] == 0, "Canceling an unauthorised drag never requests sharing");
+                moves[0] = 0;
             });
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 420, 720);
-            instrumentation.runOnMainSync(() -> check(taps[0] == 1, "Short tap still opens search"));
+            instrumentation.runOnMainSync(() -> check(taps[0] == 1 && activities[0] == 0, "Short tap still opens search without requesting sharing"));
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
             Thread.sleep(600);
-            check(request.get() == null, "600ms does not arm OCR");
+            instrumentation.runOnMainSync(() -> check(request.get() == null && activities[0] == 0, "600ms hold does not arm OCR or request sharing"));
             Thread.sleep(170);
-            check(request.get() != null && MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW.equals(request.get().getAction()), "Stationary 700ms hold arms OCR");
-            long session = request.get().getLongExtra("session", -1);
+            instrumentation.runOnMainSync(() -> check(request.get() == null && activities[0] == 0, "Stationary 700ms hold enters direction mode without authorization"));
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 520, 720);
-            instrumentation.runOnMainSync(() -> check(moves[0] == 1 && saves[0] == 1 && position.left == 500, "Held drag moves and saves the bubble"));
+            instrumentation.runOnMainSync(() -> {
+                check(moves[0] == 0 && saves[0] == 1 && position.left == 400, "Held direction swipe keeps the bubble position unchanged");
+                check(request.get() == null && activities[0] == 0 && taps[0] == 1, "Held swipe does not request OCR, authorization or search");
+                MainActivity.ScreenCaptureService.READY = true;
+            });
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
+            Thread.sleep(760);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 320, 720);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 320, 720);
+            instrumentation.runOnMainSync(() -> check(request.get() == null && moves[0] == 0 && saves[0] == 1, "Authorized held swipe still only uses direction mode"));
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 421, 721);
+            instrumentation.runOnMainSync(() -> check(request.get() == null && moves[0] == 0, "Finger jitter cannot move the bubble or start OCR"));
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
+            instrumentation.runOnMainSync(() -> check(request.get() != null && MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW.equals(request.get().getAction()), "Authorized ordinary drag immediately starts OCR before long press"));
+            long session = request.get().getLongExtra("session", -1);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 520, 720);
+            instrumentation.runOnMainSync(() -> check(moves[0] == 1 && saves[0] == 2 && position.left == 500, "OCR drag saves the moved bubble once on release"));
             float y = 700-12*app.getResources().getDisplayMetrics().density;
             app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",session)
                     .putExtra("words",new String[]{"日本語"}).putExtra("boxes",new int[]{500,(int)y-10,544,(int)y+10}));

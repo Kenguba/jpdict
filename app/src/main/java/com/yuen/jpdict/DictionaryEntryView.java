@@ -5,6 +5,10 @@ import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -17,11 +21,25 @@ import java.util.List;
 
 /** Untrusted dictionary HTML renderer; the Java engine stays outside WebView. */
 final class DictionaryEntryView extends WebView {
-    interface Navigation { void lookup(String word); }
+    interface Navigation {
+        void lookup(String word);
+        default void editingChanged(DictionaryEntryView editor, boolean editing) { }
+        default boolean closeOnBack() { return false; }
+    }
     private final DictionaryRepository repository;
     private final DictionaryRepository.Dictionary dictionary;
     private final Navigation navigation;
     private final String origin, entryUrl;
+    private final Runnable onReady;
+    private boolean ready;
+    private boolean editing;
+    private int editingProbe;
+    // Touch callbacks run on the UI thread; a newer dictionary touch owns IME.
+    private static long touches;
+    private long latestTouch;
+    private float editorTouchX, editorTouchY;
+    private int editorTouchWidth;
+    private boolean touchEditorPending, focusingEditor;
     private byte[] entryHtml;
     private static final String POLICY = "default-src 'none'; style-src 'unsafe-inline' 'self'; "
             + "script-src 'unsafe-inline' 'unsafe-eval' 'self'; img-src 'self' data:; font-src 'self' data:; "
@@ -38,8 +56,13 @@ final class DictionaryEntryView extends WebView {
 
     DictionaryEntryView(Context context, DictionaryRepository repository,
             DictionaryRepository.Dictionary dictionary, List<String> entries, Navigation navigation) {
+        this(context, repository, dictionary, entries, navigation, null);
+    }
+    DictionaryEntryView(Context context, DictionaryRepository repository,
+            DictionaryRepository.Dictionary dictionary, List<String> entries, Navigation navigation, Runnable onReady) {
         super(context);
         this.repository = repository; this.dictionary = dictionary; this.navigation = navigation;
+        this.onReady = onReady;
         origin = "https://" + dictionary.id + ".dict.invalid/";
         entryUrl = origin + "__jpdict_entry__.html";
         WebSettings settings = getSettings();
@@ -56,12 +79,21 @@ final class DictionaryEntryView extends WebView {
         settings.setSaveFormData(false);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         settings.setSupportMultipleWindows(false);
-        setFocusable(false);
+        // The containing overlay stays NOT_FOCUSABLE until a touched HTML editor
+        // is active. WebView itself must accept focus for its native IME adapter.
+        setFocusable(true);
+        setFocusableInTouchMode(true);
         setVerticalScrollBarEnabled(false);
         setOverScrollMode(OVER_SCROLL_NEVER);
         setBackgroundColor(android.graphics.Color.WHITE);
         setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView view, String url) { scheduleHeight(); }
+            @Override public void onPageFinished(WebView view, String url) {
+                if (!closed && !ready && entryUrl.equals(url)) {
+                    ready = true;
+                    if (DictionaryEntryView.this.onReady != null) DictionaryEntryView.this.onReady.run();
+                }
+                scheduleHeight();
+            }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (closed || !"GET".equals(request.getMethod())) return denied();
                 try {
@@ -93,6 +125,103 @@ final class DictionaryEntryView extends WebView {
         html.append("</body></html>");
         entryHtml = html.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         loadUrl(entryUrl);
+    }
+    boolean isReady() { return ready; }
+    @Override public boolean onTouchEvent(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            editingProbe++; touchEditorPending = focusingEditor = false;
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) { latestTouch = ++touches; requestFocus(); }
+        }
+        boolean handled = super.onTouchEvent(event);
+        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+            int probe = ++editingProbe;
+            editorTouchX = event.getX(); editorTouchY = event.getY(); editorTouchWidth = getWidth();
+            touchEditorPending = true;
+            post(() -> {
+                if (closed || probe != editingProbe || latestTouch != touches || editorTouchWidth <= 0) return;
+                // A NOT_FOCUSABLE window may not activate the DOM on its own.
+                // Detect the touched editor before asking the owner for focus.
+                // Only a boolean leaves WebView; no values or Android bridge.
+                evaluateJavascript(editorAtTouch(false), value -> {
+                    if (!closed && probe == editingProbe && latestTouch == touches) {
+                        // A later native headword/Key edit owns focus even though
+                        // it does not increment the dictionary touch sequence.
+                        if (!(getRootView().findFocus() instanceof android.widget.EditText)) setEditing("true".equals(value));
+                    }
+                });
+            });
+        }
+        return handled;
+    }
+    private void setEditing(boolean value) {
+        if (!value) { stopEditing(); return; }
+        if (editing != value) {
+            editing = value;
+            navigation.editingChanged(this, value);
+        }
+        requestFocus(); showEditorKeyboard();
+    }
+    private void showEditorKeyboard() {
+        post(() -> {
+            if (closed || !editing || latestTouch != touches || !hasWindowFocus() || !isFocused()) return;
+            if (focusingEditor) return;
+            int probe = editingProbe;
+            if (touchEditorPending) {
+                focusingEditor = true;
+                // Focus the actual clicked node after the window can own an IME.
+                evaluateJavascript(editorAtTouch(true), value -> {
+                    if (closed || !editing || probe != editingProbe || latestTouch != touches || !isFocused()) return;
+                    touchEditorPending = focusingEditor = false;
+                    if ("true".equals(value)) post(() -> openEditorKeyboard(probe));
+                    else stopEditing();
+                });
+            } else openEditorKeyboard(probe);
+        });
+    }
+    private String editorAtTouch(boolean focus) {
+        // Native touch coordinates refer to the visible viewport. VisualViewport
+        // also accounts for page zoom; elementFromPoint accounts for DOM scrolling.
+        return "(function(){var v=window.visualViewport,s=(v?v.width:innerWidth)/" + editorTouchWidth
+                + ",x=" + editorTouchX + "*s+(v?v.offsetLeft:0),y=" + editorTouchY + "*s+(v?v.offsetTop:0);"
+                + "var e=document.elementFromPoint(x,y);if(e&&e.tagName==='LABEL'&&e.control)e=e.control;"
+                + "var ok=!!(e&&!e.disabled&&!e.readOnly&&(e.isContentEditable||e.tagName==='TEXTAREA'||"
+                + "(e.tagName==='INPUT'&&/^(text|search|email|url|tel|number|password)$/.test(e.type))));"
+                + (focus ? "if(ok){while(e.parentElement&&e.parentElement.isContentEditable)e=e.parentElement;"
+                    + "try{e.focus({preventScroll:true});}catch(ignore){e.focus();}}" : "")
+                + "return ok;})()";
+    }
+    private void openEditorKeyboard(int probe) {
+        if (closed || !editing || probe != editingProbe || latestTouch != touches || !hasWindowFocus() || !isFocused()) return;
+        InputMethodManager ime = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (ime != null) { ime.restartInput(this); ime.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT); }
+    }
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused && editing) showEditorKeyboard();
+    }
+    @Override protected void onFocusChanged(boolean focused, int direction, android.graphics.Rect previouslyFocusedRect) {
+        super.onFocusChanged(focused, direction, previouslyFocusedRect);
+        if (!focused) { editingProbe++; touchEditorPending = focusingEditor = false; if (editing) stopEditing(); }
+    }
+    @Override protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        if (visibility != VISIBLE && editing) stopEditing();
+    }
+    @Override public boolean onKeyPreIme(int keyCode, KeyEvent event) {
+        if (editing && keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()
+                && navigation.closeOnBack()) return true;
+        return super.onKeyPreIme(keyCode, event);
+    }
+    void stopEditing() {
+        editingProbe++;
+        touchEditorPending = focusingEditor = false;
+        if (!editing) return;
+        editing = false;
+        InputMethodManager ime = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (ime != null) ime.hideSoftInputFromWindow(getWindowToken(), 0);
+        navigation.editingChanged(this, false);
+        clearFocus();
+        if (!closed) evaluateJavascript("(function(){var e=document.activeElement;if(e&&e.blur)e.blur();})()", null);
     }
     @Override protected void onDraw(android.graphics.Canvas canvas) {
         super.onDraw(canvas);
@@ -194,6 +323,7 @@ final class DictionaryEntryView extends WebView {
     }
     void close() {
         if (closed) return;
+        stopEditing();
         closed = true;
         main.removeCallbacks(measureHeight);
         if (soundTask != null) soundTask.cancel();

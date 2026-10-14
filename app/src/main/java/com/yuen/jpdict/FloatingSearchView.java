@@ -4,6 +4,7 @@ import android.animation.ValueAnimator;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
+import android.content.ClipboardManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Rect;
@@ -11,6 +12,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
+import android.os.LocaleList;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
@@ -39,6 +41,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Locale;
 
 /** Native search surface. The Service retains window ownership and lookup routing. */
 final class FloatingSearchView extends FrameLayout {
@@ -69,10 +74,19 @@ final class FloatingSearchView extends FrameLayout {
     private final GridLayout suggestionWords;
     private final FrameLayout suggestionArea;
     private final SearchSuggestionsController suggestions;
-    private boolean clipboardPending;
+    private ClipboardManager clipboard;
+    private boolean clipboardListening, clipboardSuspended;
+    private final ClipboardManager.OnPrimaryClipChangedListener clipboardChanged = () -> readClipboard(true);
+    private List<String> suggestionResults = Collections.emptyList();
     private final SearchIconView plus;
     private final SearchIconView privateButton;
     private final LinearLayout modelButton;
+    private final TextView languageLabel;
+    private final OcrLanguageSettings ocrLanguage;
+    private final LinearLayout[] languageRows = new LinearLayout[OcrLanguageSettings.Language.values().length];
+    private OcrLanguageSettings.Language hoveredLanguage;
+    private boolean languageDrag;
+    private View menuAnchorTouchTarget;
     private final LinearLayout actionButton;
     private final HorizontalScrollView recommendations;
     private final SearchDrawerView drawer;
@@ -105,6 +119,7 @@ final class FloatingSearchView extends FrameLayout {
     FloatingSearchView(Context context, String query, boolean privateMode, Callback callback) {
         super(context);
         this.callback = callback;
+        ocrLanguage = OcrLanguageSettings.get(context);
         keyboardSpace = new SearchKeyboardSpace(context);
         state.setPrivateMode(privateMode);
         setBackgroundColor(PAPER);
@@ -152,15 +167,20 @@ final class FloatingSearchView extends FrameLayout {
         LinearLayout pills = new LinearLayout(context);
         pills.setGravity(Gravity.CENTER_VERTICAL);
         recommendations.addView(pills, new HorizontalScrollView.LayoutParams(-2, -1));
-        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, 0xffdef7ff, 0xff009bdc,
-                () -> openPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS));
+        addPill(pills, "搜索词库", SearchIconView.Kind.SEARCH, 0xffe4f0ff, 0xff2673c5,
+                this::submitFromButton);
         addPill(pills, "词库管理", SearchIconView.Kind.BOOK, 0xffe7f5ed, 0xff15996c,
                 () -> openPage(FloatingSearchRoutes.PAGE_DICTIONARIES));
-        addPill(pills, "Groq Key", SearchIconView.Kind.MARK, SOFT, INK,
+        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, 0xffdef7ff, 0xff009bdc,
+                () -> openPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS));
+        addPill(pills, "设置", SearchIconView.Kind.SETTINGS, SOFT, INK,
                 () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
         suggestionWords = new GridLayout(context);
         suggestionWords.setColumnCount(3);
         suggestionWords.setPadding(dp(16), 0, dp(16), dp(4));
+        suggestionWords.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+            if (r - l != oldR - oldL) post(() -> { if (!disposed) renderSuggestions(); });
+        });
         suggestionArea = new FrameLayout(context);
         suggestionArea.addView(suggestionWords, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
         bottom.addView(suggestionArea, new LinearLayout.LayoutParams(-1, dp(124)));
@@ -182,6 +202,7 @@ final class FloatingSearchView extends FrameLayout {
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         input.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI
                 | EditorInfo.IME_FLAG_NO_FULLSCREEN);
+        applyKeyboardLanguage(false);
         input.setContentDescription("查询输入框");
         input.setText(query == null ? "" : query);
         input.setSelection(input.length());
@@ -196,17 +217,24 @@ final class FloatingSearchView extends FrameLayout {
         modelButton.setGravity(Gravity.CENTER);
         modelButton.setPadding(dp(12), 0, dp(10), 0);
         modelButton.setBackground(ripple(SOFT, 24));
-        modelButton.setContentDescription("选择模型，当前快速");
         SearchIconView bolt = icon(SearchIconView.Kind.LIGHTNING, INK);
         modelButton.addView(bolt, new LinearLayout.LayoutParams(dp(19), dp(23)));
-        TextView fast = text("快速", 14, INK, true);
-        fast.setPadding(dp(5), 0, dp(5), 0);
-        modelButton.addView(fast);
+        languageLabel = text(ocrLanguage.language().label, 14, INK, true);
+        languageLabel.setPadding(dp(5), 0, dp(5), 0);
+        modelButton.addView(languageLabel);
+        updateLanguageButton();
         modelButton.addView(icon(SearchIconView.Kind.CHEVRON, 0xff74777a), new LinearLayout.LayoutParams(dp(13), dp(18)));
         LinearLayout.LayoutParams modelLp = new LinearLayout.LayoutParams(-2, dp(36));
         modelLp.leftMargin = dp(7);
         tools.addView(modelButton, modelLp);
         modelButton.setOnClickListener(v -> toggleMenu(FloatingSearchState.Menu.MODEL));
+        modelButton.setOnLongClickListener(v -> {
+            toggleMenu(FloatingSearchState.Menu.LANGUAGE);
+            languageDrag = state.getMenu() == FloatingSearchState.Menu.LANGUAGE;
+            swipeEligible = false;
+            return true;
+        });
+        modelButton.setOnTouchListener(this::onLanguageTouch);
         View spacer = new View(context);
         tools.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
         SearchIconView mic = button(SearchIconView.Kind.MIC, "语音转文字，尚未接入", SOFT);
@@ -218,10 +246,7 @@ final class FloatingSearchView extends FrameLayout {
         LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(-2, dp(36));
         actionLp.leftMargin = dp(7);
         tools.addView(actionButton, actionLp);
-        actionButton.setOnClickListener(v -> {
-            if (!input.getText().toString().trim().isEmpty()) submit();
-            else if (!state.isPrivateMode()) unavailable("实时语音");
-        });
+        actionButton.setOnClickListener(v -> submitFromButton());
         composer.addView(tools, new LinearLayout.LayoutParams(-1, dp(44)));
         LinearLayout.LayoutParams composerLp = new LinearLayout.LayoutParams(-1, -2);
         composerLp.setMargins(dp(8), 0, dp(8), 0);
@@ -298,42 +323,116 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private void showSuggestions(List<String> words) {
+        suggestionResults = words;
+        renderSuggestions();
+    }
+
+    private void renderSuggestions() {
         suggestionWords.removeAllViews();
         suggestionArea.setVisibility(compactComposer ? GONE : VISIBLE);
+        String current = input.getText().toString();
+        boolean hasCurrent = !current.trim().isEmpty();
+        List<String> words = new ArrayList<>();
+        for (String word : suggestionResults) if (!word.equals(current)) words.add(word);
+        int width = suggestionWords.getWidth() > 0 ? suggestionWords.getWidth()
+                : getResources().getDisplayMetrics().widthPixels;
+        int contentWidth = width - suggestionWords.getPaddingLeft() - suggestionWords.getPaddingRight();
+        TextView fullInput = hasCurrent ? suggestion(current) : null;
+        boolean longInput = fullInput != null && (current.indexOf('\n') >= 0
+                || fullInput.getPaint().measureText(current) > (contentWidth - dp(12)) / 3f - dp(16));
+        if (hasCurrent && !longInput) words.add(0, current);
+        if (longInput) {
+            fullInput.setSingleLine(false);
+            fullInput.setMaxLines(2);
+            fullInput.setMinimumHeight(dp(27));
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(0), GridLayout.spec(0, 3));
+            lp.width = -1; lp.height = -2; lp.rightMargin = dp(4); lp.bottomMargin = dp(3);
+            suggestionWords.addView(fullInput, lp);
+        }
         if (words.isEmpty()) {
+            if (longInput) { updateSuggestionHeight(width); return; }
             TextView note = text(input.length() == 0 ? "本地词库智能联想" : "回车查询 · 支持中 / 英 / 日 / 韩", 11, MUTED, false);
             note.setPadding(0, dp(9), 0, 0);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(0), GridLayout.spec(0, 3));
             lp.width = -1; suggestionWords.addView(note, lp);
+            updateSuggestionHeight(width);
             return;
         }
         int index = 0;
         for (String word : words) {
-            TextView candidate = text(word, 13, 0xff006bff, false);
-            candidate.setSingleLine(true);
-            candidate.setEllipsize(TextUtils.TruncateAt.END);
-            candidate.setPadding(dp(8), dp(5), dp(8), dp(5));
-            candidate.setBackground(ripple(0xfff0f6ff, 14));
-            candidate.setContentDescription("查询候选词 " + word);
+            TextView candidate = suggestion(word);
             int rows = (words.size() + 2) / 3;
-            GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(rows - 1 - index / 3), GridLayout.spec(index % 3, 1f));
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec((longInput ? 1 : 0) + rows - 1 - index / 3), GridLayout.spec(index % 3, 1f));
             lp.width = 0; lp.height = dp(27); lp.rightMargin = dp(4); lp.bottomMargin = dp(3); index++;
             suggestionWords.addView(candidate, lp);
-            candidate.setOnClickListener(v -> { input.setText(word); input.setSelection(input.length()); submit(); });
+        }
+        updateSuggestionHeight(width);
+    }
+
+    private TextView suggestion(String word) {
+        TextView candidate = text(word, 13, 0xff006bff, false);
+        candidate.setSingleLine(true);
+        candidate.setEllipsize(TextUtils.TruncateAt.END);
+        candidate.setPadding(dp(8), dp(5), dp(8), dp(5));
+        candidate.setBackground(ripple(0xfff0f6ff, 14));
+        candidate.setContentDescription("查询候选词 " + word);
+        candidate.setOnClickListener(v -> { input.setText(word); input.setSelection(input.length()); submit(); });
+        return candidate;
+    }
+
+    private void updateSuggestionHeight(int width) {
+        suggestionWords.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+        int height = Math.max(dp(124), suggestionWords.getMeasuredHeight());
+        if (suggestionArea.getLayoutParams().height != height) {
+            suggestionArea.getLayoutParams().height = height;
+            suggestionArea.requestLayout();
         }
     }
 
-    void prefillClipboardOnFocus() { clipboardPending = input.length() == 0; }
+    void prefillClipboardOnFocus() {
+        post(() -> { if (!disposed && hasWindowFocus()) startClipboard(); });
+    }
 
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
-        if (focused && clipboardPending) post(() -> {
-            if (disposed || !hasWindowFocus() || !clipboardPending) return;
-            clipboardPending = false;
-            if (input.length() != 0) return;
-            String copied = SearchClipboard.recentText(getContext());
-            if (copied != null) { input.setText(copied); input.setSelection(input.length()); }
-        });
+        if (focused) {
+            updateLanguageButton();
+            applyKeyboardLanguage(false);
+            post(() -> { if (!disposed && hasWindowFocus()) startClipboard(); });
+        }
+        else stopClipboard();
+    }
+
+    private void startClipboard() {
+        if (clipboardSuspended || disposed || !hasWindowFocus()) return;
+        if (clipboard == null) clipboard = (ClipboardManager)getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null && !clipboardListening) {
+            clipboard.addPrimaryClipChangedListener(clipboardChanged);
+            clipboardListening = true;
+        }
+        readClipboard(false);
+    }
+
+    private void stopClipboard() {
+        if (clipboard != null && clipboardListening) clipboard.removePrimaryClipChangedListener(clipboardChanged);
+        clipboardListening = false;
+    }
+
+    private void readClipboard(boolean changed) {
+        if (disposed || clipboardSuspended || !hasWindowFocus()) return;
+        String copied = SearchClipboard.recentText(getContext(), changed);
+        if (copied != null) appendClipboardText(copied);
+    }
+
+    private void appendClipboardText(String copied) {
+        if (input.length() > 0 && input.getText().charAt(input.length() - 1) != '\n') input.append("\n");
+        input.append(copied);
+        input.setSelection(input.length());
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        stopClipboard();
+        super.onDetachedFromWindow();
     }
 
     private void installInsets() {
@@ -457,6 +556,7 @@ final class FloatingSearchView extends FrameLayout {
         TextView title = text(label, 14, ink, true);
         title.setPadding(dp(7), 0, 0, 0);
         pill.addView(title);
+        pill.setContentDescription(label);
         pill.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(40));
         lp.rightMargin = dp(8);
@@ -471,14 +571,25 @@ final class FloatingSearchView extends FrameLayout {
         callback.onLookup(q, state.isPrivateMode());
     }
 
+    private void submitFromButton() {
+        if (!input.getText().toString().trim().isEmpty()) submit();
+        else if (!state.isPrivateMode()) unavailable("实时语音");
+    }
+
     void prepareForLookup() {
+        clipboardSuspended = true;
+        stopClipboard();
         suggestions.pause();
         closeMenu();
         if (drawerAnimator != null) drawerAnimator.cancel();
         applyDrawerProgress(state.isDrawerOpen() ? 1 : 0);
         hideKeyboard();
     }
-    void resumeAfterLookup() { suggestions.resume(); }
+    void resumeAfterLookup() {
+        clipboardSuspended = false;
+        suggestions.resume();
+        if (hasWindowFocus()) startClipboard();
+    }
 
     private void togglePrivateMode() {
         closeMenu();
@@ -592,12 +703,17 @@ final class FloatingSearchView extends FrameLayout {
         addView(menuDismiss, new FrameLayout.LayoutParams(-1, -1));
         menuCard = new LinearLayout(getContext());
         menuCard.setOrientation(LinearLayout.VERTICAL);
-        menuCard.setPadding(dp(10), dp(14), dp(10), dp(12));
+        menuCard.setPadding(dp(requested == FloatingSearchState.Menu.LANGUAGE ? 6 : 10),
+                dp(requested == FloatingSearchState.Menu.LANGUAGE ? 6 : 14),
+                dp(requested == FloatingSearchState.Menu.LANGUAGE ? 6 : 10),
+                dp(requested == FloatingSearchState.Menu.LANGUAGE ? 6 : 12));
         menuCard.setBackground(shape(PAPER, 26));
         menuCard.setElevation(dp(9));
         menuCard.setClickable(true);
-        if (requested == FloatingSearchState.Menu.MODEL) buildModelMenu(); else buildAttachmentMenu();
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(requested == FloatingSearchState.Menu.MODEL ? dp(292) : dp(172), -2);
+        if (requested == FloatingSearchState.Menu.MODEL) buildModelMenu();
+        else if (requested == FloatingSearchState.Menu.LANGUAGE) buildLanguageMenu();
+        else buildAttachmentMenu();
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(menuWidth(), -2);
         menuSurface = new MenuScroll(getContext());
         menuSurface.setVerticalScrollBarEnabled(false);
         menuSurface.setBackground(shape(PAPER, 26));
@@ -611,6 +727,102 @@ final class FloatingSearchView extends FrameLayout {
         plus.animate().rotation(requested == FloatingSearchState.Menu.ATTACHMENT ? 45 : 0).setDuration(160).start();
         plus.setContentDescription(requested == FloatingSearchState.Menu.ATTACHMENT ? "关闭附件菜单" : "附件菜单");
         post(this::positionMenu);
+    }
+
+    private void buildLanguageMenu() {
+        for (OcrLanguageSettings.Language language : OcrLanguageSettings.Language.values()) {
+            LinearLayout row = new LinearLayout(getContext());
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12), 0, dp(8), 0);
+            row.addView(text(language.label, 15, INK, true), new LinearLayout.LayoutParams(0, -2, 1));
+            SearchIconView check = icon(SearchIconView.Kind.CHECK, INK);
+            check.setVisibility(language == ocrLanguage.language() ? VISIBLE : INVISIBLE);
+            row.addView(check, new LinearLayout.LayoutParams(dp(18), dp(22)));
+            row.setContentDescription("OCR " + language.label + (language == ocrLanguage.language() ? "，当前选中" : ""));
+            row.setOnClickListener(v -> selectLanguage(language));
+            languageRows[language.ordinal()] = row;
+            menuCard.addView(row, new LinearLayout.LayoutParams(-1, dp(44)));
+        }
+        updateLanguageHighlight();
+    }
+
+    private boolean onLanguageTouch(View view, MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) languageDrag = false;
+        if (!languageDrag) return false;
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            OcrLanguageSettings.Language hover = languageAt(event.getRawX(), event.getRawY());
+            if (hover != hoveredLanguage) { hoveredLanguage = hover; updateLanguageHighlight(); }
+        } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+            OcrLanguageSettings.Language selected = languageAt(event.getRawX(), event.getRawY());
+            languageDrag = false;
+            hoveredLanguage = null;
+            if (selected != null) selectLanguage(selected);
+            else {
+                if (!containsScreenPoint(modelButton, event.getRawX(), event.getRawY())) closeMenu();
+                else updateLanguageHighlight();
+            }
+            view.setPressed(false);
+        } else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            languageDrag = false;
+            closeMenu();
+            view.setPressed(false);
+        }
+        return true;
+    }
+
+    private OcrLanguageSettings.Language languageAt(float screenX, float screenY) {
+        if (state.getMenu() != FloatingSearchState.Menu.LANGUAGE
+                || !containsScreenPoint(menuSurface, screenX, screenY)) return null;
+        for (OcrLanguageSettings.Language language : OcrLanguageSettings.Language.values()) {
+            View row = languageRows[language.ordinal()];
+            if (row != null && containsScreenPoint(row, screenX, screenY)) return language;
+        }
+        return null;
+    }
+
+    private boolean containsScreenPoint(View view, float x, float y) {
+        if (view == null) return false;
+        int[] position = new int[2];
+        view.getLocationOnScreen(position);
+        return x >= position[0] && x < position[0] + view.getWidth()
+                && y >= position[1] && y < position[1] + view.getHeight();
+    }
+
+    private void updateLanguageHighlight() {
+        for (OcrLanguageSettings.Language language : OcrLanguageSettings.Language.values()) {
+            View row = languageRows[language.ordinal()];
+            if (row != null) row.setBackground(ripple(language == hoveredLanguage
+                    || (hoveredLanguage == null && language == ocrLanguage.language()) ? 0xffe9e9e9 : PAPER, 12));
+        }
+    }
+
+    private void selectLanguage(OcrLanguageSettings.Language language) {
+        ocrLanguage.setLanguage(language);
+        applyKeyboardLanguage(true);
+        updateLanguageButton();
+        closeMenu();
+    }
+
+    private void applyKeyboardLanguage(boolean restart) {
+        if (Build.VERSION.SDK_INT >= 24) {
+            // Request the English layout while preserving manual IME language
+            // switching and unrestricted Unicode input.
+            input.setImeHintLocales(ocrLanguage.language() == OcrLanguageSettings.Language.ENGLISH
+                    ? new LocaleList(Locale.ENGLISH) : null);
+        }
+        if (restart && input.isFocused())
+            ((InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).restartInput(input);
+    }
+
+    private void updateLanguageButton() {
+        String label = ocrLanguage.language().label;
+        languageLabel.setText(label);
+        modelButton.setContentDescription("当前 OCR 语言：" + label + "；长按选择语言，轻点选择模型");
+    }
+
+    private int menuWidth() {
+        return dp(state.getMenu() == FloatingSearchState.Menu.MODEL ? 292
+                : state.getMenu() == FloatingSearchState.Menu.LANGUAGE ? 116 : 172);
     }
 
     private void buildModelMenu() {
@@ -661,18 +873,38 @@ final class FloatingSearchView extends FrameLayout {
         if (menuSurface == null || getWidth() == 0) return;
         View anchor = state.getMenu() == FloatingSearchState.Menu.ATTACHMENT ? plus : modelButton;
         Rect rect = new Rect(0, 0, anchor.getWidth(), anchor.getHeight()); offsetDescendantRectToMyCoords(anchor, rect);
+        boolean languageMenu = state.getMenu() == FloatingSearchState.Menu.LANGUAGE;
+        int viewportBottom = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
+                ? topInset + legacyViewportHeight : getHeight() - Math.max(safeBottom, imeBottom);
+        if (languageMenu) {
+            // Keep all four options reachable while holding, including landscape
+            // keyboards where the space directly above the anchor is too short.
+            int rowHeight = Math.max(dp(32), Math.min(dp(44), (viewportBottom - topInset - dp(28)) / 4));
+            for (LinearLayout row : languageRows) {
+                if (row != null && row.getLayoutParams().height != rowHeight) {
+                    row.getLayoutParams().height = rowHeight;
+                    row.requestLayout();
+                }
+            }
+        }
         int maxHeight = Math.max(dp(80), rect.top - topInset - dp(12));
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams)menuSurface.getLayoutParams();
-        lp.width = Math.min(state.getMenu() == FloatingSearchState.Menu.MODEL ? dp(292) : dp(172), getWidth() - dp(24));
+        lp.width = Math.min(menuWidth(), getWidth() - dp(24));
         menuCard.measure(MeasureSpec.makeMeasureSpec(lp.width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-        lp.leftMargin = state.getMenu() == FloatingSearchState.Menu.MODEL ? dp(12) : Math.max(dp(12), Math.min(rect.left - dp(4), getWidth() - lp.width - dp(12)));
+        if (languageMenu) maxHeight = menuCard.getMeasuredHeight();
+        int anchorLeft = state.getMenu() == FloatingSearchState.Menu.LANGUAGE
+                ? rect.left + (rect.width() - lp.width) / 2 : rect.left - dp(4);
+        lp.leftMargin = state.getMenu() == FloatingSearchState.Menu.MODEL ? dp(12) : Math.max(dp(12), Math.min(anchorLeft, getWidth() - lp.width - dp(12)));
         lp.topMargin = Math.max(topInset + dp(8), rect.top - Math.min(menuCard.getMeasuredHeight(), maxHeight) - dp(12));
+        if (languageMenu) lp.topMargin = Math.max(topInset + dp(8), Math.min(lp.topMargin, viewportBottom - maxHeight - dp(8)));
         lp.height = Math.min(menuCard.getMeasuredHeight(), maxHeight);
         if (lp.width != menuSurface.getWidth() || lp.topMargin != menuSurface.getTop() || lp.leftMargin != menuSurface.getLeft() || lp.height != menuSurface.getHeight()) menuSurface.setLayoutParams(lp);
     }
 
     private void closeMenu() {
         state.setMenu(FloatingSearchState.Menu.NONE);
+        hoveredLanguage = null;
+        for (int i = 0; i < languageRows.length; i++) languageRows[i] = null;
         if (menuDismiss != null) removeView(menuDismiss);
         menuDismiss = null;
         MenuScroll old = menuSurface; menuSurface = null; menuCard = null;
@@ -685,6 +917,28 @@ final class FloatingSearchView extends FrameLayout {
         if (plus != null) {
             plus.animate().rotation(0).setDuration(140).start(); plus.setContentDescription("附件菜单");
         }
+    }
+
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            menuAnchorTouchTarget = null;
+            if (menuDismiss != null && languageAt(event.getRawX(), event.getRawY()) == null) {
+                if (containsPoint(modelButton, event.getX(), event.getY())) menuAnchorTouchTarget = modelButton;
+                else if (containsPoint(plus, event.getX(), event.getY())) menuAnchorTouchTarget = plus;
+            }
+        }
+        if (menuAnchorTouchTarget == null) return super.dispatchTouchEvent(event);
+        // The dismiss layer covers the composer. Route the complete gesture to
+        // its anchor even when opening another menu replaces that dismiss View.
+        View target = menuAnchorTouchTarget;
+        int[] rootPosition = new int[2], targetPosition = new int[2];
+        getLocationOnScreen(rootPosition); target.getLocationOnScreen(targetPosition);
+        MotionEvent forwarded = MotionEvent.obtain(event);
+        forwarded.offsetLocation(rootPosition[0] - targetPosition[0], rootPosition[1] - targetPosition[1]);
+        try { target.dispatchTouchEvent(forwarded); } finally { forwarded.recycle(); }
+        if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL)
+            menuAnchorTouchTarget = null;
+        return true;
     }
 
     private void addHeaderTab(LinearLayout tabs, String label, int index, Runnable action) {
@@ -865,6 +1119,7 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     void dispose() {
+        stopClipboard();
         suggestions.close();
         removeCallbacks(commitLegacyIme);
         drawer.dispose();
@@ -894,6 +1149,8 @@ final class FloatingSearchView extends FrameLayout {
         Editor(Context context) { super(context); }
         @Override public InputConnection onCreateInputConnection(EditorInfo info) {
             InputConnection connection = super.onCreateInputConnection(info);
+            if (Build.VERSION.SDK_INT >= 24) info.hintLocales = ocrLanguage.language() == OcrLanguageSettings.Language.ENGLISH
+                    ? new LocaleList(Locale.ENGLISH) : null;
             // TextView adds NO_ENTER_ACTION for multiline editors; retain paste/Shift+Enter
             // support while letting the software keyboard expose the Send action.
             info.imeOptions &= ~EditorInfo.IME_FLAG_NO_ENTER_ACTION;

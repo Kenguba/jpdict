@@ -108,7 +108,7 @@ public class MainActivity extends Activity {
         root.addView(button("📷 屏幕 OCR", v->startActivity(new Intent(this,OcrActivity.class))));
         TextView note=text("这是自己的浮动取词功能，不调用欧路。\n"
                 +"轻点浮动按钮：打开原生悬浮搜索。\n"
-                    +"长按 700ms 振动后拖动：准星对准文字，高亮后松手查词。未授权时先请求屏幕共享，授权后再次长按。\n"
+                    +"拖动浮动按钮：已开启屏幕 OCR 时，对准文字、高亮后松手查词；未授权时只移动按钮。原地长按 700ms 后滑动：提示滑动方向。\n"
                 +"屏幕共享只请求“共享整个屏幕”。");
         root.addView(note);
         setContentView(root);
@@ -121,7 +121,7 @@ public class MainActivity extends Activity {
             Toast.makeText(this,
                     ScreenCaptureService.READY
                             ? "浮动取词已开启：拖动取词，轻点搜索"
-                            : "浮动取词已开启：首次拖动时会直接申请整屏共享权限",
+                            : "浮动取词已开启：拖动可移动按钮；点“屏幕 OCR”开启识别",
                     Toast.LENGTH_SHORT).show();
             return;
         }
@@ -159,7 +159,7 @@ public class MainActivity extends Activity {
             if(pendingProjectionSetup){
                 pendingProjectionSetup=false;
                 Toast.makeText(this,
-                        "悬浮球已开启；首次拖动时会直接申请整屏共享权限",
+                        "悬浮球已开启；拖动可移动按钮；点“屏幕 OCR”开启识别",
                         Toast.LENGTH_SHORT).show();
             }
         }
@@ -380,6 +380,7 @@ public class MainActivity extends Activity {
         boolean previewInFlight;
         long previewSession;
         OcrPreviewFrame previewFrame;
+        OcrLanguageSettings.Language previewLanguage;
         @Override public void onCreate(){
             super.onCreate();
             ocrRecognizer=new MultilingualOcrRecognizer();
@@ -424,7 +425,7 @@ public class MainActivity extends Activity {
             reader=ImageReader.newInstance(w,h,PixelFormat.RGBA_8888,2);
             vd=projection.createVirtualDisplay("jp-ocr",w,h,dpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,null);
             READY=true;
-            Notification n=notification("录屏 OCR 已开启","长按 700ms 震动后拖动取词，或点通知识别整屏");
+            Notification n=notification("录屏 OCR 已开启","拖动按钮取词，或点通知识别整屏");
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(42,n);
         }
         void resizeCapture(int width,int height){
@@ -457,7 +458,7 @@ public class MainActivity extends Activity {
             final boolean preview=request!=null && ACT_OCR_PREVIEW.equals(request.getAction());
             final long session=request==null?0:request.getLongExtra("session",0);
             if(preview && previewInFlight){
-                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("error","OCR 正在识别，请稍后再长按"));return;
+                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("error","OCR 正在识别，请稍后再拖动"));return;
             }
             if(reader==null){
                 if(preview) sendPreview(session,null,"屏幕捕获尚未就绪，请重新授权录屏");
@@ -477,7 +478,7 @@ public class MainActivity extends Activity {
                 if(reader==null) { if(preview) sendPreview(session,null,"录屏会话已结束"); return; }
                 Image image=reader.acquireLatestImage();
                 if(image==null){
-                    if(preview) sendPreview(session,null,"暂时没有取得屏幕图像，请再长按一次");
+                    if(preview) sendPreview(session,null,"暂时没有取得屏幕图像，请再拖动一次");
                     else if(region) sendOcrResult(null,"暂时没有取得屏幕图像，请再拖动一次");
                     else Toast.makeText(this,"暂时未取得屏幕图像，请再点一次",Toast.LENGTH_SHORT).show();
                     return;
@@ -520,7 +521,9 @@ public class MainActivity extends Activity {
             if(previewFrame!=null)previewFrame.close();
             OcrPreviewFrame frame=new OcrPreviewFrame(session,bitmap);previewFrame=frame;
             frame.borrow(session);
-            ocrRecognizer.recognizeRegions(bitmap,new MultilingualOcrRecognizer.RegionsCallback(){
+            // Keep the preview and its local refinement on the same selected model.
+            previewLanguage=OcrLanguageSettings.get(this).language();
+            ocrRecognizer.recognizeRegions(bitmap,previewLanguage,new MultilingualOcrRecognizer.RegionsCallback(){
                 public void onSuccess(java.util.List<MultilingualOcrRecognizer.Region> regions){
                     try{sendPreview(session,regions,null);}finally{frame.release();}
                 }
@@ -534,19 +537,19 @@ public class MainActivity extends Activity {
             long session=request.getLongExtra("session",-1);
             android.graphics.Rect target=request.getParcelableExtra("target");
             if(previewInFlight || session!=previewSession || target==null || target.isEmpty()){
-                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("refined",true).putExtra("error","取词会话已失效，请重新长按"));return;
+                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("refined",true).putExtra("error","取词会话已失效，请重新拖动"));return;
             }
             OcrPreviewFrame frame=previewFrame;
             Bitmap bitmap=frame==null?null:frame.borrow(session);
             if(bitmap==null || ocrRecognizer==null){
                 if(bitmap!=null)frame.release();
-                sendRefined(session,null,"屏幕共享或截图已失效，请重新长按取词");return;
+                sendRefined(session,null,"屏幕共享或截图已失效，请重新拖动取词");return;
             }
             previewInFlight=true;
             String seedText=request.getStringExtra("seed");
             MultilingualOcrRecognizer.Region seed=seedText==null?null:new MultilingualOcrRecognizer.Region(seedText,target);
             if(seed!=null)seed.quality=request.getFloatExtra("quality",0);
-            ocrRecognizer.recognizeSelection(bitmap,target,seed,request.getFloatExtra("aim_x",0),request.getFloatExtra("aim_y",0),request.getFloatExtra("tolerance",0),new MultilingualOcrRecognizer.Callback(){
+            ocrRecognizer.recognizeSelection(bitmap,target,seed,request.getFloatExtra("aim_x",0),request.getFloatExtra("aim_y",0),request.getFloatExtra("tolerance",0),previewLanguage,new MultilingualOcrRecognizer.Callback(){
                 public void onSuccess(String text){try{sendRefined(session,text,null);}finally{frame.close();frame.release();}}
                 public void onFailure(Exception error){try{sendRefined(session,null,error.getMessage());}finally{frame.close();frame.release();}}
             });

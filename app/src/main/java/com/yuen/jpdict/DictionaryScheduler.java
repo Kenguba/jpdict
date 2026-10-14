@@ -27,7 +27,9 @@ final class DictionaryScheduler implements AutoCloseable {
         Ticket(int priority, Runnable operation) { this.priority = priority; this.operation = operation; }
         public int compareTo(Ticket other) {
             int p = Integer.compare(priority, other.priority);
-            return p != 0 ? p : Long.compare(other.order, order); // most recent user action first
+            // Latest explicit user action wins; viewport/background work keeps
+            // display order instead of making the last dictionary load first.
+            return p != 0 ? p : priority == 0 ? Long.compare(other.order, order) : Long.compare(order, other.order);
         }
         public void run() {
             synchronized (this) {
@@ -47,7 +49,7 @@ final class DictionaryScheduler implements AutoCloseable {
         boolean cancelled() { return cancelled; }
         void promote(int value) {
             synchronized (DictionaryScheduler.this) {
-                if (cancelled || value > priority) return;
+                if (cancelled || value > priority || (value == priority && value != 0)) return;
                 boolean queued = executor.remove(this);
                 priority = value;
                 order = sequence.incrementAndGet();
