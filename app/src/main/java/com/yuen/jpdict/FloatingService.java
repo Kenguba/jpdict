@@ -86,12 +86,12 @@ public class FloatingService extends Service {
     private WindowManager.LayoutParams bubbleTopProxyLp;
 
     private String currentSearchQuery = "";
-    private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
     private android.window.OnBackInvokedCallback searchBackCallback;
     private android.window.OnBackInvokedDispatcher lookupBackDispatcher;
     private android.window.OnBackInvokedCallback lookupBackCallback;
     private EditText lookupEditor;
+    private DictionaryEntryView lookupHtmlEditor;
     private boolean lookupKeyEditing;
     private int lookupAiRequestGeneration;
     private View lookupHeaderNormal;
@@ -139,7 +139,6 @@ public class FloatingService extends Service {
     private final BroadcastReceiver ocrReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (MainActivity.OcrActivity.ACTION_FINISHED.equals(intent.getAction()) || MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(intent.getAction())) {
-                projectionRequestInFlight = false;
                 if (MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(intent.getAction()) && pickup != null) pickup.cancel();
                 return;
             }
@@ -208,7 +207,7 @@ public class FloatingService extends Service {
         return builder
                 .setSmallIcon(android.R.drawable.ic_menu_search)
                 .setContentTitle("多语种浮动取词已开启")
-                .setContentText("轻点搜索；长按 700ms 后拖动取词")
+                .setContentText("轻点搜索；拖动取词；长按后滑动提示方向")
                 .setContentIntent(p)
                 .setOngoing(true)
                 .build();
@@ -456,7 +455,6 @@ public class FloatingService extends Service {
             @Override public void tap() {
                 if (lookupOverlay != null) closeLookupOverlay(); else toggleSearchPanel();
             }
-            @Override public void authorize() { requestProjectionPermissionNow(); }
             @Override public void lookup(String text) { removeSearchPanel(); openOcrLookupPopup(text); }
         });
         bubble.setOnTouchListener(pickup.listener());
@@ -478,23 +476,6 @@ public class FloatingService extends Service {
             recordHandledCrash("toggleSearchPanel", t);
             safeToast("搜索页异常：" + t.getClass().getSimpleName()
                     + (t.getMessage() == null ? "" : " · " + t.getMessage()));
-        }
-    }
-
-    private void requestProjectionPermissionNow() {
-        if (MainActivity.ScreenCaptureService.READY || projectionRequestInFlight) return;
-        projectionRequestInFlight = true;
-        markAction("OPEN_MEDIA_PROJECTION_PERMISSION");
-
-        Intent i = new Intent(this, MainActivity.OcrActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
-                        Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        try {
-            startActivity(i);
-        } catch (Exception e) {
-            projectionRequestInFlight = false;
-            showResultCard("授权页打开失败",
-                    e.getMessage() == null ? "未知错误" : e.getMessage());
         }
     }
 
@@ -847,7 +828,7 @@ public class FloatingService extends Service {
         if (Build.VERSION.SDK_INT < 33 || lookupOverlay == null) return;
         View owner = lookupOverlay;
         owner.post(() -> {
-            if (lookupOverlay != owner || (lookupOverlayHosted && lookupEditor == null && !lookupKeyEditing)) return;
+            if (lookupOverlay != owner || (lookupOverlayHosted && lookupEditor == null && lookupHtmlEditor == null && !lookupKeyEditing)) return;
             try {
                 android.window.OnBackInvokedDispatcher dispatcher =
                         owner.findOnBackInvokedDispatcher();
@@ -897,7 +878,7 @@ public class FloatingService extends Service {
         }
 
         if (focusable || !lookupOverlayHosted) {
-            if (lookupEditor == null && !lookupKeyEditing) lookupOverlay.requestFocus();
+            if (lookupEditor == null && lookupHtmlEditor == null && !lookupKeyEditing) lookupOverlay.requestFocus();
             registerLookupBackCallback();
         } else {
             clearLookupBackCallback();
@@ -1045,6 +1026,7 @@ public class FloatingService extends Service {
         Runnable enterEditMode = () -> {
             if (lookupOverlay != root || lookupEditor != null) return;
             root.consumeEditingGesture();
+            stopLookupHtmlEditing();
             lookupEditor = editor;
             lookupHeaderNormal = header;
             lookupHeaderEdit = editHeader;
@@ -1059,6 +1041,12 @@ public class FloatingService extends Service {
             editor.requestFocus();
             // OverlayEditor opens IME after this window actually gains focus.
             setLookupOverlayFocusable(true);
+            editor.post(() -> {
+                if (lookupOverlay == root && lookupEditor == editor && editor.hasWindowFocus() && editor.isFocused()) {
+                    InputMethodManager ime = (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+                    if (ime != null) ime.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
+                }
+            });
         };
         title.setContentDescription(q + "，长按 700 毫秒修改");
         title.setOnLongClickListener(v -> { enterEditMode.run(); return true; });
@@ -1148,7 +1136,24 @@ public class FloatingService extends Service {
         dictionarySections.setOrientation(LinearLayout.VERTICAL);
         content.addView(dictionarySections, new LinearLayout.LayoutParams(-1, -2));
         dictionaryLookup = new DictionaryLookupController(this, dictionarySections, q,
-                word -> showLookupOverlay(word, returnToSearch, mode));
+                new DictionaryEntryView.Navigation() {
+                    @Override public void lookup(String word) { showLookupOverlay(word, returnToSearch, mode); }
+                    @Override public void editingChanged(DictionaryEntryView editor, boolean editing) {
+                        if (lookupOverlay != root) return;
+                        if (editing) {
+                            if (lookupHtmlEditor != editor) stopLookupHtmlEditing();
+                            lookupHtmlEditor = editor;
+                            if (lookupEditor != null) exitLookupEditMode();
+                            setLookupOverlayFocusable(true);
+                        } else if (lookupHtmlEditor == editor) {
+                            lookupHtmlEditor = null;
+                            setLookupOverlayFocusable(lookupEditor != null || lookupKeyEditing);
+                        }
+                    }
+                    @Override public boolean closeOnBack() {
+                        return lookupOverlay == root && handleLookupBack();
+                    }
+                });
 
         LinearLayout aiBodyBox = new LinearLayout(this);
         aiBodyBox.setOrientation(LinearLayout.VERTICAL);
@@ -1455,6 +1460,7 @@ public class FloatingService extends Service {
     private void showLookupKeySettings(String q, View owner, ProgressBar progress, TextView body) {
         if (lookupOverlay != owner || !(body.getParent() instanceof LinearLayout)) return;
         if (lookupEditor != null) exitLookupEditMode();
+        stopLookupHtmlEditing();
         lookupKeyEditing = true;
         lookupAiRequestGeneration++;
         LinearLayout box = (LinearLayout) body.getParent();
@@ -1467,7 +1473,7 @@ public class FloatingService extends Service {
             if (focused != null) focused.clearFocus();
             if (lookupEditor != null) exitLookupEditMode();
             lookupKeyEditing = false;
-            setLookupOverlayFocusable(false);
+            setLookupOverlayFocusable(lookupHtmlEditor != null);
             box.removeAllViews();
             box.addView(progress, new LinearLayout.LayoutParams(dp(24), dp(24)));
             box.addView(body, new LinearLayout.LayoutParams(-1, -2));
@@ -1538,7 +1544,13 @@ public class FloatingService extends Service {
         lookupEditor = null;
         lookupHeaderNormal = null;
         lookupHeaderEdit = null;
-        setLookupOverlayFocusable(false);
+        setLookupOverlayFocusable(lookupHtmlEditor != null || lookupKeyEditing);
+    }
+
+    private void stopLookupHtmlEditing() {
+        DictionaryEntryView editor = lookupHtmlEditor;
+        lookupHtmlEditor = null;
+        if (editor != null) editor.stopEditing();
     }
 
     private void notifyLookupHostFinish() {
@@ -1599,6 +1611,7 @@ public class FloatingService extends Service {
     }
 
     private void removeLookupOverlay(boolean clearRestoreState) {
+        stopLookupHtmlEditing();
         if (dictionaryLookup != null) { dictionaryLookup.close(); dictionaryLookup = null; }
         pendingPronunciation = null;
         if (textToSpeech != null) {
@@ -1627,6 +1640,7 @@ public class FloatingService extends Service {
         lookupOverlayQuery = "";
         lookupOverlayMode = LOOKUP_MODE_FLOAT;
         lookupEditor = null;
+        lookupHtmlEditor = null;
         lookupHeaderNormal = null;
         lookupHeaderEdit = null;
         removeBubbleProxyIfUnused();

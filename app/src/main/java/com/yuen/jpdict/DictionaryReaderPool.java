@@ -12,13 +12,15 @@ final class DictionaryReaderPool {
     private static final int MAX = 2;
     private final DictionaryRepository repository;
     private final LinkedHashMap<String, Handle> handles = new LinkedHashMap<>(4, .75f, true);
+    private final Set<String> opening = new HashSet<>();
     private final File indexes;
-    private int live;
+    private int live, generation;
     private static final class Handle {
         final MdictReader reader;
+        final String identity;
         int users;
         boolean retired;
-        Handle(MdictReader reader) { this.reader = reader; }
+        Handle(MdictReader reader, String identity) { this.reader = reader; this.identity = identity; }
     }
     private static final class Index {
         final String key, fingerprint;
@@ -28,6 +30,28 @@ final class DictionaryReaderPool {
     DictionaryReaderPool(DictionaryRepository repository) {
         this.repository = repository;
         indexes = new File(repository.context().getCacheDir(), "dict-indexes");
+    }
+    /** App-private installation generations are immutable. External originals
+     * still verify their fingerprint; unknown modification times disable reuse. */
+    private String privateIdentity(DictionaryRepository.Document document, long modified) {
+        if (modified <= 0 || !"file".equals(document.uri.getScheme())) return null;
+        File file = new File(document.uri.getPath());
+        try {
+            if (!file.getCanonicalPath().startsWith(repository.directory().getCanonicalPath() + File.separator)) return null;
+        } catch (IOException inaccessible) { return null; }
+        return document.uri + ":" + modified + ":" + file.length();
+    }
+    String resultIdentity(DictionaryRepository.Document document) throws IOException {
+        MdictReader.checkCancelled();
+        long modified = repository.modified(document);
+        String identity = privateIdentity(document, modified);
+        if (identity != null) return identity;
+        // Opening first also detects revoked permission or a missing original,
+        // rather than returning a previously cached definition for that file.
+        try (MdictReader.Source source = repository.open(document)) {
+            return modified > 0 ? index(document, source, modified).key : null;
+        } catch (IOException error) { throw error; }
+        catch (Exception error) { throw new IOException("词典身份读取失败", error); }
     }
     private Index index(DictionaryRepository.Document document, MdictReader.Source source, long modified) throws Exception {
         String fingerprint = DictionaryRepository.fingerprint(source) + ":" + modified;
@@ -54,40 +78,70 @@ final class DictionaryReaderPool {
         finally {
             synchronized (this) {
                 handle.users--;
-                if (handle.retired && handle.users == 0) { live--; handle.reader.close(); }
-                notifyAll();
+                try {
+                    if (handle.retired && handle.users == 0) { live--; handle.reader.close(); }
+                } finally { notifyAll(); }
             }
         }
     }
-    private synchronized Handle acquire(DictionaryRepository.Document document) throws IOException {
+    private Handle acquire(DictionaryRepository.Document document) throws IOException {
         MdictReader.checkCancelled();
-        MdictReader.Source source = repository.open(document);
-        try {
-            long modified = repository.modified(document);
-            boolean reusable = modified > 0;
-            Index index = index(document, source, modified);
-            Handle cached = reusable ? handles.get(index.key) : null;
-            if (cached != null) { source.close(); cached.users++; return cached; }
-            while (live >= MAX) {
-                String evict = null;
-                for (Map.Entry<String, Handle> entry : handles.entrySet()) if (entry.getValue().users == 0) { evict = entry.getKey(); break; }
-                if (evict != null) { handles.remove(evict).reader.close(); live--; break; }
-                try { wait(); } catch (InterruptedException cancelled) {
-                    Thread.currentThread().interrupt(); MdictReader.checkCancelled();
+        long modified = repository.modified(document);
+        String identity = privateIdentity(document, modified);
+        if (identity != null) synchronized (this) {
+            for (Map.Entry<String, Handle> entry : handles.entrySet()) {
+                if (identity.equals(entry.getValue().identity)) {
+                    Handle cached = handles.get(entry.getKey()); cached.users++; return cached;
                 }
             }
-            Handle opened = new Handle(MdictReader.open(source, index.file, index.fingerprint));
-            source = null; opened.users = 1; opened.retired = !reusable;
-            if (reusable) handles.put(index.key, opened);
-            live++;
+        }
+        MdictReader.Source source = repository.open(document);
+        boolean reserved = false;
+        String openingKey = null;
+        try {
+            boolean reusable = modified > 0;
+            Index index = index(document, source, modified);
+            int owner;
+            synchronized (this) {
+                while (true) {
+                    MdictReader.checkCancelled();
+                    Handle cached = reusable ? handles.get(index.key) : null;
+                    if (cached != null) { source.close(); source = null; cached.users++; return cached; }
+                    if (!opening.contains(index.key)) {
+                        if (live < MAX) break;
+                        String evict = null;
+                        for (Map.Entry<String, Handle> entry : handles.entrySet()) if (entry.getValue().users == 0) { evict = entry.getKey(); break; }
+                        if (evict != null) {
+                            Handle retired = handles.remove(evict); live--;
+                            try { retired.reader.close(); } finally { notifyAll(); }
+                            break;
+                        }
+                    }
+                    try { wait(); } catch (InterruptedException cancelled) {
+                        Thread.currentThread().interrupt(); MdictReader.checkCancelled();
+                    }
+                }
+                live++; reserved = true; opening.add(index.key); openingKey = index.key; owner = generation;
+            }
+            // Parsing, index I/O and fingerprints must not hold the pool lock.
+            Handle opened = new Handle(MdictReader.open(source, index.file, index.fingerprint), identity);
+            source = null;
+            synchronized (this) {
+                opened.users = 1; opened.retired = !reusable || owner != generation;
+                if (!opened.retired) handles.put(index.key, opened);
+                reserved = false; opening.remove(index.key); openingKey = null; notifyAll();
+            }
             trimIndexes();
             return opened;
         } catch (IOException error) { throw error; }
         catch (Exception error) { throw new IOException("词典索引打开失败", error); }
-        finally { if (source != null) source.close(); }
+        finally {
+            if (reserved) synchronized (this) { live--; opening.remove(openingKey); notifyAll(); }
+            if (source != null) source.close();
+        }
     }
-    void trimIndexes() {
-        File[] files = indexes.listFiles(); if (files == null) return;
+    synchronized void trimIndexes() {
+        File[] files = indexes.listFiles((directory, name) -> name.endsWith(".idx")); if (files == null) return;
         Arrays.sort(files, (left, right) -> Long.compare(right.lastModified(), left.lastModified()));
         long bytes = 0;
         for (int i = 0; i < files.length; i++) {
@@ -96,6 +150,7 @@ final class DictionaryReaderPool {
         }
     }
     synchronized void clear() {
+        generation++;
         for (Handle handle : handles.values()) {
             handle.retired = true;
             if (handle.users == 0) { live--; try { handle.reader.close(); } catch (IOException ignored) {} }

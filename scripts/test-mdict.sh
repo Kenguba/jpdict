@@ -10,7 +10,10 @@ if [ -n "${JAVA_HOME:-}" ]; then JAVAC="$JAVA_HOME/bin/javac"; JAVA="$JAVA_HOME/
   "$ROOT/app/src/main/java/com/yuen/jpdict/MdictIndexDecoder.java" \
   "$ROOT/app/src/main/java/com/yuen/jpdict/LzoDecoder.java" \
   "$ROOT/app/src/main/java/com/yuen/jpdict/DictionaryScheduler.java" \
+  "$ROOT/app/src/main/java/com/yuen/jpdict/DictionaryResultCache.java" \
   "$ROOT/tests/MdictReaderTest.java" \
+  "$ROOT/tests/DictionaryResultCacheTest.java" \
   "$ROOT/tests/DictionarySchedulerTest.java"
 "$JAVA" -Xmx128m -cp "$WORK" com.yuen.jpdict.MdictReaderTest "$ROOT/tests/vectors"
 "$JAVA" -Xmx128m -cp "$WORK" com.yuen.jpdict.DictionarySchedulerTest
+"$JAVA" -Xmx128m -cp "$WORK" com.yuen.jpdict.DictionaryResultCacheTest

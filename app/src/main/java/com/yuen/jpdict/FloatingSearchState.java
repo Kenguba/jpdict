@@ -2,7 +2,7 @@ package com.yuen.jpdict;
 
 /** Search-layer transitions independent of Android views and animation timing. */
 final class FloatingSearchState {
-    enum Menu { NONE, MODEL, ATTACHMENT }
+    enum Menu { NONE, MODEL, ATTACHMENT, LANGUAGE }
     enum BackAction { CLOSE_MENU, HIDE_KEYBOARD, CLOSE_DRAWER, CLOSE_SEARCH }
 
     private boolean privateMode;

@@ -40,7 +40,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         Region(String text, Rect bounds) { this.text = text; this.bounds = new Rect(bounds); }
     }
 
-    private enum Script {
+    enum Script {
         LATIN,
         CHINESE,
         JAPANESE,
@@ -52,21 +52,26 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     private final TextRecognizer chinese;
     private final TextRecognizer japanese;
     private final TextRecognizer korean;
+    private OcrLanguageSettings languageSettings;
 
     private int inFlight;
     private boolean closeRequested;
     private boolean closed;
 
     MultilingualOcrRecognizer() {
-        latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
-        chinese = TextRecognition.getClient(
-                new ChineseTextRecognizerOptions.Builder().build());
-        japanese = TextRecognition.getClient(
-                new JapaneseTextRecognizerOptions.Builder().build());
-        korean = TextRecognition.getClient(
-                new KoreanTextRecognizerOptions.Builder().build());
+        this(TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS),
+                TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build()),
+                TextRecognition.getClient(new JapaneseTextRecognizerOptions.Builder().build()),
+                TextRecognition.getClient(new KoreanTextRecognizerOptions.Builder().build()), null);
+    }
+
+    MultilingualOcrRecognizer(TextRecognizer latin, TextRecognizer chinese, TextRecognizer japanese,
+            TextRecognizer korean, OcrLanguageSettings settings) {
+        this.latin = latin; this.chinese = chinese; this.japanese = japanese; this.korean = korean;
+        languageSettings = settings;
     }
     void prepareModels(Context context) {
+        languageSettings = OcrLanguageSettings.get(context);
         // An accepted request is not proof of installation; process() still
         // reports UNAVAILABLE until Play services finishes each model download.
         ModuleInstall.getClient(context).installModules(ModuleInstallRequest.newBuilder()
@@ -74,22 +79,29 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     }
 
     void recognize(Bitmap bitmap, Callback callback) {
-        process(bitmap, callback, null);
+        process(bitmap, language(), callback, null);
     }
     void recognizeRegions(Bitmap bitmap, RegionsCallback callback) {
-        process(bitmap, null, callback);
+        recognizeRegions(bitmap, language(), callback);
+    }
+    void recognizeRegions(Bitmap bitmap, OcrLanguageSettings.Language language, RegionsCallback callback) {
+        process(bitmap, language, null, callback);
     }
     void recognizeSelection(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance, Callback callback) {
+        recognizeSelection(screen, target, seed, x, y, tolerance, language(), callback);
+    }
+    void recognizeSelection(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
+            OcrLanguageSettings.Language language, Callback callback) {
         List<Region> found = new ArrayList<>();
         if (seed != null) found.add(seed);
-        refineVariant(screen, target, seed, x, y, tolerance, false, found, callback);
+        refineVariant(screen, target, seed, x, y, tolerance, language, false, found, callback);
     }
     private void refineVariant(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
-            boolean enhanced, List<Region> found, Callback callback) {
+            OcrLanguageSettings.Language language, boolean enhanced, List<Region> found, Callback callback) {
         final OcrImagePreparation prepared;
         try { prepared = OcrImagePreparation.prepare(screen, target, enhanced, seed == null ? 12 : seed.bounds.height()); }
         catch (RuntimeException error) { completeSelection(found, seed, x, y, tolerance, callback, error); return; }
-        recognizeRegions(prepared.image, new RegionsCallback() {
+        process(prepared.image, language, null, new RegionsCallback() {
             public void onSuccess(List<Region> regions) {
                 for (Region region : regions) {
                     Region mapped = new Region(region.text, prepared.toScreen(region.bounds));
@@ -100,7 +112,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             public void onFailure(Exception error) { next(error); }
             private void next(Exception error) {
                 prepared.close();
-                if (!enhanced) refineVariant(screen, target, seed, x, y, tolerance, true, found, callback);
+                if (!enhanced) refineVariant(screen, target, seed, x, y, tolerance, language, true, found, callback);
                 else completeSelection(found, seed, x, y, tolerance, callback, error);
             }
         });
@@ -124,7 +136,29 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         }
         return selected;
     }
-    private void process(Bitmap bitmap, Callback callback, RegionsCallback regionsCallback) {
+    private OcrLanguageSettings.Language language() {
+        return languageSettings == null ? OcrLanguageSettings.Language.MIXED : languageSettings.language();
+    }
+
+    static Script[] scriptsFor(OcrLanguageSettings.Language language) {
+        switch (language) {
+            case ENGLISH: return new Script[] { Script.LATIN };
+            case JAPANESE: return new Script[] { Script.JAPANESE };
+            case KOREAN: return new Script[] { Script.KOREAN };
+            default: return Script.values();
+        }
+    }
+
+    private TextRecognizer client(Script script) {
+        switch (script) {
+            case CHINESE: return chinese;
+            case JAPANESE: return japanese;
+            case KOREAN: return korean;
+            default: return latin;
+        }
+    }
+
+    private void process(Bitmap bitmap, OcrLanguageSettings.Language language, Callback callback, RegionsCallback regionsCallback) {
         synchronized (lifecycleLock) {
             if (closeRequested || closed) {
                 fail(callback, regionsCallback, new IllegalStateException("OCR 识别器已关闭"));
@@ -136,23 +170,24 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         try {
             InputImage image = InputImage.fromBitmap(bitmap, 0);
 
-            Task<Text> latinTask = latin.process(image);
-            Task<Text> chineseTask = chinese.process(image);
-            Task<Text> japaneseTask = japanese.process(image);
-            Task<Text> koreanTask = korean.process(image);
+            Script[] scripts = scriptsFor(language);
+            List<Task<Text>> tasks = new ArrayList<>(scripts.length);
+            for (Script script : scripts) {
+                // A synchronous SDK error must still await already-started clients
+                // before releasing the shared bitmap and lifecycle reference.
+                try { tasks.add(client(script).process(image)); }
+                catch (Exception error) { tasks.add(Tasks.forException(error)); }
+            }
 
-            Tasks.whenAllComplete(latinTask, chineseTask, japaneseTask, koreanTask)
+            Tasks.whenAllComplete(tasks)
                     .addOnCompleteListener(ignored -> {
                         try {
                             if (regionsCallback != null) {
                                 List<Region> found = new ArrayList<>();
-                                addRegions(found, latinTask, Script.LATIN);
-                                addRegions(found, chineseTask, Script.CHINESE);
-                                addRegions(found, japaneseTask, Script.JAPANESE);
-                                addRegions(found, koreanTask, Script.KOREAN);
+                                for (int i = 0; i < scripts.length; i++) addRegions(found, tasks.get(i), scripts[i]);
                                 if (!found.isEmpty()) regionsCallback.onSuccess(found);
                                 else {
-                                    Exception error = firstError(latinTask, chineseTask, japaneseTask, koreanTask);
+                                    Exception error = firstError(tasks);
                                     fail(null, regionsCallback, error != null ? error : new IllegalStateException("没有识别到文字"));
                                 }
                                 return;
@@ -160,39 +195,12 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                             String best = "";
                             int bestScore = Integer.MIN_VALUE;
 
-                            if (latinTask.isSuccessful()) {
-                                String value = textOf(latinTask);
-                                int score = score(value, Script.LATIN);
-                                if (score > bestScore) {
-                                    best = value;
-                                    bestScore = score;
-                                }
-                            }
-
-                            if (chineseTask.isSuccessful()) {
-                                String value = textOf(chineseTask);
-                                int score = score(value, Script.CHINESE);
-                                if (score > bestScore) {
-                                    best = value;
-                                    bestScore = score;
-                                }
-                            }
-
-                            if (japaneseTask.isSuccessful()) {
-                                String value = textOf(japaneseTask);
-                                int score = score(value, Script.JAPANESE);
-                                if (score > bestScore) {
-                                    best = value;
-                                    bestScore = score;
-                                }
-                            }
-
-                            if (koreanTask.isSuccessful()) {
-                                String value = textOf(koreanTask);
-                                int score = score(value, Script.KOREAN);
-                                if (score > bestScore) {
-                                    best = value;
-                                    bestScore = score;
+                            for (int i = 0; i < scripts.length; i++) {
+                                Task<Text> task = tasks.get(i);
+                                if (task.isSuccessful()) {
+                                    String value = textOf(task);
+                                    int score = score(value, scripts[i]);
+                                    if (score > bestScore) { best = value; bestScore = score; }
                                 }
                             }
 
@@ -203,8 +211,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                                 return;
                             }
 
-                            Exception error = firstError(
-                                    latinTask, chineseTask, japaneseTask, koreanTask);
+                            Exception error = firstError(tasks);
                             fail(callback, regionsCallback, error != null
                                     ? error
                                     : new IllegalStateException("没有识别到文字"));
@@ -219,7 +226,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     }
     private static void fail(Callback text, RegionsCallback regions, Exception error) {
         if (error instanceof MlKitException && ((MlKitException)error).getErrorCode() == MlKitException.UNAVAILABLE)
-            error = new IllegalStateException("OCR 识别模型尚未就绪，请保持联网让 Google Play 服务完成中 / 日 / 英模型下载后重试", error);
+            error = new IllegalStateException("OCR 识别模型尚未就绪，请保持联网让 Google Play 服务完成所选语言模型下载后重试", error);
         if (regions != null) regions.onFailure(error); else text.onFailure(error);
     }
     private static void addRegions(List<Region> regions, Task<Text> task, Script script) {
@@ -296,7 +303,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         return result == null ? "" : result.getText();
     }
 
-    private static Exception firstError(Task<Text>... tasks) {
+    private static Exception firstError(List<Task<Text>> tasks) {
         for (Task<Text> task : tasks) {
             if (!task.isSuccessful() && task.getException() != null) {
                 return task.getException();

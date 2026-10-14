@@ -5,6 +5,7 @@ public final class FloatingSearchStateTest {
     public static void main(String[] args) {
         backClosesOnlyTheHighestLayer();
         repeatedMenuTapsAndSwitchesStayExclusive();
+        languageSelectionPreservesSessionLayers();
         privateModeClosesMenusAndPreservesOtherLayers();
         resetRemovesSessionState();
         nullMenusCannotCorruptState();
@@ -78,6 +79,25 @@ public final class FloatingSearchStateTest {
         equal(FloatingSearchState.BackAction.HIDE_KEYBOARD, state.onBack());
         equal(FloatingSearchState.BackAction.CLOSE_DRAWER, state.onBack());
         equal(FloatingSearchState.BackAction.CLOSE_SEARCH, state.onBack());
+    }
+
+    private static void languageSelectionPreservesSessionLayers() {
+        FloatingSearchState state = new FloatingSearchState();
+        state.setKeyboardVisible(true);
+        state.setDrawerOpen(true);
+        state.setMenu(FloatingSearchState.Menu.MODEL);
+        equal(FloatingSearchState.Menu.LANGUAGE, state.toggleMenu(FloatingSearchState.Menu.LANGUAGE));
+        equal(true, state.isKeyboardVisible());
+        equal(true, state.isDrawerOpen());
+        equal(FloatingSearchState.BackAction.CLOSE_MENU, state.onBack());
+        equal(FloatingSearchState.Menu.NONE, state.getMenu());
+        state.setMenu(FloatingSearchState.Menu.LANGUAGE);
+        equal(FloatingSearchState.Menu.ATTACHMENT, state.toggleMenu(FloatingSearchState.Menu.ATTACHMENT));
+        state.setMenu(FloatingSearchState.Menu.LANGUAGE);
+        equal(true, state.togglePrivateMode());
+        equal(FloatingSearchState.Menu.NONE, state.getMenu());
+        equal(true, state.isKeyboardVisible());
+        equal(true, state.isDrawerOpen());
     }
 
     private static void resetRemovesSessionState() {

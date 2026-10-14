@@ -15,7 +15,6 @@ final class OcrPickupController implements AutoCloseable {
         Rect move(int x, int y);
         void save();
         void tap();
-        void authorize();
         void lookup(String text);
     }
     private final Context context;
@@ -73,49 +72,70 @@ final class OcrPickupController implements AutoCloseable {
         return new View.OnTouchListener() {
             float downX, downY;
             Rect start;
+            int lastX, lastY;
             View pressed;
-            boolean moved, held;
+            boolean moved, held, ocrRequested;
             final Runnable hold = () -> {
                 if (pressed == null || moved || closed) return;
                 held = true;
                 pressed.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                if (!MainActivity.ScreenCaptureService.READY) { host.authorize(); return; }
+            };
+            private void drag(MotionEvent event) {
+                int dx = Math.round(event.getRawX() - downX), dy = Math.round(event.getRawY() - downY);
+                if (Math.abs(dx) > slop || Math.abs(dy) > slop) {
+                    moved = true; main.removeCallbacks(hold);
+                }
+                if (!moved || held) return;
+                int x = start.left + dx, y = start.top + dy;
+                if (x != lastX || y != lastY) {
+                    updateAim(host.move(x, y)); lastX = x; lastY = y;
+                }
+                // An ordinary drag always moves the bubble, but never requests screen sharing.
+                if (!ocrRequested && MainActivity.ScreenCaptureService.READY) {
+                    ocrRequested = true;
+                    startPickup();
+                }
+                if (armed) select();
+            }
+            private void startPickup() {
                 armed = waiting = true; released = false;
                 session = SystemClock.elapsedRealtimeNanos();
-                updateAim();
                 context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
                         .setAction(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session", session));
                 main.postDelayed(timeout, 10000);
-            };
+            }
             @Override public boolean onTouch(View view, MotionEvent event) {
+                if (closed) return true;
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         cancel(); main.removeCallbacks(hold);
                         downX = event.getRawX(); downY = event.getRawY(); start = host.position();
-                        moved = held = false; pressed = view;
+                        lastX = start.left; lastY = start.top;
+                        moved = held = ocrRequested = false; pressed = view;
                         main.postDelayed(hold, 700); return true;
                     case MotionEvent.ACTION_MOVE:
-                        int dx = Math.round(event.getRawX() - downX), dy = Math.round(event.getRawY() - downY);
-                        if (Math.abs(dx) > slop || Math.abs(dy) > slop) { moved = true; main.removeCallbacks(hold); }
-                        if (armed) {
-                            if (moved) updateAim(host.move(start.left + dx, start.top + dy));
-                            else updateAim();
-                            select();
-                        }
+                        drag(event);
                         return true;
                     case MotionEvent.ACTION_UP:
                         main.removeCallbacks(hold); pressed = null;
-                        if (armed && moved) host.save();
+                        drag(event);
+                        if (moved && !held) host.save();
                         if (armed) { released = true; if (!waiting) finish(); }
                         else if (!held && !moved) host.tap();
+                        else if (held) {
+                            String direction = swipeDirection(event.getRawX()-downX, event.getRawY()-downY, 32*density);
+                            if (direction != null) Toast.makeText(context, direction, Toast.LENGTH_SHORT).show();
+                        }
+                        /* Ordinary touch swipes used to show direction Toasts; only held swipes do now.
                         else if (!held) {
                             String direction = swipeDirection(event.getRawX()-downX, event.getRawY()-downY, 32*density);
                             if (direction != null) Toast.makeText(context, direction, Toast.LENGTH_SHORT).show();
                         }
+                        */
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         main.removeCallbacks(hold); pressed = null;
-                        if (armed && moved) { host.move(start.left, start.top); }
+                        if (moved && !held) { host.move(start.left, start.top); }
                         cancel(); return true;
                     default: return true;
                 }
@@ -125,9 +145,6 @@ final class OcrPickupController implements AutoCloseable {
     static String swipeDirection(float dx, float dy, float threshold) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return null;
         return Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? "向上滑动" : "向下滑动") : (dx < 0 ? "向左滑动" : "向右滑动");
-    }
-    private void updateAim() {
-        updateAim(host.position());
     }
     private void updateAim(Rect bubble) {
         aimX = bubble.exactCenterX(); aimY = Math.max(0, bubble.top - 12 * density);

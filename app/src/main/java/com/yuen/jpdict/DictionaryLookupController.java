@@ -24,6 +24,8 @@ final class DictionaryLookupController {
     private boolean closed;
     private int resultChars;
     private PopupWindow listPopup;
+    private Section deferredLoading;
+    private final Runnable deferred = this::loadDeferred;
 
     DictionaryLookupController(Context context, LinearLayout parent, String word, DictionaryEntryView.Navigation navigation) {
         this.context = context; this.parent = parent; this.word = word; this.navigation = navigation;
@@ -35,16 +37,39 @@ final class DictionaryLookupController {
                 Section section = new Section(d); sections.add(section);
                 parent.addView(section.header); parent.addView(section.body);
             }
-            for (Section section : sections) if (section.expanded) section.request(1);
+            // Start at the front before layout; the viewport pass fills the other
+            // worker. Offscreen defaults must not compete with the first result.
+            if (!sections.isEmpty()) sections.get(0).request(1);
             parent.getViewTreeObserver().addOnScrollChangedListener(scrollListener);
+            parent.getViewTreeObserver().addOnGlobalLayoutListener(layoutListener);
             parent.post(this::prefetchVisible);
+            scheduleDeferred();
         });
     }
     private final android.view.ViewTreeObserver.OnScrollChangedListener scrollListener = this::prefetchVisible;
+    private final android.view.ViewTreeObserver.OnGlobalLayoutListener layoutListener = this::prefetchVisible;
     private void prefetchVisible() {
         if (closed) return;
         Rect visible = new Rect();
-        for (Section section : sections) if (!section.expanded && section.header.getGlobalVisibleRect(visible)) section.request(2);
+        for (Section section : sections) if (section.header.getGlobalVisibleRect(visible)) {
+            section.request(1);
+            section.openLoaded(false);
+        }
+    }
+    private void scheduleDeferred() {
+        main.removeCallbacks(deferred);
+        if (!closed) main.postDelayed(deferred, 300);
+    }
+    private void loadDeferred() {
+        if (closed || deferredLoading != null) return;
+        // Only one offscreen query at a time, in display order. Closed libraries
+        // are read when visible or tapped instead of parsing all 512 eagerly.
+        for (Section section : sections) if (section.wantedExpanded && !section.attempted
+                && !section.cacheEvicted && section.ticket == null && !results.containsKey(section)) {
+            deferredLoading = section; section.request(3);
+            if (section.ticket == null) { deferredLoading = null; scheduleDeferred(); }
+            return;
+        }
     }
     private int dp(int n) { return Math.round(n * context.getResources().getDisplayMetrics().density); }
     private TextView label(String text) {
@@ -53,15 +78,22 @@ final class DictionaryLookupController {
     }
     private void cache(Section section, List<String> entries) {
         int count = chars(entries);
-        if (count > 512 * 1024) { section.message("词条 HTML 超过 512 KB 显示限制"); return; }
+        if (count > 512 * 1024) {
+            section.failure = "词条 HTML 超过 512 KB 显示限制"; section.openLoaded(false); return;
+        }
         while (resultChars + count > 2 * 1024 * 1024 && !results.isEmpty()) {
             Section oldest = results.keySet().iterator().next();
             resultChars -= chars(results.remove(oldest));
+            oldest.cacheEvicted = true;
+            if (oldest.web == null) oldest.attempted = false;
         }
         List<String> old = results.put(section, entries);
         if (old != null) resultChars -= chars(old);
         resultChars += count;
-        if (section.expanded) section.render(entries);
+        section.cacheEvicted = false;
+        section.failure = null;
+        section.openLoaded(false);
+        parent.post(this::prefetchVisible);
     }
     private static int chars(List<String> entries) {
         int total = 0; for (String entry : entries) total += entry.length(); return total;
@@ -69,7 +101,11 @@ final class DictionaryLookupController {
     void close() {
         if (closed) return;
         closed = true;
-        if (parent.getViewTreeObserver().isAlive()) parent.getViewTreeObserver().removeOnScrollChangedListener(scrollListener);
+        main.removeCallbacks(deferred);
+        if (parent.getViewTreeObserver().isAlive()) {
+            parent.getViewTreeObserver().removeOnScrollChangedListener(scrollListener);
+            parent.getViewTreeObserver().removeOnGlobalLayoutListener(layoutListener);
+        }
         for (Section section : sections) {
             if (section.ticket != null) section.ticket.cancel();
             section.destroyView();
@@ -103,7 +139,8 @@ final class DictionaryLookupController {
         final ImageView arrow = new ImageView(context);
         DictionaryScheduler.Ticket ticket;
         DictionaryEntryView web;
-        boolean expanded, attempted;
+        boolean expanded, wantedExpanded, explicitRequest, attempted, cacheEvicted;
+        String failure;
         Section(DictionaryRepository.Dictionary dictionary) {
             this.dictionary = dictionary;
             header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(14), 0, dp(8), 0);
@@ -114,17 +151,32 @@ final class DictionaryLookupController {
             arrow.setPadding(dp(12), dp(12), dp(12), dp(12));
             header.addView(arrow, new LinearLayout.LayoutParams(dp(40), dp(40)));
             header.setMinimumHeight(dp(40)); body.setOrientation(LinearLayout.VERTICAL); body.setBackgroundColor(0xffffffff); body.setVisibility(View.GONE);
-            expanded = dictionary.lookupExpanded;
-            body.setVisibility(expanded ? View.VISIBLE : View.GONE); arrow.setRotation(expanded ? 0 : 180);
+            wantedExpanded = dictionary.lookupExpanded;
+            // The saved preference is intent, not a loaded body. All headers
+            // stay collapsed until their definition is available.
             header.setOnClickListener(v -> {
-                expanded = !expanded; body.setVisibility(expanded ? View.VISIBLE : View.GONE); arrow.setRotation(expanded ? 0 : 180);
-                if (expanded) {
-                    List<String> entries = results.get(this);
-                    if (entries != null) render(entries);
-                    else { attempted = false; request(0); }
+                if (expanded || (explicitRequest && wantedExpanded && (ticket != null || (web != null && !web.isReady())))) {
+                    wantedExpanded = false; setExpanded(false);
+                } else {
+                    wantedExpanded = true; explicitRequest = true;
+                    if (web == null && !results.containsKey(this)) { attempted = false; failure = null; request(0); }
+                    openLoaded(true);
                     if (ticket != null) ticket.promote(0);
                 }
             });
+        }
+        void setExpanded(boolean value) {
+            expanded = value; body.setVisibility(value ? View.VISIBLE : View.GONE); arrow.setRotation(value ? 0 : 180);
+        }
+        void openLoaded(boolean user) {
+            if (!wantedExpanded || expanded || closed) return;
+            Rect visible = new Rect();
+            if (!user && !explicitRequest && sections.get(0) != this && !header.getGlobalVisibleRect(visible)) return;
+            List<String> entries = results.get(this);
+            if (web != null || entries != null) {
+                if (entries != null && !render(entries, user || explicitRequest)) return;
+                if (web == null || web.isReady()) setExpanded(true);
+            } else if (failure != null) { message(failure); setExpanded(true); }
         }
         void message(String text) { body.removeAllViews(); body.addView(label(text)); }
         void request(int priority) {
@@ -139,25 +191,39 @@ final class DictionaryLookupController {
                 main.post(() -> {
                     if (closed) return;
                     ticket = null; attempted = true;
+                    if (deferredLoading == this) deferredLoading = null;
                     if (failure == null) cache(this, ready);
-                    else message("词典读取失败：" + failure.getMessage());
+                    else { this.failure = "词典读取失败：" + failure.getMessage(); openLoaded(false); }
+                    scheduleDeferred();
                 });
             });
-            if (ticket == null) { attempted = false; message("查询队列已满，点击分区重试"); }
+            if (ticket == null) { attempted = false; failure = "查询队列已满，点击分区重试"; openLoaded(false); }
         }
-        void render(List<String> entries) {
+        boolean render(List<String> entries, boolean user) {
             // A collapsed section keeps its DOM, loaded assets and measured height.
-            if (web != null) { rendered.remove(this); rendered.add(this); return; }
-            if (entries.isEmpty()) { message("该词典未收录此词条"); return; }
+            if (web != null) { rendered.remove(this); rendered.add(this); return true; }
+            if (entries.isEmpty()) { message("该词典未收录此词条"); return true; }
             while (rendered.size() >= 3) {
-                Section oldest = rendered.iterator().next(); oldest.destroyView(); oldest.message("点击分区重新加载释义");
-                oldest.expanded = false; oldest.body.setVisibility(View.GONE); oldest.arrow.setRotation(180);
+                Section oldest = null;
+                Rect visible = new Rect();
+                for (Section candidate : rendered) if (!candidate.wantedExpanded || !candidate.header.getGlobalVisibleRect(visible)) {
+                    oldest = candidate; break;
+                }
+                // Auto-loading another visible header must not evict a front
+                // section before its HTML/resources have finished loading.
+                if (oldest == null && !user) return false;
+                if (oldest == null) oldest = rendered.iterator().next();
+                oldest.destroyView(); oldest.message("点击分区重新加载释义");
+                oldest.wantedExpanded = false; oldest.setExpanded(false);
             }
             try {
-                web = new DictionaryEntryView(context, repository, dictionary, entries, navigation);
+                web = new DictionaryEntryView(context, repository, dictionary, entries, navigation, () -> {
+                    openLoaded(false); parent.post(DictionaryLookupController.this::prefetchVisible);
+                });
                 body.removeAllViews(); body.addView(web, new LinearLayout.LayoutParams(-1, 1));
                 rendered.add(this);
             } catch (RuntimeException error) { message("释义显示失败：" + error.getMessage()); }
+            return true;
         }
         void destroyView() {
             if (web != null) { body.removeView(web); web.close(); web = null; }

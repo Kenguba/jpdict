@@ -61,7 +61,7 @@ public final class MdictReaderTest {
             String[] keys, byte[][] values, String[] summaries) throws IOException {
         return fixture(width, encoding, compression, resource, keys, values, summaries, 7);
     }
-    private static byte[] fixture(int width, Charset encoding, int compression, boolean resource,
+    static byte[] fixture(int width, Charset encoding, int compression, boolean resource,
             String[] keys, byte[][] values, String[] summaries, int recordBlockBytes) throws IOException {
         String xml = "<" + (resource ? "Library_Data" : "Dictionary")
                 + " GeneratedByEngineVersion=\"" + (width == 8 ? "2.0" : "1.2")
