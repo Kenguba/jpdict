@@ -54,17 +54,25 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             fullBackup = state.getBoolean("full"); replaceId = state.getString("replace"); downloads = state.getBoolean("downloads");
             expandedId = state.getString("expanded"); filter = state.getString("filter", "");
         }
-        LinearLayout root = createPage("词库管理", false);
+        LinearLayout root = createPage("词库管理", false, 44);
+        int edge = getResources().getConfiguration().screenWidthDp <= 355 ? 8 : 16;
         LinearLayout tabs = new LinearLayout(this);
+        tabs.setPadding(dp(edge), 0, dp(edge), 0);
         for (String tab : new String[]{"已安装", "词库下载"}) {
-            TextView button = text(tab, 16, 0xff006bff); button.setGravity(Gravity.CENTER);
+            TextView button = text(tab, 16, 0xff007aff); button.setGravity(Gravity.CENTER);
+            button.setPadding(0, 0, 0, 0); button.setIncludeFontPadding(false);
+            button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
             button.setBackgroundResource(R.drawable.dictionary_tab);
             tabButtons[tab.equals("已安装") ? 0 : 1] = button;
-            tabs.addView(button, new LinearLayout.LayoutParams(0, dp(48), 1));
+            tabs.addView(button, new LinearLayout.LayoutParams(0, dp(36), 1));
             button.setOnClickListener(v -> { downloads = tab.equals("词库下载"); refresh(); });
         }
         root.addView(tabs);
-        scroll = new ScrollView(this); scroll.setVerticalScrollBarEnabled(false); scroll.setPadding(dp(12), dp(8), dp(12), 0);
+        View tabLine = new View(this); tabLine.setBackgroundColor(0xffe6e8eb);
+        LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(-1, dp(1));
+        lineParams.leftMargin = dp(edge); lineParams.rightMargin = dp(edge);
+        root.addView(tabLine, lineParams);
+        scroll = new ScrollView(this); scroll.setVerticalScrollBarEnabled(false); scroll.setPadding(dp(edge), dp(4), dp(edge), 0);
         content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); scroll.addView(content);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1)); setContentView(root);
         refresh();
@@ -73,8 +81,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         for (int i = 0; i < tabButtons.length; i++) {
             boolean selected = downloads == (i == 1);
             tabButtons[i].setSelected(selected);
-            tabButtons[i].setTextColor(selected ? 0xff006bff : 0xff72777f);
-            tabButtons[i].setTypeface(android.graphics.Typeface.DEFAULT, selected ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+            tabButtons[i].setTextColor(selected ? 0xff007aff : 0xff5c687d);
         }
         int generation = ++pageGeneration;
         content.removeAllViews(); status = text("正在读取词库…", 14, 0xff73777a); content.addView(status);
@@ -108,8 +115,8 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         search.addView(magnifier, new LinearLayout.LayoutParams(dp(21), dp(21)));
         EditText field = new EditText(this); field.setSingleLine(); field.setTextSize(14); field.setHint("搜索已安装的词库"); field.setText(filter);
         field.setBackgroundColor(android.graphics.Color.TRANSPARENT); field.setPadding(dp(9), 0, dp(4), 0); field.setContentDescription("搜索已安装的词库");
-        search.addView(field, new LinearLayout.LayoutParams(0, dp(42), 1));
-        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2); searchLp.bottomMargin = dp(10); content.addView(search, searchLp);
+        search.addView(field, new LinearLayout.LayoutParams(0, dp(40), 1));
+        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2); searchLp.bottomMargin = dp(8); content.addView(search, searchLp);
         LinearLayout actions = new LinearLayout(this);
         shortcut(actions, "导入本地词库", "MDX / MDD 及配套资源", SearchIconView.Kind.IMPORT, () -> chooseImport(null));
         shortcut(actions, "存储与迁移", "存储、备份与恢复", SearchIconView.Kind.DATABASE, this::migration);

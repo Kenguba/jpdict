@@ -12,7 +12,7 @@ public final class FloatingBubbleSettingsActivity extends FloatingSearchPageActi
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout root = createPage("悬浮按钮", false);
+        LinearLayout root = createPage("悬浮按钮", false, 44);
         ((LinearLayout) root.getChildAt(0)).getChildAt(0)
                 .setOnClickListener(v -> onBackPressed());
 
