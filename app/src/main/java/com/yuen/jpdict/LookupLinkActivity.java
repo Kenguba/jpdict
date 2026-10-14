@@ -33,7 +33,6 @@ public final class LookupLinkActivity extends Activity {
     private boolean showingSearch;
     private boolean hostVisible;
     private boolean pageInFront;
-    private boolean userLeaving;
     private String hostSession = java.util.UUID.randomUUID().toString();
     private Intent pendingForward;
 
@@ -118,7 +117,6 @@ public final class LookupLinkActivity extends Activity {
 
     @Override protected void onStart() {
         super.onStart();
-        userLeaving = false;
         hostVisible = true;
     }
 
@@ -153,16 +151,14 @@ public final class LookupLinkActivity extends Activity {
 
     @Override protected void onUserLeaveHint() {
         super.onUserLeaveHint();
-        userLeaving = true;
+        if (!pageInFront && !isFinishing()) {
+            sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS);
+        }
     }
 
     @Override protected void onStop() {
         hostVisible = false;
         super.onStop();
-        // Do not leave a modal overlay behind after its mask/Back host is hidden.
-        if (userLeaving && !pageInFront && !isFinishing() && !isChangingConfigurations()) {
-            sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS);
-        }
     }
 
     @Override public void onBackPressed() {
