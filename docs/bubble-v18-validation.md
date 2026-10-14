@@ -111,7 +111,7 @@ adb shell am instrument -w -e mode capture -e label 393 com.yuen.jpdict.v18qa.te
 - 编辑/布局的大部分设备断言使用真实 View 的合成事件；历史长按/横滚与自由点输入焦点在实际挂载 Activity 中执行。长按只抽样验证 180ms 未触发、640ms 已触发确认，不宣称精确毫秒边界实测。
 - 实际浮球点击打开原搜索层；静止长按出现 MediaProjection 授权页，授权后长按拖动保存新坐标（88,658），同时挂载的本体窗口 alpha=0 / NOT_TOUCHABLE 与可触摸顶层代理核对通过。没有关闭系统遮挡触摸保护。退出已停止临时 QA 共享与服务。
 - 本次未测真实 OCR 文本识别精度/四脚本模型下载、物理振动、OriginOS 或其他实体手机、Android 23–36；不能把逻辑检查当作这些实机验证。备份 JSON/图片引用兼容已检查，未实际执行云端备份/恢复。
-- 最终构建的 Debug APK：arm64 4,459,752 bytes、armv7 4,459,751 bytes、arm 4,459,731 bytes；基线 arm64 为 4,112,885 bytes，增加 346,867 bytes（约 8.43%）。最终 Git 跟踪文件合计 1,184,296 bytes，低于 README 的 35MiB；所有 Debug APK 均低于 30MiB。未据此宣称签名 Release 体积已经实测。
+- 最终构建的 Debug APK：arm64 4,459,752 bytes、armv7 4,459,751 bytes、arm 4,459,731 bytes；基线 arm64 为 4,112,885 bytes，增加 346,867 bytes（约 8.43%）。最终 Git 跟踪文件合计 1,184,296 bytes，低于 README 的 35MiB；所有 Debug APK 均低于 5MiB。未据此宣称签名 Release 体积已经实测。
 
 ## 视觉对照与明确差异
 

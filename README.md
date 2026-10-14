@@ -78,14 +78,14 @@
 
 ### APK 体积上限
 
-**任何最终面向用户发布的单个 APK 都不得超过 30 MB。**
+**任何最终面向用户发布的单个 APK 都不得超过 5 MB。**
 
 统一按以下规则理解：
 
-- 上限按 `30 × 1024 × 1024 bytes` 计算。
+- 上限按 `5 × 1024 × 1024 bytes` 计算。
 - `arm64-v8a`、`armeabi-v7a`、`arm` 等所有正式发布 APK 都必须分别满足限制。
-- `universal` 只有在自身也满足 30 MB 上限时才能作为正式发布产物。
-- 如果 `universal` 因包含多个 ABI 超过 30 MB，必须停止发布该 universal APK，优先使用 ABI Split / 分架构 APK，而不是突破体积上限。
+- `universal` 只有在自身也满足 5 MB 上限时才能作为正式发布产物。
+- 如果 `universal` 因包含多个 ABI 超过 5 MB，必须停止发布该 universal APK，优先使用 ABI Split / 分架构 APK，而不是突破体积上限。
 - 新依赖、新资源、新模型加入前必须评估对 APK 体积的影响。
 - 发布前必须检查实际 APK 文件大小；超过上限视为发布阻断问题。
 
@@ -200,7 +200,7 @@ APK 文件名固定格式：
 - `armeabi-v7a`
 - `arm`
 
-`universal` 仅在最终 APK 本身不超过 30 MB 时允许发布。
+`universal` 仅在最终 APK 本身不超过 5 MB 时允许发布。
 
 因此构建产物命名应遵循同一规则，例如：
 
@@ -210,7 +210,7 @@ APK 文件名固定格式：
 名字-26.10.07-00004T-arm.apk
 ```
 
-如果未来 universal APK 优化到 30 MB 以内，则可使用：
+如果未来 universal APK 优化到 5 MB 以内，则可使用：
 
 ```text
 名字-26.10.07-00004T-universal.apk
@@ -283,23 +283,23 @@ APK 文件名固定格式：
 
 ## APK 下载建议
 
-正式发布 APK 必须同时满足上面的版本化命名规则和 **单 APK ≤ 30 MB** 的体积硬限制。
+正式发布 APK 必须同时满足上面的版本化命名规则和 **单 APK ≤ 5 MB** 的体积硬限制。
 
 | 架构 / 变体 | 包含架构 | 建议 |
 | --- | --- | --- |
 | `arm64-v8a` | `arm64-v8a` | 推荐给现在绝大多数 Android 手机，体积最小 |
 | `armeabi-v7a` | `armeabi-v7a` | 老旧 32 位 ARM 手机 / 平板 |
 | `arm` | `arm64-v8a + armeabi-v7a` | 手机通用集合版，兼容新旧 ARM 手机 |
-| `universal` | `arm64-v8a + armeabi-v7a + x86 + x86_64` | 仅在最终文件 ≤ 30 MB 时允许发布 |
+| `universal` | `arm64-v8a + armeabi-v7a + x86 + x86_64` | 仅在最终文件 ≤ 5 MB 时允许发布 |
 
 普通用户建议：
 
 - 新款 Android 手机：下载 `arm64-v8a`
 - 不确定新旧 ARM 架构：下载 `arm`
 - 老旧 32 位设备：下载 `armeabi-v7a`
-- 模拟器 / Chromebook / 特殊设备：优先使用对应 ABI 构建；不得为了兼容而发布超过 30 MB 的 universal APK。
+- 模拟器 / Chromebook / 特殊设备：优先使用对应 ABI 构建；不得为了兼容而发布超过 5 MB 的 universal APK。
 
-> `arm64-v8a` 和 `armeabi-v7a` 是当前手机端最重要的两种 ARM ABI。x86 / x86_64 如需支持，应继续采用分架构产物或其他不突破 30 MB 上限的方案。
+> `arm64-v8a` 和 `armeabi-v7a` 是当前手机端最重要的两种 ARM ABI。x86 / x86_64 如需支持，应继续采用分架构产物或其他不突破 5 MB 上限的方案。
 
 ## 固定 Release 签名
 
@@ -324,7 +324,7 @@ APK 文件名固定格式：
 
 ## 本地构建
 
-为遵守单 APK ≤ 30 MB 的硬限制，默认只构建当前可发布的 3 个变体；universal 不作为默认发布产物。
+为遵守单 APK ≤ 5 MB 的硬限制，默认只构建当前可发布的 3 个变体；universal 不作为默认发布产物。
 
 Debug：
 

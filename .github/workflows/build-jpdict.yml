@@ -174,7 +174,7 @@ jobs:
       - name: Enforce APK size budget
         shell: bash
         run: |
-          MAX_BYTES=$((30 * 1024 * 1024))
+          MAX_BYTES=$((5 * 1024 * 1024))
           FAILED=0
           shopt -s nullglob
           APKS=(dist/*.apk)
@@ -186,7 +186,7 @@ jobs:
             SIZE=$(stat -c '%s' "$apk")
             echo "$(basename "$apk"): $SIZE bytes / $MAX_BYTES bytes"
             if (( SIZE > MAX_BYTES )); then
-              echo "::error file=$apk::APK exceeds the 30 MB hard limit."
+              echo "::error file=$apk::APK exceeds the 5 MB hard limit."
               FAILED=1
             fi
           done
@@ -301,7 +301,7 @@ jobs:
           - **jpdict-<版本>-armeabi-v7a.apk**：只包含 `armeabi-v7a`，适合老旧 32 位 ARM 手机和平板。
           - **jpdict-<版本>-arm.apk**：包含 `arm64-v8a + armeabi-v7a`，手机通用集合版。
 
-          为遵守单 APK 不超过 30 MB 的硬限制，当前不发布 universal APK。x86 / x86_64 如需支持，应改为分架构产物，不能通过超大 universal APK 绕过体积限制。
+          为遵守单 APK 不超过 5 MB 的硬限制，当前不发布 universal APK。x86 / x86_64 如需支持，应改为分架构产物，不能通过超大 universal APK 绕过体积限制。
 
           ## SHA-256
 
