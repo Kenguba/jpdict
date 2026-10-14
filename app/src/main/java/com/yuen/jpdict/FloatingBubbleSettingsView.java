@@ -75,7 +75,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         tabs.addView(appearanceTab,new LayoutParams(0,dp(36),1));
         tabs.addView(gestureTab,new LayoutParams(0,dp(36),1));
         header.addView(tabs);
-        View tabLine=new View(context); tabLine.setBackgroundColor(0xffe6e8eb);
+        View tabLine=new View(context); tabLine.setBackgroundColor(0x66e6e8eb);
         header.addView(tabLine,new LayoutParams(-1,dp(1)));
         appearanceTab.setOnClickListener(v->setGesturePage(false));
         gestureTab.setOnClickListener(v->setGesturePage(true));

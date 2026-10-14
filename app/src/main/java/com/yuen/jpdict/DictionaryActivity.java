@@ -68,7 +68,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             button.setOnClickListener(v -> { downloads = tab.equals("词库下载"); refresh(); });
         }
         root.addView(tabs);
-        View tabLine = new View(this); tabLine.setBackgroundColor(0xffe6e8eb);
+        View tabLine = new View(this); tabLine.setBackgroundColor(0x66e6e8eb);
         LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(-1, dp(1));
         lineParams.leftMargin = dp(edge); lineParams.rightMargin = dp(edge);
         root.addView(tabLine, lineParams);
