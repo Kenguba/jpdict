@@ -55,6 +55,9 @@ final class DictionaryEditingValidation {
                 FrameLayout host = new FrameLayout(context); root.set(host);
                 DictionaryEntryView view = new DictionaryEntryView(context, repository, dictionary, Collections.singletonList(
                         "<input id='token' type='text' placeholder='输入Token' style='display:block;height:36px'>"
+                        + "<script>var token=document.getElementById('token');"
+                        + "token.value=localStorage.getItem('qa-token')||'';"
+                        + "token.addEventListener('input',function(){localStorage.setItem('qa-token',token.value);});</script>"
                         + "<textarea id='area' style='display:block;height:44px'></textarea>"
                         + "<div id='content' contenteditable='true' style='height:40px;border:1px solid'>Editable</div>"
                         + "<input id='readonly' readonly value='read only' style='display:block;height:36px'>"
@@ -73,6 +76,9 @@ final class DictionaryEditingValidation {
                 windows.addView(host, params);
             });
             check(loaded.await(10, TimeUnit.SECONDS), "Original HTML fields finish loading");
+            instrumentation.runOnMainSync(() -> check(web.get().getSettings().getDomStorageEnabled(),
+                    "Dictionary HTML can save its own Token in origin-isolated DOM storage"));
+            javascript(instrumentation, web.get(), "localStorage.removeItem('qa-token');document.getElementById('token').value=''");
             check((params.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0, "Loading does not focus a browsing window");
             tap(instrumentation, web.get(), "token");
             awaitEditing(instrumentation, web.get(), editing);
@@ -97,6 +103,27 @@ final class DictionaryEditingValidation {
                 value = javascript(instrumentation, web.get(), "document.getElementById('token').value"); Thread.sleep(30);
             }
             check("\"qa-plain-token\"".equals(value), "Native IME commits plain text to the original HTML field");
+            check("\"qa-plain-token\"".equals(javascript(instrumentation, web.get(),
+                    "localStorage.getItem('qa-token')")), "Original input listener saves the Token without an Android bridge");
+            CountDownLatch reloaded = new CountDownLatch(1);
+            if (Build.VERSION.SDK_INT >= 26) {
+                instrumentation.runOnMainSync(() -> {
+                    android.webkit.WebViewClient delegate = web.get().getWebViewClient();
+                    web.get().setWebViewClient(new android.webkit.WebViewClient() {
+                        @Override public android.webkit.WebResourceResponse shouldInterceptRequest(
+                                android.webkit.WebView view, android.webkit.WebResourceRequest request) {
+                            return delegate.shouldInterceptRequest(view, request);
+                        }
+                        @Override public void onPageFinished(android.webkit.WebView view, String url) {
+                            delegate.onPageFinished(view, url); reloaded.countDown();
+                        }
+                    });
+                    web.get().stopEditing(); web.get().reload();
+                });
+                check(reloaded.await(10, TimeUnit.SECONDS), "Reload completes before further HTML input probes");
+                check("\"qa-plain-token\"".equals(javascript(instrumentation, web.get(),
+                        "document.getElementById('token').value")), "Reload restores the Token from the same dictionary origin");
+            }
             for (String id : new String[]{"area", "content"}) {
                 tap(instrumentation, web.get(), id); awaitEditing(instrumentation, web.get(), editing);
                 instrumentation.runOnMainSync(() -> check(web.get().onCheckIsTextEditor(), id + " is a native text editor"));
@@ -112,6 +139,9 @@ final class DictionaryEditingValidation {
             instrumentation.waitForIdleSync();
             check(back[0] == 1 && !root.get().isAttachedToWindow(), "One editor Back closes the containing lookup window");
         } finally {
+            if (web.get() != null && web.get().isAttachedToWindow()) {
+                javascript(instrumentation, web.get(), "localStorage.removeItem('qa-token')");
+            }
             instrumentation.runOnMainSync(() -> {
                 if (web.get() != null) web.get().close();
                 if (root.get() != null && root.get().isAttachedToWindow()) windows.removeView(root.get());

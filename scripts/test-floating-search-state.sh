@@ -19,7 +19,11 @@ state_test_dir=$(mktemp -d "${TMPDIR:-/tmp}/jpdict-state-test.XXXXXX")
 trap 'rm -r "$state_test_dir"' 0
 trap 'exit 1' HUP INT TERM
 
-"$javac_command" -d "$state_test_dir" \
+"$javac_command" -encoding UTF-8 -d "$state_test_dir" \
     "$repo_dir/app/src/main/java/com/yuen/jpdict/FloatingSearchState.java" \
-    "$repo_dir/app/src/test/java/com/yuen/jpdict/FloatingSearchStateTest.java"
+    "$repo_dir/app/src/main/java/com/yuen/jpdict/SearchDraftState.java" \
+    "$repo_dir/app/src/main/java/com/yuen/jpdict/SearchTextSegments.java" \
+    "$repo_dir/app/src/test/java/com/yuen/jpdict/FloatingSearchStateTest.java" \
+    "$repo_dir/app/src/test/java/com/yuen/jpdict/SearchComposerTest.java"
 "$java_command" -cp "$state_test_dir" com.yuen.jpdict.FloatingSearchStateTest
+"$java_command" -cp "$state_test_dir" com.yuen.jpdict.SearchComposerTest

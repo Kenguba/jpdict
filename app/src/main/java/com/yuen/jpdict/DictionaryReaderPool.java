@@ -65,7 +65,7 @@ final class DictionaryReaderPool {
     MdictReader openForValidation(DictionaryRepository.Document document, MdictReader.Source source, long modified) throws IOException {
         try {
             Index index = index(document, source, modified);
-            return MdictReader.open(source, index.file, index.fingerprint);
+            return MdictReader.open(source, index.file, index.fingerprint, repository.context().getCacheDir());
         } catch (Exception error) {
             try { source.close(); } catch (IOException close) { error.addSuppressed(close); }
             if (error instanceof IOException) throw (IOException) error;
@@ -124,7 +124,7 @@ final class DictionaryReaderPool {
                 live++; reserved = true; opening.add(index.key); openingKey = index.key; owner = generation;
             }
             // Parsing, index I/O and fingerprints must not hold the pool lock.
-            Handle opened = new Handle(MdictReader.open(source, index.file, index.fingerprint), identity);
+            Handle opened = new Handle(MdictReader.open(source, index.file, index.fingerprint, repository.context().getCacheDir()), identity);
             source = null;
             synchronized (this) {
                 opened.users = 1; opened.retired = !reusable || owner != generation;

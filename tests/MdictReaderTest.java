@@ -216,7 +216,7 @@ public final class MdictReaderTest {
     }
     public static void main(String[] args) throws Exception {
         formats(); lzo(); corrupt(); persistentIndex(); sparse();
-        referenceVectors(args[0]); unsupportedHeaders(); compactHeaders(); normalizedSummaries(); encryptedIndexes(); caseVariantLinks(); largeResources(); overlappingRanges(); downloadTrailers(); completions();
+        referenceVectors(args[0]); unsupportedHeaders(); compactHeaders(); normalizedSummaries(); encryptedIndexes(); caseVariantLinks(); largeResources(); duplicateResources(); highlyCompressedHtml(); largeHtmlStreams(); overlappingRanges(); downloadTrailers(); completions();
         System.out.println("MdictReader: " + checks + " assertions passed (v1/v2, MDX/MDD, UTF8/UTF16LE, raw/zlib/LZO, cross-block, duplicates, links, malformed/fuzz)");
     }
     private static byte[] appended(byte[] file, byte[] tail) {
@@ -368,7 +368,112 @@ public final class MdictReaderTest {
             check(Arrays.equals(r.readResource("font.otf"), data), "Large CJK font record is read without loading the whole MDD");
         }
         byte[] mdx = fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"entry"}, new byte[][]{data}, new String[]{"entry"}, data.length);
-        fails(() -> reader(mdx), MdictReader.Error.LIMIT);
+        try (MdictReader r = reader(mdx)) {
+            r.validate((done, total) -> {});
+            check(r.getMetadata().entries == 1, "Large MDX record blocks can be validated without a heap-sized allocation");
+        }
+    }
+    private static void duplicateResources() throws Exception {
+        byte[] first = {42, 19, 8, 6}, second = new byte[17 * 1024 * 1024];
+        String[] keys = {"\\same.bin", "\\same.bin"};
+        byte[] file = fixture(8, StandardCharsets.UTF_16LE, 2, true, keys,
+                new byte[][]{first, second}, keys, 4 * 1024 * 1024);
+        try (MdictReader reader = reader(file)) {
+            check(Arrays.equals(reader.readResource("same.bin"), first), "Duplicate MDD resource reads only the first body, without allocating or rejecting oversized later duplicates");
+        }
+        byte[] oversized = fixture(8, StandardCharsets.UTF_16LE, 2, true, new String[]{"\\large.bin"},
+                new byte[][]{second}, new String[]{"\\large.bin"}, 4 * 1024 * 1024);
+        fails(() -> { try (MdictReader reader = reader(oversized)) { reader.readResource("large.bin"); } }, MdictReader.Error.LIMIT);
+    }
+    private static void highlyCompressedHtml() throws Exception {
+        byte[] data = new byte[4 * 1024 * 1024]; Arrays.fill(data, (byte)'x');
+        byte[] file = fixture(8, StandardCharsets.UTF_8, 2, false, new String[]{"ratio"},
+                new byte[][]{data}, new String[]{"ratio"}, data.length);
+        check((long)data.length > (long)(envelope(data, 2).length - 8) * 1024, "High-compression fixture exceeds the legacy ratio heuristic");
+        try (MdictReader reader = reader(file)) {
+            reader.validate((done, total) -> {});
+            StringWriter output = new StringWriter();
+            check(reader.writeHtml("ratio", output) == 1, "Validated high-compression Record also renders through the same decoder");
+            check(output.getBuffer().length() == data.length + "<section></section>".length()
+                    && output.getBuffer().charAt(9) == 'x', "High-compression HTML is complete");
+        }
+        file[file.length - 1] ^= 1;
+        fails(() -> { try (MdictReader reader = reader(file)) { reader.writeHtml("ratio", new StringWriter()); } }, MdictReader.Error.CORRUPT);
+    }
+    /** Generated to disk in chunks, so a 100 MiB record is tested in a 128 MiB heap. */
+    private static File largeStreamFixture(int compression, int recordBytes) throws Exception {
+        File block = File.createTempFile("jpdict-large-block-", ".tmp"), file = File.createTempFile("jpdict-large-entry-", ".mdx");
+        Adler32 sum = new Adler32();
+        byte[] prefix = "<p>日本語😀</p>".getBytes(StandardCharsets.UTF_8), chunk = new byte[65536]; Arrays.fill(chunk, (byte)'x');
+        try {
+            try (OutputStream raw = new BufferedOutputStream(new FileOutputStream(block))) {
+                OutputStream out = compression == 2 ? new DeflaterOutputStream(raw) : raw;
+                if (compression == 1) {
+                    out.write(0); int extension = recordBytes - 18;
+                    while (extension > 255) { out.write(0); extension -= 255; } out.write(extension);
+                }
+                out.write(prefix); sum.update(prefix); int remaining = recordBytes - prefix.length - 1;
+                while (remaining > 0) { int count = Math.min(chunk.length, remaining); out.write(chunk, 0, count); sum.update(chunk, 0, count); remaining -= count; }
+                out.write(0); sum.update(0);
+                if (compression == 1) out.write(new byte[]{17,0,0});
+                if (compression == 2) ((DeflaterOutputStream)out).finish();
+            }
+            byte[] header = bytes("<Dictionary GeneratedByEngineVersion=\"2.0\" RequiredEngineVersion=\"2.0\" Encoding=\"UTF-8\" Title=\"Large stream\" Encrypted=\"0\"/>", StandardCharsets.UTF_16LE);
+            ByteArrayOutputStream keyBody = new ByteArrayOutputStream(); DataOutputStream keys = new DataOutputStream(keyBody);
+            keys.writeLong(0); keys.write(bytes("huge", StandardCharsets.UTF_8)); keys.write(0);
+            byte[] key = envelope(keyBody.toByteArray(), 0);
+            ByteArrayOutputStream indexBody = new ByteArrayOutputStream(); DataOutputStream index = new DataOutputStream(indexBody);
+            index.writeLong(1); summary(index, "huge", StandardCharsets.UTF_8, 8); summary(index, "huge", StandardCharsets.UTF_8, 8);
+            index.writeLong(key.length); index.writeLong(keyBody.size()); byte[] keyIndex = envelope(indexBody.toByteArray(), 0);
+            ByteArrayOutputStream keyHeader = new ByteArrayOutputStream(); DataOutputStream kh = new DataOutputStream(keyHeader);
+            kh.writeLong(1); kh.writeLong(1); kh.writeLong(indexBody.size()); kh.writeLong(keyIndex.length); kh.writeLong(key.length);
+            try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)))) {
+                output.writeInt(header.length); output.write(header); output.writeInt(Integer.reverseBytes((int)checksum(header)));
+                output.write(keyHeader.toByteArray()); output.writeInt((int)checksum(keyHeader.toByteArray())); output.write(keyIndex); output.write(key);
+                output.writeLong(1); output.writeLong(1); output.writeLong(16); output.writeLong(block.length() + 8);
+                output.writeLong(block.length() + 8); output.writeLong(recordBytes);
+                output.write(new byte[]{(byte)compression,0,0,0}); output.writeInt((int)sum.getValue());
+                try (InputStream input = new FileInputStream(block)) { int count; while ((count = input.read(chunk)) != -1) output.write(chunk, 0, count); }
+            }
+            return file;
+        } catch (Exception error) { file.delete(); throw error; }
+        finally { block.delete(); }
+    }
+    private static void largeHtmlStreams() throws Exception {
+        for (int compression : new int[]{0,1,2}) {
+            int recordBytes = (compression == 2 ? 100 : 9) * 1024 * 1024;
+            File file = largeStreamFixture(compression, recordBytes);
+            try {
+                final long[] characters = {0}; final StringBuilder prefix = new StringBuilder();
+                Writer output = new Writer() {
+                    public void write(char[] chars, int offset, int count) {
+                        characters[0] += count;
+                        if (prefix.length() < 100) prefix.append(chars, offset, Math.min(count, 100 - prefix.length()));
+                    }
+                    public void flush() {} public void close() {}
+                };
+                try (MdictReader reader = MdictReader.open(file)) {
+                    reader.validate((done, total) -> {});
+                    check(reader.containsKeys(Arrays.asList("HUGE", "absent")).equals(Collections.singleton("HUGE")), "Key-only match reads no large definition");
+                    check(reader.writeHtml("huge", output) == 1, "Large stream entry count");
+                    check(prefix.toString().startsWith("<section><p>日本語😀</p>"), "Large stream preserves Unicode and HTML");
+                    int bytePrefix = "<p>日本語😀</p>".getBytes(StandardCharsets.UTF_8).length;
+                    int charPrefix = "<p>日本語😀</p>".length();
+                    check(characters[0] == (long)recordBytes - 1 - bytePrefix + charPrefix + "<section></section>".length(), "Large stream is complete; no 512 KiB / 2 MiB truncation");
+                    Thread.currentThread().interrupt();
+                    try { fails(() -> reader.writeHtml("huge", output), MdictReader.Error.CANCELLED); } finally { Thread.interrupted(); }
+                }
+                if (compression == 2) {
+                    // Valid index, but the independently checked record checksum is corrupt.
+                    try (RandomAccessFile corrupt = new RandomAccessFile(file, "rw")) {
+                        long position = corrupt.length() - 1; corrupt.seek(position); int value = corrupt.read(); corrupt.seek(position); corrupt.write(value ^ 1);
+                    }
+                    fails(() -> { try (MdictReader reader = MdictReader.open(file)) { reader.writeHtml("huge", output); } }, MdictReader.Error.CORRUPT);
+                    try (RandomAccessFile truncated = new RandomAccessFile(file, "rw")) { truncated.setLength(truncated.length() - 16); }
+                    fails(() -> MdictReader.open(file), MdictReader.Error.CORRUPT);
+                }
+            } finally { file.delete(); }
+        }
     }
     private static void caseVariantLinks() throws Exception {
         for (int width : new int[]{4, 8}) for (Charset encoding : new Charset[]{StandardCharsets.UTF_8, StandardCharsets.UTF_16LE}) {

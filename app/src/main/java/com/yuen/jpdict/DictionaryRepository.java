@@ -81,6 +81,8 @@ final class DictionaryRepository {
     final DictionaryScheduler queries = new DictionaryScheduler();
     private final DictionaryReaderPool readers;
     private final DictionaryResultCache lookupCache = new DictionaryResultCache();
+    private final LinkedHashMap<String, DictionaryHtmlDocument> htmlCache = new LinkedHashMap<>(8, .75f, true);
+    private long htmlCacheBytes;
     private volatile List<Dictionary> snapshot = Collections.emptyList();
     private volatile boolean loaded;
 
@@ -88,6 +90,12 @@ final class DictionaryRepository {
         this.context = context; database = new Database(context);
         root = new File(context.getFilesDir(), "Dicts");
         readers = new DictionaryReaderPool(this);
+        // Only leftover temporary pages from a previous process exist here.
+        File pages = new File(context.getCacheDir(), "dict-pages");
+        File[] stalePages = pages.listFiles((directory, name) -> name.startsWith("entry-"));
+        if (stalePages != null) for (File page : stalePages) page.delete();
+        File[] staleBlocks = context.getCacheDir().listFiles((directory, name) -> name.startsWith("mdict-block-"));
+        if (staleBlocks != null) for (File block : staleBlocks) block.delete();
         management.allowCoreThreadTimeOut(true);
     }
     java.util.concurrent.Future<?> execute(Work work, Complete completion) {
@@ -272,20 +280,7 @@ final class DictionaryRepository {
                     fingerprint = fingerprint(src);
                 }
                 for (Dictionary existing : snapshot) if (!existing.id.equals(id) && existing.fingerprint.equals(fingerprint)) throw new IOException("该词典已安装：" + existing.name);
-                String title = base;
-                for (Document f : files) {
-                    if (!f.path.toLowerCase(Locale.ROOT).matches(".*\\.(mdx|mdd)$")) continue;
-                    progress.update("验证 " + f.path, 0, 0);
-                    File staged = copy ? inside(temporary, f.path) : null;
-                    try (MdictReader r = readers.openForValidation(f, copy ? MdictReader.file(staged) : open(f),
-                            copy ? staged.lastModified() : modified(f))) {
-                        if (f == first && !r.getMetadata().title.isEmpty()) title = r.getMetadata().title;
-                        if (r.getMetadata().resource != f.path.toLowerCase(Locale.ROOT).endsWith(".mdd")) throw new IOException("MDX/MDD 类型不符");
-                        r.validate((done, total) -> progress.update("验证 " + f.path, done, total));
-                    } catch (IOException error) {
-                        throw new IOException("验证 " + f.path + " 失败：" + error.getMessage(), error);
-                    }
-                }
+                String title = validateFiles(files, copy ? temporary : null, base, progress);
                 readers.trimIndexes();
                 ContentValues v = new ContentValues();
                 long now = System.currentTimeMillis();
@@ -320,6 +315,56 @@ final class DictionaryRepository {
         return installed;
     }
 
+    private String validateFiles(List<Document> files, File stagedDirectory, String fallbackTitle, Progress progress) throws Exception {
+        java.util.concurrent.ExecutorService validation = java.util.concurrent.Executors.newFixedThreadPool(2, r -> new Thread(r, "jpdict-verify"));
+        String title = fallbackTitle;
+        try {
+            List<Document> dictionaries = new ArrayList<>();
+            for (Document file : files) if (file.path.toLowerCase(Locale.ROOT).matches(".*\\.(mdx|mdd)$")) dictionaries.add(file);
+            // Only two tasks are submitted at a time. No unbounded file/parser queue.
+            for (int start = 0; start < dictionaries.size(); start += 2) {
+                MdictReader.checkCancelled();
+                List<java.util.concurrent.Future<String>> batch = new ArrayList<>();
+                for (int i = start; i < Math.min(start + 2, dictionaries.size()); i++) {
+                    Document file = dictionaries.get(i);
+                    batch.add(validation.submit(() -> {
+                        File staged = stagedDirectory == null ? null : inside(stagedDirectory, file.path);
+                        try (MdictReader reader = readers.openForValidation(file, staged == null ? open(file) : MdictReader.file(staged),
+                                staged == null ? modified(file) : staged.lastModified())) {
+                            if (reader.getMetadata().resource != file.path.toLowerCase(Locale.ROOT).endsWith(".mdd")) throw new IOException("MDX/MDD 类型不符");
+                            reader.validate((done, total) -> progress.update("验证 " + file.path, done, total));
+                            return reader.getMetadata().title;
+                        } catch (IOException error) { throw new IOException("验证 " + file.path + " 失败：" + error.getMessage(), error); }
+                    }));
+                }
+                try {
+                    for (int i = 0; i < batch.size(); i++) {
+                        String metadataTitle = batch.get(i).get();
+                        if (start + i == 0 && !metadataTitle.isEmpty()) title = metadataTitle;
+                    }
+                } catch (InterruptedException cancelled) {
+                    for (java.util.concurrent.Future<String> task : batch) task.cancel(true);
+                    Thread.currentThread().interrupt(); MdictReader.checkCancelled();
+                } catch (java.util.concurrent.ExecutionException failure) {
+                    for (java.util.concurrent.Future<String> task : batch) task.cancel(true);
+                    Throwable cause = failure.getCause();
+                    if (cause instanceof Exception) throw (Exception)cause;
+                    throw new IOException("词库验证失败", cause);
+                }
+            }
+            return title;
+        } finally {
+            validation.shutdownNow();
+            // Staged files cannot be removed until both readers have released them.
+            boolean interrupted = Thread.interrupted();
+            while (true) {
+                try { if (validation.awaitTermination(100, TimeUnit.MILLISECONDS)) break; }
+                catch (InterruptedException cancelled) { interrupted = true; }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
     MdictReader.Source open(Document file) throws IOException {
         if (file.uri == null || file.uri.getScheme() == null) throw new IOException("词典文件需要重新关联");
         try {
@@ -343,6 +388,56 @@ final class DictionaryRepository {
         MdictReader.checkCancelled();
         lookupCache.put(identity, word, result);
         return result;
+    }
+    /** Pages are composed on query workers and served to WebView as streams. Cache
+     * budgets affect reuse only, never whether a large valid entry can be shown. */
+    DictionaryHtmlDocument lookupDocument(Dictionary dictionary, String word) throws IOException {
+        String identity = readers.resultIdentity(dictionary.mdx());
+        String key = identity == null ? null : identity.length() + ":" + identity + word;
+        synchronized (htmlCache) {
+            DictionaryHtmlDocument cached = key == null ? null : htmlCache.get(key);
+            if (cached != null) return cached.retain();
+        }
+        File folder = new File(context.getCacheDir(), "dict-pages");
+        if (!folder.isDirectory() && !folder.mkdirs()) throw new IOException("无法建立词条缓存目录");
+        File file = File.createTempFile("entry-", ".html", folder);
+        boolean ready = false;
+        try {
+            int entries;
+            try (Writer output = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file), java.nio.charset.StandardCharsets.UTF_8), 65536)) {
+                DictionaryHtmlDocument.header(output, dictionary);
+                entries = readers.read(dictionary.mdx(), reader -> reader.writeHtml(word, output));
+                output.write("</body></html>");
+            }
+            MdictReader.checkCancelled();
+            DictionaryHtmlDocument document = new DictionaryHtmlDocument(file, entries);
+            synchronized (htmlCache) {
+                long size = file.length();
+                if (key != null && size <= 32L * 1024 * 1024) {
+                    DictionaryHtmlDocument previous = htmlCache.remove(key);
+                    if (previous != null) { htmlCacheBytes -= previous.file.length(); previous.close(); }
+                    while (!htmlCache.isEmpty() && (htmlCache.size() >= 64 || htmlCacheBytes + size > 32L * 1024 * 1024)) {
+                        String oldest = htmlCache.keySet().iterator().next(); DictionaryHtmlDocument evicted = htmlCache.remove(oldest);
+                        htmlCacheBytes -= evicted.file.length(); evicted.close();
+                    }
+                    htmlCache.put(key, document.retain()); htmlCacheBytes += size;
+                }
+            }
+            ready = true; return document;
+        } finally { if (!ready) file.delete(); }
+    }
+    Set<String> matchTerms(List<String> terms) throws IOException {
+        Set<String> matches = new HashSet<>();
+        if (terms == null || terms.isEmpty()) return matches;
+        List<String> remaining = new ArrayList<>(new LinkedHashSet<>(terms));
+        for (Dictionary dictionary : snapshot) if (dictionary.enabled) {
+            MdictReader.checkCancelled();
+            try { matches.addAll(readers.read(dictionary.mdx(), reader -> reader.containsKeys(remaining))); }
+            catch (MdictReader.Failure failure) { if (failure.error == MdictReader.Error.CANCELLED) throw failure; }
+            catch (IOException unavailable) { /* An unavailable dictionary must not prevent other token matches. */ }
+            remaining.removeAll(matches); if (remaining.isEmpty()) break;
+        }
+        return matches;
     }
     List<String> suggest(String prefix) throws IOException {
         WordSuggestions matches = new WordSuggestions(prefix, WordSuggestions.LIMIT);
@@ -465,7 +560,10 @@ final class DictionaryRepository {
     File directory() { return root; }
     Context context() { return context; }
     Database database() { return database; }
-    void closeReaders() { readers.clear(); lookupCache.clear(); }
+    void closeReaders() {
+        readers.clear(); lookupCache.clear();
+        synchronized (htmlCache) { for (DictionaryHtmlDocument page : htmlCache.values()) page.close(); htmlCache.clear(); htmlCacheBytes = 0; }
+    }
 
     private void recoverStorage(List<Dictionary> installed) throws IOException {
         if (!root.isDirectory()) return;

@@ -139,7 +139,6 @@ public class FloatingService extends Service {
     private final BroadcastReceiver ocrReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (MainActivity.OcrActivity.ACTION_FINISHED.equals(intent.getAction()) || MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(intent.getAction())) {
-                if (MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(intent.getAction()) && pickup != null) pickup.cancel();
                 return;
             }
             if (!MainActivity.ScreenCaptureService.ACTION_RESULT.equals(intent.getAction())) return;
@@ -207,7 +206,7 @@ public class FloatingService extends Service {
         return builder
                 .setSmallIcon(android.R.drawable.ic_menu_search)
                 .setContentTitle("多语种浮动取词已开启")
-                .setContentText("轻点搜索；拖动取词；长按后滑动提示方向")
+                .setContentText("轻点搜索；拖动停留取词；长按选择 OCR 模式")
                 .setContentIntent(p)
                 .setOngoing(true)
                 .build();

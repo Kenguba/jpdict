@@ -18,11 +18,11 @@ final class DictionaryLookupController {
     private final DictionaryEntryView.Navigation navigation;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final List<Section> sections = new ArrayList<>();
-    private final LinkedHashMap<Section, List<String>> results = new LinkedHashMap<>(8, .75f, true);
+    private final LinkedHashMap<Section, DictionaryHtmlDocument> results = new LinkedHashMap<>(8, .75f, true);
     private final LinkedHashSet<Section> rendered = new LinkedHashSet<>();
     private final String word;
     private boolean closed;
-    private int resultChars;
+    private long resultChars;
     private PopupWindow listPopup;
     private Section deferredLoading;
     private final Runnable deferred = this::loadDeferred;
@@ -76,27 +76,20 @@ final class DictionaryLookupController {
         TextView label = new TextView(context); label.setText(text); label.setTextSize(15);
         label.setTextColor(0xff73777a); label.setPadding(dp(14), dp(12), dp(14), dp(12)); return label;
     }
-    private void cache(Section section, List<String> entries) {
-        int count = chars(entries);
-        if (count > 512 * 1024) {
-            section.failure = "词条 HTML 超过 512 KB 显示限制"; section.openLoaded(false); return;
-        }
-        while (resultChars + count > 2 * 1024 * 1024 && !results.isEmpty()) {
+    private void cache(Section section, DictionaryHtmlDocument document) {
+        // The budget controls retained disk pages, never entry acceptance. A page
+        // larger than the budget may occupy it alone until another result arrives.
+        long bytes = document.file.length();
+        while ((results.size() >= 64 || resultChars + bytes > 2L * 1024 * 1024) && !results.isEmpty()) {
             Section oldest = results.keySet().iterator().next();
-            resultChars -= chars(results.remove(oldest));
-            oldest.cacheEvicted = true;
+            DictionaryHtmlDocument removed = results.remove(oldest); resultChars -= removed.file.length(); removed.close(); oldest.cacheEvicted = true;
             if (oldest.web == null) oldest.attempted = false;
         }
-        List<String> old = results.put(section, entries);
-        if (old != null) resultChars -= chars(old);
-        resultChars += count;
-        section.cacheEvicted = false;
-        section.failure = null;
-        section.openLoaded(false);
-        parent.post(this::prefetchVisible);
-    }
-    private static int chars(List<String> entries) {
-        int total = 0; for (String entry : entries) total += entry.length(); return total;
+        DictionaryHtmlDocument old = results.put(section, document);
+        if (old != null) { resultChars -= old.file.length(); old.close(); }
+        resultChars += bytes;
+        section.cacheEvicted = false; section.failure = null;
+        section.openLoaded(false); parent.post(this::prefetchVisible);
     }
     void close() {
         if (closed) return;
@@ -110,6 +103,7 @@ final class DictionaryLookupController {
             if (section.ticket != null) section.ticket.cancel();
             section.destroyView();
         }
+        for (DictionaryHtmlDocument document : results.values()) document.close();
         results.clear(); resultChars = 0;
         if (listPopup != null) { listPopup.dismiss(); listPopup = null; }
     }
@@ -172,7 +166,7 @@ final class DictionaryLookupController {
             if (!wantedExpanded || expanded || closed) return;
             Rect visible = new Rect();
             if (!user && !explicitRequest && sections.get(0) != this && !header.getGlobalVisibleRect(visible)) return;
-            List<String> entries = results.get(this);
+            DictionaryHtmlDocument entries = results.get(this);
             if (web != null || entries != null) {
                 if (entries != null && !render(entries, user || explicitRequest)) return;
                 if (web == null || web.isReady()) setExpanded(true);
@@ -185,11 +179,11 @@ final class DictionaryLookupController {
             if (attempted || results.containsKey(this)) return;
             message("正在查询离线词典…");
             ticket = repository.queries.submit(priority, () -> {
-                List<String> entries = null; Exception error = null;
-                try { entries = repository.lookup(dictionary, word); } catch (Exception e) { error = e; }
-                List<String> ready = entries; Exception failure = error;
+                DictionaryHtmlDocument entries = null; Exception error = null;
+                try { entries = repository.lookupDocument(dictionary, word); } catch (Exception e) { error = e; }
+                DictionaryHtmlDocument ready = entries; Exception failure = error;
                 main.post(() -> {
-                    if (closed) return;
+                    if (closed) { if (ready != null) ready.close(); return; }
                     ticket = null; attempted = true;
                     if (deferredLoading == this) deferredLoading = null;
                     if (failure == null) cache(this, ready);
@@ -199,10 +193,10 @@ final class DictionaryLookupController {
             });
             if (ticket == null) { attempted = false; failure = "查询队列已满，点击分区重试"; openLoaded(false); }
         }
-        boolean render(List<String> entries, boolean user) {
+        boolean render(DictionaryHtmlDocument entries, boolean user) {
             // A collapsed section keeps its DOM, loaded assets and measured height.
             if (web != null) { rendered.remove(this); rendered.add(this); return true; }
-            if (entries.isEmpty()) { message("该词典未收录此词条"); return true; }
+            if (entries.entries == 0) { message("该词典未收录此词条"); return true; }
             while (rendered.size() >= 3) {
                 Section oldest = null;
                 Rect visible = new Rect();

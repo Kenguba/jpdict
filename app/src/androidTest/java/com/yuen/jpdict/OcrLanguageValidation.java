@@ -177,7 +177,7 @@ final class OcrLanguageValidation {
         long now = 1000000;
         ClipData copied = ClipData.newPlainText("fixture", "  one\n二  ");
         check("  one\n二  ".equals(consumption.take(copied, now - 1000, now, false)), "Clipboard consumption preserves spaces and complete multiline text");
-        check(consumption.take(copied, now - 1000, now, true) == null, "One timestamped copy is appended only once");
+        check(consumption.take(copied, now - 1000, now, true) == null, "One timestamped copy replaces input only once");
         check(consumption.take(copied, now - 900, now, true) != null, "Copying identical text again has a new copy timestamp");
         check(consumption.take(copied, now - 120001, now, false) == null, "Expired clipboard text remains excluded");
         check(consumption.take(copied, now + 1, now, false) == null, "Future clipboard timestamps remain excluded");
@@ -315,11 +315,14 @@ final class OcrLanguageValidation {
         check(!(Boolean)field(surface, "clipboardListening"), "Non-focusable QA fixture never listens to or reads the real clipboard");
         EditText input = (EditText)field(surface, "input");
         input.setText("old text");
-        Method append = FloatingSearchView.class.getDeclaredMethod("appendClipboardText", String.class); append.setAccessible(true);
-        append.invoke(surface, "  new line\n日本語  ");
-        String complete = "old text\n  new line\n日本語  ";
-        check(complete.contentEquals(input.getText()), "Copied text appends to existing input with one separator and no truncation");
-        check(input.getSelectionStart() == input.length(), "Appending moves the insertion cursor after the copied text");
+        SearchDraftChips drafts = (SearchDraftChips)field(surface, "draftChips");
+        drafts.replaceFromClipboard("  new line\n日本語  ");
+        String complete = "  new line\n日本語  ";
+        check(complete.contentEquals(input.getText()), "Copied text replaces the complete input and preserves its original whitespace");
+        SearchDraftState displaced = (SearchDraftState)field(drafts, "state");
+        check(displaced.list().size() == 1 && displaced.list().get(0).text.equals("old text"),
+                "The displaced original input remains in a draggable draft chip");
+        check(input.getSelectionStart() == input.length(), "Clipboard replacement places the cursor after the copied text");
         Method show = FloatingSearchView.class.getDeclaredMethod("showSuggestions", List.class); show.setAccessible(true);
         List<String> locals = new ArrayList<>(); for (int i = 0; i < 12; i++) locals.add("local" + i);
         show.invoke(surface, locals);

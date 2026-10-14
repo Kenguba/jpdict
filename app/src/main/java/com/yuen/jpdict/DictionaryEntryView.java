@@ -40,11 +40,9 @@ final class DictionaryEntryView extends WebView {
     private float editorTouchX, editorTouchY;
     private int editorTouchWidth;
     private boolean touchEditorPending, focusingEditor;
-    private byte[] entryHtml;
-    private static final String POLICY = "default-src 'none'; style-src 'unsafe-inline' 'self'; "
-            + "script-src 'unsafe-inline' 'unsafe-eval' 'self'; img-src 'self' data:; font-src 'self' data:; "
-            + "media-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; "
-            + "base-uri 'self'; form-action 'none'; worker-src 'none'; child-src 'none'";
+    private volatile byte[] entryHtml;
+    private volatile DictionaryHtmlDocument document;
+    private static final String POLICY = DictionaryHtmlDocument.POLICY;
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean closed;
     private DictionaryScheduler.Ticket soundTask;
@@ -60,7 +58,17 @@ final class DictionaryEntryView extends WebView {
     }
     DictionaryEntryView(Context context, DictionaryRepository repository,
             DictionaryRepository.Dictionary dictionary, List<String> entries, Navigation navigation, Runnable onReady) {
+        this(context, repository, dictionary, entries, null, navigation, onReady);
+    }
+    DictionaryEntryView(Context context, DictionaryRepository repository,
+            DictionaryRepository.Dictionary dictionary, DictionaryHtmlDocument document, Navigation navigation, Runnable onReady) {
+        this(context, repository, dictionary, null, document, navigation, onReady);
+    }
+    private DictionaryEntryView(Context context, DictionaryRepository repository,
+            DictionaryRepository.Dictionary dictionary, List<String> entries, DictionaryHtmlDocument document,
+            Navigation navigation, Runnable onReady) {
         super(context);
+        this.document = document == null ? null : document.retain();
         this.repository = repository; this.dictionary = dictionary; this.navigation = navigation;
         this.onReady = onReady;
         origin = "https://" + dictionary.id + ".dict.invalid/";
@@ -75,7 +83,7 @@ final class DictionaryEntryView extends WebView {
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setBlockNetworkLoads(true);
-        settings.setDomStorageEnabled(false);
+        settings.setDomStorageEnabled(true); // Tokens remain isolated by each dictionary's private HTTPS origin.
         settings.setSaveFormData(false);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         settings.setSupportMultipleWindows(false);
@@ -99,7 +107,8 @@ final class DictionaryEntryView extends WebView {
                 try {
                     if (request.isForMainFrame()) {
                         return entryUrl.equals(request.getUrl().toString())
-                                ? response("text/html", new ByteArrayInputStream(entryHtml), true) : denied();
+                                ? response("text/html", DictionaryEntryView.this.document == null
+                                    ? new ByteArrayInputStream(entryHtml) : DictionaryEntryView.this.document.open(), true) : denied();
                     }
                     String path = resourcePath(request.getUrl());
                     InputStream stream = repository.resourceStream(dictionary, path);
@@ -111,19 +120,14 @@ final class DictionaryEntryView extends WebView {
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) { return navigate(Uri.parse(url)); }
         });
-        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"")
-                .append(POLICY).append("\"><style>body{margin:12px;color:#171819;overflow-wrap:anywhere}img{max-width:100%;height:auto}audio{max-width:100%}</style>");
-        for (DictionaryRepository.Document file : dictionary.files) {
-            if (file.path.toLowerCase(java.util.Locale.ROOT).endsWith(".css") && file.path.indexOf('/') < 0) {
-                if (html.length() < 65536) html.append("<link rel=\"stylesheet\" href=\"").append(Uri.encode(file.path)).append("\">");
-            }
+        if (document == null) {
+            StringWriter html = new StringWriter();
+            try { DictionaryHtmlDocument.header(html, dictionary); }
+            catch (IOException impossible) { throw new IllegalStateException(impossible); }
+            for (String entry : entries) { html.write("<section>"); html.write(entry); html.write("</section>"); }
+            html.write("</body></html>");
+            entryHtml = html.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         }
-        html.append("</head><body>");
-        for (String entry : entries) {
-            html.append("<section>").append(entry).append("</section>");
-        }
-        html.append("</body></html>");
-        entryHtml = html.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         loadUrl(entryUrl);
     }
     boolean isReady() { return ready; }
@@ -329,6 +333,7 @@ final class DictionaryEntryView extends WebView {
         if (soundTask != null) soundTask.cancel();
         releaseSound(); stopLoading(); loadUrl("about:blank");
         entryHtml = null;
+        if (document != null) { document.close(); document = null; }
         setWebViewClient(new WebViewClient()); removeAllViews(); destroy();
     }
 }
