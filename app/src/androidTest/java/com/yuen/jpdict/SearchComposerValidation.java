@@ -18,6 +18,7 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.EditText;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -25,6 +26,7 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Disposable QA package only: real clipboard events, platform drag/drop and dictionary token click. */
@@ -95,12 +97,50 @@ final class SearchComposerValidation {
             tap(test, phrase.get());
             await(test, () -> "hold on".equals(lookup.get()), "Matched chip passes the full original phrase to dictionary lookup");
             check("Please hold on now.".equals(draft.get()), "Explosion lookup preserves the complete composer draft");
+            test.runOnMainSync(() -> {
+                root.get().prepareForLookup(); root.get().resumeAfterLookup();
+                check(findClickableText(explosion, "hold on") == phrase.get(),
+                        "Returning from lookup immediately retains the same confirmed phrase view");
+                input.setText("Please hold on now!");
+                check(findClickableText(explosion, "hold on") == phrase.get(),
+                        "Editing the tail keeps the existing phrase throughout debounce");
+            });
+            Thread.sleep(400); test.waitForIdleSync();
+            test.runOnMainSync(() -> check(findClickableText(explosion, "hold on") == phrase.get(),
+                    "Completed matching updates a confirmed phrase in place"));
             test.runOnMainSync(() -> { input.setText("hold on"); lookup.set(null); });
             await(test, () -> findClickableText(explosion, "hold on") != null,
                     "Matching the complete short phrase does not hide the explosion area");
             test.runOnMainSync(() -> phrase.set(findClickableText(explosion, "hold on")));
             tap(test, phrase.get());
             await(test, () -> "hold on".equals(lookup.get()), "Complete short phrase remains clickable after segmentation");
+
+            StringBuilder longSource = new StringBuilder("hold on ");
+            for (int i = 0; i < 180; i++) longSource.append("word").append(i).append(' ');
+            longSource.append("日本語");
+            String completeSource = longSource.toString();
+            test.runOnMainSync(() -> input.setText(completeSource));
+            await(test, () -> findClickableText(explosion, "日本語") != null,
+                    "Long text loads its final matched term without a next-page action");
+            ScrollView explosionScroll = (ScrollView)field(SearchTextExplosionView.class, "scroll").get(explosion);
+            test.runOnMainSync(() -> {
+                @SuppressWarnings("unchecked") List<SearchTextSegments.Part> displayed =
+                        (List<SearchTextSegments.Part>)uncheckedField(SearchTextExplosionView.class, "displayed", explosion);
+                StringBuilder visibleText = new StringBuilder();
+                for (SearchTextSegments.Part part : displayed) visibleText.append(part.text);
+                check(completeSource.contentEquals(visibleText), "Accumulated explosion batches retain the complete original text");
+                check(findText(explosion, "上一段") == null && findText(explosion, "下一段") == null
+                        && findText(explosion, "蓝色词条可点击查询") == null,
+                        "Explosion has scrolling content without pagination or the removed hint");
+                explosionScroll.fullScroll(View.FOCUS_DOWN);
+            });
+            await(test, () -> explosionScroll.getScrollY() > 0, "The complete long document scrolls vertically");
+            test.runOnMainSync(() -> {
+                int position = explosionScroll.getScrollY(); View last = findClickableText(explosion, "日本語");
+                root.get().prepareForLookup(); root.get().resumeAfterLookup();
+                check(explosionScroll.getScrollY() == position && findClickableText(explosion, "日本語") == last,
+                        "A long-text lookup round trip preserves its matched tail and exact scroll position");
+            });
 
             test.runOnMainSync(() -> clipboard.setPrimaryClip(ClipData.newPlainText("composer delete", "FINAL TEXT")));
             await(test, () -> input.getText().toString().equals("FINAL TEXT") && chipCount(chips) == 2, "Subsequent copy keeps distinct displaced drafts");
@@ -191,6 +231,18 @@ final class SearchComposerValidation {
             View found = findClickableText(((ViewGroup)view).getChildAt(i), text); if (found != null) return found;
         }
         return null;
+    }
+    private static View findText(View view, String text) {
+        if (view instanceof TextView && ((TextView)view).getText().toString().equals(text)) return view;
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup)view).getChildCount(); i++) {
+            View found = findText(((ViewGroup)view).getChildAt(i), text); if (found != null) return found;
+        }
+        return null;
+    }
+    private static Object uncheckedField(Class<?> type, String name, Object owner) {
+        try { return field(type, name).get(owner); }
+        catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+        catch (Exception failure) { throw new AssertionError(failure); }
     }
     private static Field field(Class<?> type, String name) throws Exception { Field field = type.getDeclaredField(name); field.setAccessible(true); return field; }
 }

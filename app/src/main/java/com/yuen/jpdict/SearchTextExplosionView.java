@@ -1,11 +1,12 @@
 package com.yuen.jpdict;
 
+import android.animation.ArgbEvaluator;
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
-import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,96 +14,150 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
-/** Readable wrapping text chips; blue chips are confirmed local dictionary entries. */
+/** Scrollable original-text chips; confirmed words update in place without blanking the document. */
 final class SearchTextExplosionView extends LinearLayout {
-    interface Actions { void lookup(String word); void page(int offset); }
-    private final TextView hint;
+    interface Actions { void lookup(String word); }
     private final Flow tokens;
     private final ScrollView scroll;
-    private final LinearLayout paging;
     private final Actions actions;
-    private final List<Integer> previousOffsets = new ArrayList<>();
+    private final List<SearchTextSegments.Part> displayed = new ArrayList<>();
+    private final Map<Integer, Chip> chips = new HashMap<>();
     private String source = "";
-    private int currentOffset;
     private boolean hasText;
 
     SearchTextExplosionView(Context context, Actions actions) {
         super(context); this.actions = actions;
         setOrientation(VERTICAL); setPadding(dp(18), dp(12), dp(18), dp(10));
-        LinearLayout heading = new LinearLayout(context); heading.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = label("文字大爆炸", 13, 0xff625271); title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        heading.addView(title);
-        hint = label("", 11, 0xff95909b); hint.setGravity(Gravity.RIGHT); hint.setSingleLine(true);
-        heading.addView(hint, new LinearLayout.LayoutParams(0, dp(28), 1));
-        addView(heading, new LinearLayout.LayoutParams(-1, -2));
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        addView(title, new LinearLayout.LayoutParams(-1, dp(28)));
         tokens = new Flow(context);
         scroll = new ScrollView(context); scroll.setVerticalScrollBarEnabled(false); scroll.setFillViewport(false);
         scroll.addView(tokens, new ScrollView.LayoutParams(-1, -2));
         addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        paging = new LinearLayout(context); paging.setGravity(Gravity.CENTER_VERTICAL);
-        addView(paging, new LinearLayout.LayoutParams(-1, -2));
         setVisibility(GONE);
     }
     boolean hasText() { return hasText; }
 
     void show(SearchTextSegments.Page page, List<SearchTextSegments.Part> parts, boolean loading) {
-        if (!source.equals(page.source)) { source = page.source; previousOffsets.clear(); currentOffset = 0; }
-        if (page.start != currentOffset) { currentOffset = page.start; scroll.scrollTo(0, 0); }
-        int words = 0, matches = 0;
-        for (SearchTextSegments.Part unit : page.units) if (unit.word) words++;
-        for (SearchTextSegments.Part part : parts) if (part.matched) matches++;
-        hasText = words > 1 || page.source.length() > 32 || page.source.indexOf('\n') >= 0;
-        setVisibility(hasText ? VISIBLE : GONE);
-        hint.setText(loading ? "正在匹配本地词库…" : matches > 0 ? "点击蓝色词条查询" : "蓝色词条可点击查询");
-        tokens.removeAllViews();
-        for (SearchTextSegments.Part part : parts) {
-            if (part.text.trim().isEmpty()) continue;
-            TextView chip = label(part.text, 15, part.matched ? 0xff246bc6 : 0xff66616c);
-            chip.setMaxLines(2); chip.setEllipsize(TextUtils.TruncateAt.END);
-            chip.setGravity(Gravity.CENTER_VERTICAL);
-            chip.setPadding(dp(part.word ? 11 : 3), dp(7), dp(part.word ? 11 : 3), dp(7));
-            if (part.word) {
-                chip.setMinHeight(dp(36));
-                chip.setBackground(background(part.matched ? 0xffedf5ff : 0xfff3f1f5,
-                        part.matched ? 0xffd5e7ff : 0xffebe7ef));
-            }
-            if (part.matched) {
-                chip.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-                chip.setContentDescription("查询本地词条 " + part.text);
-                chip.setOnClickListener(v -> actions.lookup(part.text));
-            }
-            tokens.addView(chip, new ViewGroup.LayoutParams(-2, -2));
+        boolean sourceChanged = !source.equals(page.source);
+        if (sourceChanged) {
+            // Appending or editing the tail retains the unchanged prefix, including a long scrolled document.
+            int common = 0, limit = Math.min(source.length(), page.source.length());
+            while (common < limit && source.charAt(common) == page.source.charAt(common)) common++;
+            int keep = 0;
+            while (keep < displayed.size() && displayed.get(keep).end <= common) keep++;
+            displayed.subList(keep, displayed.size()).clear();
+            source = page.source; hasText = false;
+            if (source.isEmpty()) scroll.scrollTo(0, 0);
         }
-        paging.removeAllViews();
-        paging.setVisibility(page.start > 0 || page.hasNext() ? VISIBLE : GONE);
-        if (page.start > 0) addPageButton("上一段", () -> {
-            int previous = previousOffsets.isEmpty() ? 0 : previousOffsets.remove(previousOffsets.size() - 1);
-            actions.page(previous);
-        });
-        TextView range = label("", 11, 0xff9b95a0);
-        if (page.start > 0 || page.hasNext()) range.setText((page.start + 1) + "–" + page.end + " / " + page.source.length());
-        range.setGravity(Gravity.CENTER);
-        paging.addView(range, new LinearLayout.LayoutParams(0, dp(36), 1));
-        if (page.hasNext()) addPageButton("下一段", () -> {
-            previousOffsets.add(page.start); actions.page(page.end);
-        });
+        boolean append = !sourceChanged && (displayed.isEmpty() || displayed.get(displayed.size() - 1).end <= page.start);
+        SearchTextSegments.replaceRange(displayed, page, parts);
+        int words = 0;
+        for (SearchTextSegments.Part unit : page.units) if (unit.word) words++;
+        hasText |= words > 1 || source.length() > 32 || source.indexOf('\n') >= 0;
+        setVisibility(hasText ? VISIBLE : GONE);
+        if (append && !chips.isEmpty()) {
+            // Subsequent batches add only their new views instead of rescanning the growing document.
+            for (SearchTextSegments.Part part : parts) {
+                if (part.text.trim().isEmpty()) continue;
+                Chip chip = new Chip(); chip.update(part); chips.put(part.start, chip);
+                tokens.addView(chip.view, new ViewGroup.LayoutParams(-2, -2)); reveal(chip);
+            }
+            return;
+        }
+
+        Map<Integer, Chip> next = new HashMap<>();
+        List<Chip> ordered = new ArrayList<>();
+        for (SearchTextSegments.Part part : displayed) {
+            if (part.text.trim().isEmpty()) continue;
+            Chip chip = chips.get(part.start);
+            if (chip == null) chip = new Chip();
+            chip.update(part);
+            next.put(part.start, chip); ordered.add(chip);
+        }
+        // Only obsolete ranges leave the tree; loading, matching and returning keep existing views intact.
+        for (Map.Entry<Integer, Chip> item : chips.entrySet()) if (!next.containsKey(item.getKey())) {
+            item.getValue().cancel(); tokens.removeView(item.getValue().view);
+        }
+        for (int i = 0; i < ordered.size(); i++) {
+            Chip chip = ordered.get(i);
+            if (tokens.getChildAt(i) == chip.view) continue;
+            boolean inserted = chip.view.getParent() == null;
+            if (!inserted) tokens.removeView(chip.view);
+            tokens.addView(chip.view, i, new ViewGroup.LayoutParams(-2, -2));
+            if (inserted) reveal(chip);
+        }
+        chips.clear(); chips.putAll(next);
     }
-    private void addPageButton(String text, Runnable action) {
-        TextView button = label(text, 12, 0xff7945a1); button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(8), 0, dp(8), 0); button.setBackground(background(0xfff3edf8, 0xffe9dfef));
-        button.setOnClickListener(v -> action.run());
-        paging.addView(button, new LinearLayout.LayoutParams(-2, dp(36)));
+    private void reveal(Chip chip) {
+        if (tokens.isLaidOut() && isShown()) {
+            chip.view.setAlpha(.55f); chip.view.animate().alpha(1f).setDuration(160).start();
+        }
+    }
+    private final class Chip {
+        final TextView view = label("", 15, 0xff66616c);
+        final GradientDrawable shape = new GradientDrawable();
+        SearchTextSegments.Part part;
+        ValueAnimator colors;
+        int ink = 0xff66616c, fill = 0xfff3f1f5, stroke = 0xffebe7ef;
+        Chip() { shape.setCornerRadius(dp(11)); }
+        void update(SearchTextSegments.Part next) {
+            if (part != null && part.text.equals(next.text) && part.word == next.word && part.matched == next.matched) {
+                part = next; return;
+            }
+            boolean changed = part != null && part.matched != next.matched;
+            if (part == null || !part.text.equals(next.text)) view.setText(next.text);
+            if (part == null || part.word != next.word) {
+                view.setGravity(Gravity.CENTER_VERTICAL);
+                view.setPadding(dp(next.word ? 11 : 3), dp(7), dp(next.word ? 11 : 3), dp(7));
+                view.setMinHeight(next.word ? dp(36) : 0);
+                view.setBackground(next.word ? new RippleDrawable(ColorStateList.valueOf(0x12006bff), shape, null) : null);
+            }
+            part = next;
+            view.setContentDescription(next.matched ? "查询本地词条 " + next.text : next.text);
+            view.setOnClickListener(next.matched ? v -> actions.lookup(part.text) : null);
+            view.setClickable(next.matched);
+            int targetInk = next.matched ? 0xff246bc6 : 0xff66616c;
+            int targetFill = next.matched ? 0xffedf5ff : 0xfff3f1f5;
+            int targetStroke = next.matched ? 0xffd5e7ff : 0xffebe7ef;
+            if (colors != null) { colors.cancel(); colors = null; }
+            if (changed && view.isLaidOut() && view.isShown()) {
+                int fromInk = ink, fromFill = fill, fromStroke = stroke;
+                ArgbEvaluator blend = new ArgbEvaluator();
+                colors = ValueAnimator.ofFloat(0, 1); colors.setDuration(180);
+                colors.addUpdateListener(animation -> {
+                    float progress = (float)animation.getAnimatedValue();
+                    color((int)blend.evaluate(progress, fromInk, targetInk),
+                            (int)blend.evaluate(progress, fromFill, targetFill),
+                            (int)blend.evaluate(progress, fromStroke, targetStroke));
+                });
+                colors.start();
+            } else color(targetInk, targetFill, targetStroke);
+        }
+        void color(int text, int background, int border) {
+            ink = text; fill = background; stroke = border;
+            view.setTextColor(ink); shape.setColor(fill); shape.setStroke(dp(1), stroke);
+        }
+        void cancel() {
+            if (colors != null) { colors.cancel(); colors = null; }
+            view.animate().cancel();
+            if (part != null) color(part.matched ? 0xff246bc6 : 0xff66616c,
+                    part.matched ? 0xffedf5ff : 0xfff3f1f5,
+                    part.matched ? 0xffd5e7ff : 0xffebe7ef);
+        }
+    }
+    @Override protected void onDetachedFromWindow() {
+        for (Chip chip : chips.values()) { chip.cancel(); chip.view.setAlpha(1f); }
+        super.onDetachedFromWindow();
     }
     private TextView label(String value, int size, int color) {
         TextView label = new TextView(getContext()); label.setText(value); label.setTextSize(size);
         label.setTextColor(color); label.setIncludeFontPadding(false); return label;
-    }
-    private RippleDrawable background(int color, int stroke) {
-        GradientDrawable shape = new GradientDrawable(); shape.setColor(color);
-        shape.setCornerRadius(dp(11)); shape.setStroke(dp(1), stroke);
-        return new RippleDrawable(ColorStateList.valueOf(0x12006bff), shape, null);
     }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 

@@ -14,6 +14,12 @@ public final class OcrGestureRulesTest {
         check(dwell.move(100, 101, 1150) == 0, "150ms permits OCR");
         check(dwell.move(125, 100, 1170) == 150, "Travel to another area restarts dwell");
         dwell.reset(); check(dwell.move(125, 100, 1600) == 150, "New gestures cannot inherit previous dwell");
+        OcrDwellGate denseDwell = new OcrDwellGate(48);
+        check(denseDwell.move(100,100,2000)==150, "High-density pointer areas use their configured pixel radius");
+        check(denseDwell.move(140,100,2050)==100, "A fixed forty-pixel move is still jitter inside a 48px area");
+        check(denseDwell.move(149,100,2051)==150, "Travel beyond the actual radius replaces the previous deadline");
+        check(denseDwell.move(149,100,2200)==1 && denseDwell.move(149,100,2201)==0,
+                "A replacement pointer area permits capture at exactly 150ms, never at 149ms");
         OcrPointerGeometry pointer = new OcrPointerGeometry();
         check(pointer.update(800,844,1000,1) == 788 && !pointer.below(), "Pointer normally clears the top of the bubble");
         check(pointer.update(896,940,1000,1) == 952 && pointer.below(), "Bubble-height plus pointer clearance enters the lower-screen mode");

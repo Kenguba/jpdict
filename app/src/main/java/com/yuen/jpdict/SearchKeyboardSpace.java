@@ -22,4 +22,5 @@ final class SearchKeyboardSpace {
     int reserved(int viewportHeight) {
         return Math.min(height, Math.max(0, viewportHeight - Math.round(220 * context.getResources().getDisplayMetrics().density)));
     }
+    int height() { return height; }
 }

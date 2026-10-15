@@ -48,6 +48,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 /** Native search surface. The Service retains window ownership and lookup routing. */
 final class FloatingSearchView extends FrameLayout {
@@ -87,9 +91,15 @@ final class FloatingSearchView extends FrameLayout {
     private boolean clipboardListening, clipboardSuspended;
     private final ClipboardManager.OnPrimaryClipChangedListener clipboardChanged = () -> readClipboard(true);
     private List<String> suggestionResults = Collections.emptyList();
+    private final Map<String, TextView> suggestionViews = new HashMap<>();
+    private ValueAnimator suggestionHeightAnimator;
+    private ValueAnimator composerHeightAnimator, keyboardHeightAnimator;
+    private int renderedKeyboardHeight = -1, pendingImeHeight;
+    private WindowInsetsAnimation activeImeAnimation;
     private final SearchIconView plus;
     private final SearchIconView privateButton;
     private final LinearLayout modelButton;
+    private final SearchIconView modelIcon;
     private final TextView languageLabel;
     private final OcrLanguageSettings ocrLanguage;
     private final LookupDestinationSettings destination;
@@ -231,8 +241,8 @@ final class FloatingSearchView extends FrameLayout {
         modelButton.setGravity(Gravity.CENTER);
         modelButton.setPadding(dp(12), 0, dp(10), 0);
         modelButton.setBackground(ripple(SOFT, 24));
-        SearchIconView bolt = icon(SearchIconView.Kind.LIGHTNING, INK);
-        modelButton.addView(bolt, new LinearLayout.LayoutParams(dp(19), dp(23)));
+        modelIcon = icon(SearchIconView.Kind.LIGHTNING, INK);
+        modelButton.addView(modelIcon, new LinearLayout.LayoutParams(dp(19), dp(23)));
         languageLabel = text(ocrLanguage.language().label, 14, INK, true);
         languageLabel.setPadding(dp(5), 0, dp(5), 0);
         modelButton.addView(languageLabel);
@@ -297,13 +307,13 @@ final class FloatingSearchView extends FrameLayout {
                 if (disposed) return;
                 closeMenu(); hideKeyboard(); callback.onLookup(word, state.isPrivateMode());
             }
-            public void page(int offset) { explosionController.showPage(offset); }
         });
-        body.addView(textExplosion, new FrameLayout.LayoutParams(-1, -1));
+        // Use the reserved keyboard region below the shortcuts. IME may cover
+        // this content without moving the composer when it opens or closes.
+        addView(textExplosion, new FrameLayout.LayoutParams(-1, 0));
         explosionController = new SearchTextExplosionController(context, (textPage, parts, loading) -> {
             textExplosion.show(textPage, parts, loading);
-            textExplosion.bringToFront();
-            if (emptyView != null) emptyView.setVisibility(textExplosion.hasText() ? INVISIBLE : VISIBLE);
+            requestLayout();
         });
 
         drawerDismiss = new View(context);
@@ -346,9 +356,10 @@ final class FloatingSearchView extends FrameLayout {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             public void onTextChanged(CharSequence s, int start, int before, int count) {
                 callback.onQueryChanged(s.toString()); updateAction(); suggestions.update(s.toString());
+                renderSuggestions();
                 explosionController.update(s.toString());
             }
-            public void afterTextChanged(Editable s) {}
+            public void afterTextChanged(Editable s) { animateComposerHeight(); }
         });
         input.setOnEditorActionListener((v, action, event) -> {
             if (event != null) {
@@ -383,8 +394,8 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private void renderSuggestions() {
-        suggestionWords.removeAllViews();
         suggestionArea.setVisibility(compactComposer ? GONE : VISIBLE);
+        Set<String> retained = new HashSet<>();
         String current = input.getText().toString();
         boolean hasCurrent = !current.trim().isEmpty();
         List<String> words = new ArrayList<>();
@@ -392,7 +403,7 @@ final class FloatingSearchView extends FrameLayout {
         int width = suggestionWords.getWidth() > 0 ? suggestionWords.getWidth()
                 : getResources().getDisplayMetrics().widthPixels;
         int contentWidth = width - suggestionWords.getPaddingLeft() - suggestionWords.getPaddingRight();
-        TextView fullInput = hasCurrent ? suggestion(current) : null;
+        TextView fullInput = hasCurrent ? suggestion("input", current, retained) : null;
         boolean longInput = fullInput != null && (current.indexOf('\n') >= 0
                 || fullInput.getPaint().measureText(current) > (contentWidth - dp(12)) / 3f - dp(16));
         if (hasCurrent && !longInput) words.add(0, current);
@@ -402,45 +413,119 @@ final class FloatingSearchView extends FrameLayout {
             fullInput.setMinimumHeight(dp(27));
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(0), GridLayout.spec(0, 3));
             lp.width = -1; lp.height = -2; lp.rightMargin = dp(4); lp.bottomMargin = dp(3);
-            suggestionWords.addView(fullInput, lp);
+            fullInput.setLayoutParams(lp);
         }
         if (words.isEmpty()) {
-            if (longInput) { updateSuggestionHeight(width); return; }
-            TextView note = text(input.length() == 0 ? "本地词库智能联想" : "回车查询 · 支持中 / 英 / 日 / 韩", 11, MUTED, false);
+            if (longInput) { finishSuggestions(retained, width); return; }
+            TextView note = suggestionViews.get("note");
+            if (note == null) {
+                note = text("本地词库智能联想", 11, MUTED, false);
+                suggestionViews.put("note", note); suggestionWords.addView(note);
+            }
+            retained.add("note");
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(0), GridLayout.spec(0, 3));
-            lp.width = -1; suggestionWords.addView(note, lp);
-            updateSuggestionHeight(width);
+            lp.width = -1; note.setLayoutParams(lp);
+            finishSuggestions(retained, width);
             return;
         }
         int index = 0;
         for (String word : words) {
-            TextView candidate = suggestion(word);
+            TextView candidate = !longInput && hasCurrent && index == 0 ? fullInput
+                    : suggestion("word:" + word, word, retained);
+            candidate.setSingleLine(true);
             int rows = (words.size() + 2) / 3;
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec((longInput ? 1 : 0) + rows - 1 - index / 3), GridLayout.spec(index % 3, 1f));
             lp.width = 0; lp.height = dp(27); lp.rightMargin = dp(4); lp.bottomMargin = dp(3); index++;
-            suggestionWords.addView(candidate, lp);
+            candidate.setLayoutParams(lp);
+        }
+        finishSuggestions(retained, width);
+    }
+
+    private void finishSuggestions(Set<String> retained, int width) {
+        java.util.Iterator<Map.Entry<String, TextView>> iterator = suggestionViews.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, TextView> entry = iterator.next();
+            if (retained.contains(entry.getKey())) continue;
+            entry.getValue().animate().cancel(); suggestionWords.removeView(entry.getValue()); iterator.remove();
         }
         updateSuggestionHeight(width);
     }
 
-    private TextView suggestion(String word) {
+    private TextView suggestion(String key, String word, Set<String> retained) {
+        retained.add(key);
+        TextView existing = suggestionViews.get(key);
+        if (existing != null) {
+            if (!existing.getText().toString().equals(word)) existing.setText(word);
+            existing.setContentDescription("查询候选词 " + word);
+            return existing;
+        }
         TextView candidate = text(word, 13, 0xff006bff, false);
         candidate.setSingleLine(true);
         candidate.setEllipsize(TextUtils.TruncateAt.END);
         candidate.setPadding(dp(8), dp(5), dp(8), dp(5));
         candidate.setBackground(ripple(0xfff0f6ff, 14));
         candidate.setContentDescription("查询候选词 " + word);
-        candidate.setOnClickListener(v -> { input.setText(word); input.setSelection(input.length()); submit(); });
+        candidate.setOnClickListener(v -> {
+            if (disposed) return;
+            closeMenu(); hideKeyboard();
+            callback.onLookup(candidate.getText().toString().trim(), state.isPrivateMode());
+        });
+        candidate.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+            if (oldR <= oldL || (l == oldL && t == oldT)) return;
+            v.setTranslationX(v.getTranslationX() + oldL - l);
+            v.setTranslationY(v.getTranslationY() + oldT - t);
+            v.animate().translationX(0).translationY(0).setDuration(160).start();
+        });
+        suggestionViews.put(key, candidate); suggestionWords.addView(candidate);
+        if (isLaidOut()) {
+            candidate.setAlpha(.65f); candidate.animate().alpha(1).setDuration(140).start();
+        }
         return candidate;
     }
 
     private void updateSuggestionHeight(int width) {
         suggestionWords.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
         int height = suggestionWords.getMeasuredHeight();
+        if (suggestionHeightAnimator != null) { suggestionHeightAnimator.cancel(); suggestionHeightAnimator = null; }
         if (suggestionArea.getLayoutParams().height != height) {
-            suggestionArea.getLayoutParams().height = height;
-            suggestionArea.requestLayout();
+            if (!isLaidOut()) {
+                suggestionArea.getLayoutParams().height = height;
+                suggestionArea.requestLayout();
+            } else {
+                suggestionHeightAnimator = ValueAnimator.ofInt(suggestionArea.getHeight(), height);
+                suggestionHeightAnimator.setDuration(160);
+                suggestionHeightAnimator.setInterpolator(new DecelerateInterpolator());
+                suggestionHeightAnimator.addUpdateListener(a -> {
+                    suggestionArea.getLayoutParams().height = (int)a.getAnimatedValue();
+                    suggestionArea.requestLayout();
+                });
+                suggestionHeightAnimator.start();
+            }
         }
+    }
+
+    private void animateComposerHeight() {
+        if (!isLaidOut() || composer.getWidth() == 0) return;
+        int from = composer.getHeight();
+        if (composerHeightAnimator != null) composerHeightAnimator.cancel();
+        composer.measure(MeasureSpec.makeMeasureSpec(composer.getWidth(), MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+        int target = composer.getMeasuredHeight();
+        if (from == target) { composer.getLayoutParams().height = -2; composer.requestLayout(); return; }
+        composerHeightAnimator = ValueAnimator.ofInt(from, target);
+        composerHeightAnimator.setDuration(160);
+        composerHeightAnimator.setInterpolator(new DecelerateInterpolator());
+        composerHeightAnimator.addUpdateListener(animation -> {
+            composer.getLayoutParams().height = (int)animation.getAnimatedValue(); composer.requestLayout();
+        });
+        composerHeightAnimator.addListener(new AnimatorListenerAdapter() {
+            private boolean cancelled;
+            @Override public void onAnimationCancel(Animator animation) { cancelled = true; }
+            @Override public void onAnimationEnd(Animator animation) {
+                if (!cancelled) { composer.getLayoutParams().height = -2; composer.requestLayout(); }
+            }
+        });
+        composerHeightAnimator.start();
     }
 
     void prefillClipboardOnFocus() {
@@ -495,26 +580,34 @@ final class FloatingSearchView extends FrameLayout {
 
     private void installInsets() {
         setOnApplyWindowInsetsListener((v, insets) -> {
-            // This dispatch contains the animation's destination, before its first frame.
-            // Learn it here so a new keyboard height is not applied as a jump at onEnd.
+            // OEMs may redispatch intermediate values here as well as onProgress.
+            // Keep the cached reservation until the animation or stable sample settles.
             rememberKeyboardHeight(insets);
             applyInsets(insets);
             return insets;
         });
         if (Build.VERSION.SDK_INT >= 30) {
             setWindowInsetsAnimationCallback(new WindowInsetsAnimation.Callback(WindowInsetsAnimation.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                @Override public void onPrepare(WindowInsetsAnimation animation) {
+                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0) return;
+                    activeImeAnimation = animation; pendingImeHeight = 0;
+                    removeCallbacks(confirmImeHeight);
+                }
                 @Override public WindowInsets onProgress(WindowInsets insets, List<WindowInsetsAnimation> animations) {
                     // Animated/interrupted intermediate heights never replace the reservation.
                     applyInsets(insets); return insets;
                 }
                 @Override public void onEnd(WindowInsetsAnimation animation) {
-                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0 || disposed) return;
+                    if (animation != activeImeAnimation || disposed) return;
+                    activeImeAnimation = null;
                     WindowInsets current = getRootWindowInsets();
                     if (current != null) {
                         rememberKeyboardHeight(current);
                         applyInsets(current);
                         if (!current.isVisible(WindowInsets.Type.ime()) && current.getInsets(WindowInsets.Type.ime()).bottom == 0) callback.onEditingChanged(false);
                     }
+                    removeCallbacks(confirmImeHeight);
+                    if (current == null || current.isVisible(WindowInsets.Type.ime())) confirmImeHeight.run();
                 }
             });
         } else {
@@ -539,11 +632,11 @@ final class FloatingSearchView extends FrameLayout {
         getLocationOnScreen(legacyRootPosition);
         boolean wasVisible = state.isKeyboardVisible();
         int keyboard = getResources().getDisplayMetrics().heightPixels - legacyVisibleFrame.bottom;
-        state.setKeyboardVisible(keyboard > dp(120));
+        state.setKeyboardVisible(keyboard > (wasVisible ? Math.max(safeBottom, dp(24)) + dp(4) : dp(120)));
         if (keyboard > dp(120) && keyboard != legacyImeCandidate) {
             legacyImeCandidate = keyboard;
             removeCallbacks(commitLegacyIme); postDelayed(commitLegacyIme, 150);
-        } else if (!state.isKeyboardVisible()) {
+        } else if (keyboard <= dp(120)) {
             legacyImeCandidate = 0;
             removeCallbacks(commitLegacyIme);
         }
@@ -571,7 +664,9 @@ final class FloatingSearchView extends FrameLayout {
         int height = legacyViewportHeight;
         if (child == page) {
             int full = getResources().getDisplayMetrics().heightPixels - legacyVisibleFrame.top;
-            height = Math.min(height, full - Math.max(safeBottom, keyboardSpace.reserved(full)));
+            // The viewport can shrink/pan on every IME frame. Frame the composer
+            // from its retained reservation; only stable height calibration moves it.
+            height = Math.max(0, full - reservedKeyboardSpace(full));
         }
         if (lp.topMargin == topInset && lp.height == height) return;
         lp.topMargin = topInset;
@@ -581,8 +676,8 @@ final class FloatingSearchView extends FrameLayout {
 
     private final Runnable commitLegacyIme = new Runnable() {
         public void run() {
-            if (disposed || !state.isKeyboardVisible()) return;
-            keyboardSpace.measured(legacyImeCandidate); updateLegacyViewport();
+            if (disposed || clipboardSuspended || !state.isKeyboardVisible()) return;
+            calibrateKeyboardHeight(legacyImeCandidate);
         }
     };
 
@@ -591,13 +686,41 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private int composerBottomSpace(int windowHeight) {
-        return Math.max(safeBottom, keyboardSpace.reserved(windowHeight - topInset));
+        return reservedKeyboardSpace(windowHeight - topInset);
+    }
+
+    private int reservedKeyboardSpace(int viewportHeight) {
+        int height = renderedKeyboardHeight >= 0 ? renderedKeyboardHeight : keyboardSpace.height();
+        return Math.max(safeBottom, Math.min(height, Math.max(0, viewportHeight - dp(220))));
     }
 
     private void rememberKeyboardHeight(WindowInsets insets) {
-        if (Build.VERSION.SDK_INT >= 30 && insets.isVisible(WindowInsets.Type.ime())) {
-            keyboardSpace.measured(insets.getInsets(WindowInsets.Type.ime()).bottom);
-        }
+        if (Build.VERSION.SDK_INT < 30 || clipboardSuspended) return;
+        removeCallbacks(confirmImeHeight);
+        pendingImeHeight = insets.isVisible(WindowInsets.Type.ime()) ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
+        if (activeImeAnimation == null && pendingImeHeight > 0) postDelayed(confirmImeHeight, 150);
+    }
+
+    private final Runnable confirmImeHeight = () -> {
+        if (!disposed && activeImeAnimation == null && pendingImeHeight > 0) calibrateKeyboardHeight(pendingImeHeight);
+    };
+
+    private void calibrateKeyboardHeight(int height) {
+        int from = renderedKeyboardHeight >= 0 ? renderedKeyboardHeight : keyboardSpace.height();
+        keyboardSpace.measured(height);
+        int target = keyboardSpace.height();
+        if (keyboardHeightAnimator != null) keyboardHeightAnimator.cancel();
+        if (target == from) { renderedKeyboardHeight = target; return; }
+        if (!isLaidOut()) { renderedKeyboardHeight = -1; requestLayout(); return; }
+        renderedKeyboardHeight = from;
+        keyboardHeightAnimator = ValueAnimator.ofInt(from, target);
+        keyboardHeightAnimator.setDuration(200);
+        keyboardHeightAnimator.setInterpolator(new DecelerateInterpolator());
+        keyboardHeightAnimator.addUpdateListener(animation -> {
+            renderedKeyboardHeight = (int)animation.getAnimatedValue();
+            if (Build.VERSION.SDK_INT < 30) updateLegacyViewport(); else requestLayout();
+        });
+        keyboardHeightAnimator.start();
     }
 
     private void applyInsets(WindowInsets insets) {
@@ -652,6 +775,8 @@ final class FloatingSearchView extends FrameLayout {
 
     void prepareForLookup() {
         clipboardSuspended = true;
+        removeCallbacks(confirmImeHeight); pendingImeHeight = 0;
+        removeCallbacks(commitLegacyIme);
         stopClipboard();
         suggestions.pause();
         explosionController.pause();
@@ -706,8 +831,6 @@ final class FloatingSearchView extends FrameLayout {
         }
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER);
         body.addView(empty, lp); emptyView = empty;
-        textExplosion.bringToFront();
-        if (textExplosion.hasText()) empty.setVisibility(INVISIBLE);
         if (animate) {
             empty.setAlpha(0f); empty.setTranslationY(dp(5));
             empty.animate().alpha(1).translationY(0).setDuration(180).start();
@@ -943,6 +1066,7 @@ final class FloatingSearchView extends FrameLayout {
 
     private void refreshDestination() {
         if (disposed) return;
+        modelIcon.setKind(destination.isThirdParty() ? SearchIconView.Kind.CONNECTOR : SearchIconView.Kind.LIGHTNING);
         for (java.util.Map.Entry<LookupDestinationSettings.Model, LinearLayout> entry : modelRows.entrySet()) {
             LinearLayout row = entry.getValue();
             boolean selected = destination.model() == entry.getKey();
@@ -1134,6 +1258,7 @@ final class FloatingSearchView extends FrameLayout {
         drawer.setVisibility(drawerProgress > 0 ? VISIBLE : INVISIBLE);
         drawer.setTranslationX(-drawerWidth * (1 - drawerProgress));
         page.setTranslationX(drawerWidth * drawerProgress);
+        textExplosion.setTranslationX(drawerWidth * drawerProgress);
         drawerDismiss.setVisibility(drawerProgress > 0 ? VISIBLE : GONE);
         drawerDismiss.setTranslationX(drawerWidth * drawerProgress);
     }
@@ -1148,10 +1273,25 @@ final class FloatingSearchView extends FrameLayout {
             updateCompactLayout(height - topInset - bottomSpace);
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        if (textExplosion.hasText()) {
+            FrameLayout.LayoutParams pageLp = (FrameLayout.LayoutParams)page.getLayoutParams();
+            int top = pageLp.topMargin + page.getPaddingTop()
+                    + (header.getVisibility() == GONE ? 0 : header.getMeasuredHeight())
+                    + body.getMeasuredHeight() + bottom.getMeasuredHeight() - bottom.getPaddingBottom();
+            int height = Math.max(0, getMeasuredHeight() - safeBottom - top);
+            FrameLayout.LayoutParams explosionLp = (FrameLayout.LayoutParams)textExplosion.getLayoutParams();
+            explosionLp.topMargin = top; explosionLp.height = height;
+            textExplosion.setVisibility(height > 0 ? VISIBLE : GONE);
+            textExplosion.measure(MeasureSpec.makeMeasureSpec(getMeasuredWidth(), MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
+        }
     }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
+        if (w != oldw && composerHeightAnimator != null) {
+            composerHeightAnimator.cancel(); composer.getLayoutParams().height = -2;
+        }
         drawerWidth = Math.min(dp(380), Math.round(w * .89f));
         ViewGroup.LayoutParams lp = drawer.getLayoutParams(); lp.width = drawerWidth; drawer.setLayoutParams(lp);
         applyDrawerProgress(drawerProgress); post(this::positionMenu);
@@ -1171,6 +1311,8 @@ final class FloatingSearchView extends FrameLayout {
         boolean tight = available < dp(240);
         suggestionArea.setVisibility(!tight ? VISIBLE : GONE);
         if (tight != compactComposer) {
+            if (composerHeightAnimator != null) composerHeightAnimator.cancel();
+            composer.getLayoutParams().height = -2;
             compactComposer = tight;
             input.setMinLines(tight ? 1 : 2);
             input.setMaxLines(tight ? 1 : 4);
@@ -1252,9 +1394,8 @@ final class FloatingSearchView extends FrameLayout {
 
     @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
         super.onLayout(changed, l, t, r, b);
-        if (emptyView != null) emptyView.setVisibility(!textExplosion.hasText()
-                && body.getHeight() >= dp(state.isPrivateMode() ? 230 : 84) ? VISIBLE : INVISIBLE);
-        textExplosion.setVisibility(textExplosion.hasText() && body.getHeight() >= dp(80) ? VISIBLE : GONE);
+        if (emptyView != null) emptyView.setVisibility(
+                body.getHeight() >= dp(state.isPrivateMode() ? 230 : 84) ? VISIBLE : INVISIBLE);
         if (changed && menuCard != null) post(this::positionMenu);
     }
 
@@ -1263,8 +1404,13 @@ final class FloatingSearchView extends FrameLayout {
         ocrLanguage.removeObserver(languageChanged);
         destination.removeObserver(destinationChanged);
         suggestions.close();
+        if (suggestionHeightAnimator != null) suggestionHeightAnimator.cancel();
+        if (composerHeightAnimator != null) composerHeightAnimator.cancel();
+        if (keyboardHeightAnimator != null) keyboardHeightAnimator.cancel();
+        for (TextView candidate : suggestionViews.values()) candidate.animate().cancel();
         explosionController.close();
         removeCallbacks(commitLegacyIme);
+        removeCallbacks(confirmImeHeight);
         drawer.dispose();
         disposed = true;
         draftChips.dispose();

@@ -11,10 +11,14 @@ final class OcrSweepSelection {
     final List<MultilingualOcrRecognizer.Region> picked = new ArrayList<>();
     private final IdentityHashMap<MultilingualOcrRecognizer.Region, int[]> ranges = new IdentityHashMap<>();
     private final List<MultilingualOcrRecognizer.Region> sources = new ArrayList<>();
-    private boolean bounded, hasPoint;
-    private float lastX, lastY;
+    private boolean bounded, hasPoint, precise, hasDirection;
+    private MultilingualOcrRecognizer.Region automatic;
+    private float lastX, lastY, originX, originY, directionX, directionY, furthest;
 
-    void clear() { picked.clear(); sources.clear(); ranges.clear(); bounded = hasPoint = false; }
+    void clear() {
+        picked.clear(); sources.clear(); ranges.clear(); automatic = null;
+        bounded = hasPoint = precise = hasDirection = false; furthest = 0;
+    }
 
     // Element-level fallback for model versions without symbol geometry.
     void touch(MultilingualOcrRecognizer.Region region, OcrPickupMode mode) {
@@ -31,6 +35,24 @@ final class OcrSweepSelection {
             nearby.inset(-gap, -gap);
             if (!nearby.contains(Math.round(x), Math.round(y))) clear();
         }
+        if (touched != null) automatic = touched;
+        if (hasPoint && touched != null && !precise) {
+            float threshold = Math.max(2, Math.min(touched.bounds.height()/4f,
+                    tolerance > 0 ? tolerance/2 : Float.MAX_VALUE));
+            if (!hasDirection && Math.hypot(x-originX, y-originY) >= threshold) {
+                float distance = (float)Math.hypot(x-originX, y-originY);
+                directionX = (x-originX)/distance; directionY = (y-originY)/distance;
+                hasDirection = true;
+            }
+            if (hasDirection) {
+                float distance = (x-originX)*directionX+(y-originY)*directionY;
+                // Initial placement and one-way travel select a complete word.
+                // A deliberate return pass switches to the saved glyph range;
+                // merely crossing a glyph edge must not turn it into a fragment.
+                if (furthest-distance >= threshold) precise = true;
+                furthest = Math.max(furthest, distance);
+            }
+        }
         // Include every crossed symbol, even when Android coalesces a fast sweep
         // into just an endpoint. Returning across it never removes an endpoint.
         if (hasPoint && Math.hypot(x-lastX, y-lastY) > 0.5f) {
@@ -46,6 +68,7 @@ final class OcrSweepSelection {
             }
         }
         if (touched != null) add(touched, symbolAt(touched, x, y));
+        if (!hasPoint) { originX = x; originY = y; }
         lastX = x; lastY = y; hasPoint = true; rebuild();
     }
 
@@ -70,6 +93,7 @@ final class OcrSweepSelection {
 
     private void rebuild() {
         picked.clear();
+        if (!precise && automatic != null) { picked.add(automatic); return; }
         for (MultilingualOcrRecognizer.Region source : sources) {
             int[] range = ranges.get(source);
             picked.add(bounded && range[0] >= 0 ? source.slice(range[0], range[1]) : source);
@@ -77,16 +101,19 @@ final class OcrSweepSelection {
     }
 
     private static int symbolAt(MultilingualOcrRecognizer.Region region, float x, float y) {
-        double best = Double.MAX_VALUE; int index = -1;
+        double best = Double.MAX_VALUE; int index = -1; boolean bestInside = false;
         for (int i=0; i<region.symbols.size(); i++) {
             Rect b = region.symbols.get(i).bounds;
+            boolean inside = x >= b.left && x < b.right && y >= b.top && y < b.bottom;
             double dx = Math.max(Math.max(b.left-x, x-b.right), 0);
             double dy = Math.max(Math.max(b.top-y, y-b.bottom), 0);
             double distance = dx*dx+dy*dy;
-            // Resolve shared boundaries by nearest glyph centre, independent of
-            // model iteration order and without approximating character widths.
+            // Rect uses inclusive left/top and exclusive right/bottom. At a
+            // shared edge the actual containing glyph wins over its neighbour.
             double rank = distance + Math.abs(b.exactCenterX()-x)*0.001;
-            if (rank < best) { best = rank; index = i; }
+            if ((inside && !bestInside) || (inside == bestInside && rank < best)) {
+                best = rank; index = i; bestInside = inside;
+            }
         }
         return index;
     }
@@ -97,11 +124,13 @@ final class OcrSweepSelection {
         int[] min = {b.left, b.top}, max = {b.right, b.bottom};
         for (int axis=0; axis<2; axis++) {
             if (Math.abs(delta[axis]) < 0.0001f) {
-                if (start[axis] < min[axis] || start[axis] > max[axis]) return false;
+                if (start[axis] < min[axis] || start[axis] >= max[axis]) return false;
             } else {
                 float a = (min[axis]-start[axis])/delta[axis], z = (max[axis]-start[axis])/delta[axis];
                 low = Math.max(low, Math.min(a,z)); high = Math.min(high, Math.max(a,z));
-                if (high < low) return false;
+                // Merely touching a neighbour's edge/corner is not a sweep
+                // through that glyph. The endpoint itself is added by symbolAt.
+                if (high <= low) return false;
             }
         }
         return true;

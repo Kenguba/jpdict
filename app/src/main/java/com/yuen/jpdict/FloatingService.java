@@ -46,6 +46,8 @@ public class FloatingService extends Service {
             "com.yuen.jpdict.LOOKUP_HOST_FINISH";
     public static final String ACTION_LOOKUP_HOST_SEARCH =
             "com.yuen.jpdict.LOOKUP_HOST_SEARCH";
+    public static final String ACTION_LOOKUP_HOST_EXTERNAL =
+            "com.yuen.jpdict.LOOKUP_HOST_EXTERNAL";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
     public static final String EXTRA_LOOKUP_QUERY = "lookup_query";
     public static final String EXTRA_LOOKUP_MODE = "lookup_mode";
@@ -465,6 +467,10 @@ public class FloatingService extends Service {
     private void toggleSearchPanel() {
         try {
             if (searchPanel != null) {
+                if (searchPanel.getVisibility() != View.VISIBLE) {
+                    openSearchHost();
+                    return;
+                }
                 markAction("BUBBLE_TAP_CLOSE_SEARCH");
                 removeSearchPanel();
                 return;
@@ -713,13 +719,24 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
-        if (routeThirdPartyLookup(q)) return;
+        if (routeThirdPartyLookup(q, true)) return;
         rootSearchForLookup();
         openLookupHost(q, true, LOOKUP_MODE_FLOAT);
     }
 
-    private boolean routeThirdPartyLookup(String query) {
+    private boolean routeThirdPartyLookup(String query, boolean returnToSearch) {
         if (!LookupDestinationSettings.get(this).isThirdParty()) return false;
+        if (returnToSearch && searchPanel != null && searchPanelHosted && searchPanel.isAttachedToWindow()
+                && lookupOverlay == null && !activeHostSession.isEmpty()) {
+            // The Activity protects its search return route before launching
+            // the external app. Keep this exact surface, including chip state.
+            rootSearchForLookup();
+            searchPanel.setVisibility(View.INVISIBLE);
+            sendBroadcast(new Intent(ACTION_LOOKUP_HOST_EXTERNAL).setPackage(getPackageName())
+                    .putExtra(EXTRA_HOST_SESSION, activeHostSession)
+                    .putExtra(EXTRA_LOOKUP_QUERY, query));
+            return true;
+        }
         if (ThirdPartyLookup.launch(this, query)) {
             removeSearchPanel();
             removeLookupOverlay(true);
@@ -757,7 +774,7 @@ public class FloatingService extends Service {
     }
 
     private void openOcrLookupPopup(String q) {
-        if (routeThirdPartyLookup(q)) return;
+        if (routeThirdPartyLookup(q, false)) return;
         dispatchLookupOverlay(q, false);
     }
 
@@ -1816,6 +1833,7 @@ public class FloatingService extends Service {
             // search surface for density/font changes, retaining its draft
             // and privacy state while leaving the real bubble mounted.
             boolean hosted = searchPanelHosted;
+            int visibility = searchPanel.getVisibility();
             String pageRequest = pendingSearchPageRequest;
             String pageHostSession = pendingSearchPageHostSession;
             removeSearchPanel(false);
@@ -1823,7 +1841,8 @@ public class FloatingService extends Service {
             showSearchPanel();
             pendingSearchPageRequest = pageRequest;
             pendingSearchPageHostSession = pageHostSession;
-            if (!pageRequest.isEmpty()) rootSearchForLookup();
+            if (visibility != View.VISIBLE || !pageRequest.isEmpty()) rootSearchForLookup();
+            if (searchPanel != null) searchPanel.setVisibility(visibility);
         }
     }
 
@@ -1832,7 +1851,9 @@ public class FloatingService extends Service {
             String session = intent.getStringExtra(EXTRA_HOST_SESSION);
             boolean closing = ACTION_LOOKUP_DISMISS.equals(intent.getAction())
                     || ACTION_LOOKUP_BACK.equals(intent.getAction());
-            if (closing && !activeHostSession.equals(session)) return START_STICKY;
+            boolean returningSearch = ACTION_SHOW_SEARCH.equals(intent.getAction()) && searchPanel != null
+                    && intent.getBooleanExtra(EXTRA_RETURN_TO_SEARCH, false);
+            if ((closing || returningSearch) && !activeHostSession.equals(session)) return START_STICKY;
             if ((ACTION_SHOW_SEARCH.equals(intent.getAction())
                     || ACTION_SHOW_LOOKUP_OVERLAY.equals(intent.getAction()))
                     && intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)
@@ -1896,6 +1917,7 @@ public class FloatingService extends Service {
             removeLookupOverlay(true);
             lookupOverlayHosted = false;
             lookupPrivateMode = false;
+            if (searchPanel != null) searchPanel.setVisibility(View.VISIBLE);
             if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).resumeAfterLookup();
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
             if (restoredQuery != null && searchPanel == null) currentSearchQuery = restoredQuery;
@@ -1923,7 +1945,7 @@ public class FloatingService extends Service {
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 
             if (!q.isEmpty()) {
-                if (routeThirdPartyLookup(q)) {
+                if (routeThirdPartyLookup(q, returnToSearch)) {
                     // All initial lookup entry points share the selected destination.
                 } else if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
                     lookupPrivateMode = intent.getBooleanExtra(EXTRA_LOOKUP_PRIVATE, false);

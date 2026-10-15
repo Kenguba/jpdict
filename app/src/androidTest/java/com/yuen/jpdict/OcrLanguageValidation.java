@@ -347,10 +347,13 @@ final class OcrLanguageValidation {
         TextView full = (TextView)grid.getChildAt(0);
         check(grid.getChildCount() == 13 && complete.contentEquals(full.getText()), "All local suggestions retain an extra complete multiline input candidate");
         check(full.getMaxLines() == 2 && full.getLayoutParams().width == -1, "Long current input occupies a bounded full-width row above the grid");
+        android.animation.ValueAnimator growth = (android.animation.ValueAnimator)field(surface, "suggestionHeightAnimator");
+        if (growth != null) growth.end();
         check(((View)field(surface, "suggestionArea")).getLayoutParams().height >= grid.getMeasuredHeight(), "The suggestion area grows to fit the extra row");
         full.performClick();
         check(queries.get(queries.size() - 1).equals(complete.trim()) && privacy.get(privacy.size() - 1),
                 "Clicking the full input candidate submits every original line and preserves privacy");
+        check(complete.contentEquals(input.getText()), "Candidate lookup leaves the complete whitespace-preserving draft intact");
         input.setText("a"); show.invoke(surface, locals);
         check(grid.getChildCount() == 13 && ((TextView)grid.getChildAt(0)).getText().toString().equals("a")
                 && grid.getChildAt(0).getLayoutParams().width == 0, "Short current input adds one normal grid candidate");

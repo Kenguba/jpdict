@@ -14,6 +14,7 @@ public final class SearchComposerTest {
         cjkAndSupplementaryCharactersKeepTheirRanges();
         punctuationAndNewlinesCannotCreateInventedPhrases();
         longInputsArePagedWithoutLoss();
+        matchedBatchesAccumulateWithoutLosingLaterText();
         System.out.println("SearchComposer: all draft and segmentation checks passed");
     }
     private static void clipboardRetainsExactDisplacedDrafts() {
@@ -79,6 +80,31 @@ public final class SearchComposerTest {
         StringBuilder punctuation = new StringBuilder(); for (int i = 0; i < 200; i++) punctuation.append("😀!");
         SearchTextSegments.Page page = SearchTextSegments.page(punctuation.toString(), 0);
         equal(true, page.hasNext()); equal(0, page.candidates.size());
+    }
+    private static void matchedBatchesAccumulateWithoutLosingLaterText() {
+        StringBuilder source = new StringBuilder();
+        for (int i = 0; i < 240; i++) source.append("hold on ").append(i).append(" 日本語\n");
+        String input = source.toString();
+        List<SearchTextSegments.Part> displayed = new java.util.ArrayList<>();
+        SearchTextSegments.Page first = SearchTextSegments.page(input, 0);
+        int offset = 0;
+        while (offset < input.length()) {
+            SearchTextSegments.Page page = SearchTextSegments.page(input, offset);
+            SearchTextSegments.replaceRange(displayed, page, SearchTextSegments.match(page,
+                    new HashSet<>(Arrays.asList("hold on", "日本語"))));
+            offset = page.end;
+        }
+        equal(input, concatenate(displayed));
+        int count = displayed.size();
+        SearchTextSegments.Part last = displayed.get(count - 1);
+        List<SearchTextSegments.Part> replacement = SearchTextSegments.match(first, Collections.singleton("hold on"));
+        SearchTextSegments.replaceRange(displayed, first, replacement);
+        equal(input, concatenate(displayed));
+        equal(last, displayed.get(displayed.size() - 1));
+        equal(true, matched(displayed).contains("hold on"));
+        SearchTextSegments.replaceRange(displayed, first, replacement);
+        equal(input, concatenate(displayed));
+        equal(last, displayed.get(displayed.size() - 1));
     }
     private static String concatenate(List<SearchTextSegments.Part> parts) {
         StringBuilder output = new StringBuilder(); for (SearchTextSegments.Part part : parts) output.append(part.text); return output.toString();
