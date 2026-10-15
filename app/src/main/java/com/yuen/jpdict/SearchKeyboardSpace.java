@@ -2,7 +2,7 @@ package com.yuen.jpdict;
 
 import android.content.Context;
 
-/** Keyboard space survives hide/show; only a settled, measured IME changes it. */
+/** Keyboard space survives hide/show; only a final IME inset (not an animation frame) changes it. */
 final class SearchKeyboardSpace {
     private final Context context;
     private final String key;

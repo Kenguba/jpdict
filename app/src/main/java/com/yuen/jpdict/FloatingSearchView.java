@@ -118,7 +118,6 @@ final class FloatingSearchView extends FrameLayout {
     private boolean compactComposer;
     private int imeBottom;
     private final SearchKeyboardSpace keyboardSpace;
-    private boolean imeAnimating;
     private int legacyImeCandidate;
     private int safeBottom;
     private int topInset;
@@ -174,7 +173,7 @@ final class FloatingSearchView extends FrameLayout {
         bottom.setOrientation(LinearLayout.VERTICAL);
         bottom.setClipChildren(false);
         bottom.setClipToPadding(false);
-        bottom.setPadding(0, dp(8), 0, dp(8));
+        bottom.setPadding(0, 0, 0, dp(8));
         recommendations = new HorizontalScrollView(context);
         recommendations.setHorizontalScrollBarEnabled(false);
         recommendations.setClipToPadding(false);
@@ -198,7 +197,7 @@ final class FloatingSearchView extends FrameLayout {
         });
         suggestionArea = new FrameLayout(context);
         suggestionArea.addView(suggestionWords, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
-        bottom.addView(suggestionArea, new LinearLayout.LayoutParams(-1, dp(124)));
+        bottom.addView(suggestionArea, new LinearLayout.LayoutParams(-1, -2));
         composer = new LinearLayout(context);
         composer.setOrientation(LinearLayout.VERTICAL);
         composer.setPadding(dp(8), dp(5), dp(8), dp(7));
@@ -370,6 +369,8 @@ final class FloatingSearchView extends FrameLayout {
             if (e.getActionMasked() == MotionEvent.ACTION_UP) post(this::focusInput);
             return false;
         });
+        // Include the actual hint height in the first layout, before async suggestions arrive.
+        renderSuggestions();
         applyPrivateMode(false);
         suggestions.update(input.getText().toString());
         explosionController.update(input.getText().toString());
@@ -406,7 +407,6 @@ final class FloatingSearchView extends FrameLayout {
         if (words.isEmpty()) {
             if (longInput) { updateSuggestionHeight(width); return; }
             TextView note = text(input.length() == 0 ? "本地词库智能联想" : "回车查询 · 支持中 / 英 / 日 / 韩", 11, MUTED, false);
-            note.setPadding(0, dp(9), 0, 0);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams(GridLayout.spec(0), GridLayout.spec(0, 3));
             lp.width = -1; suggestionWords.addView(note, lp);
             updateSuggestionHeight(width);
@@ -436,7 +436,7 @@ final class FloatingSearchView extends FrameLayout {
 
     private void updateSuggestionHeight(int width) {
         suggestionWords.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-        int height = Math.max(dp(124), suggestionWords.getMeasuredHeight());
+        int height = suggestionWords.getMeasuredHeight();
         if (suggestionArea.getLayoutParams().height != height) {
             suggestionArea.getLayoutParams().height = height;
             suggestionArea.requestLayout();
@@ -494,20 +494,24 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private void installInsets() {
-        setOnApplyWindowInsetsListener((v, insets) -> { applyInsets(insets); return insets; });
+        setOnApplyWindowInsetsListener((v, insets) -> {
+            // This dispatch contains the animation's destination, before its first frame.
+            // Learn it here so a new keyboard height is not applied as a jump at onEnd.
+            rememberKeyboardHeight(insets);
+            applyInsets(insets);
+            return insets;
+        });
         if (Build.VERSION.SDK_INT >= 30) {
             setWindowInsetsAnimationCallback(new WindowInsetsAnimation.Callback(WindowInsetsAnimation.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
-                @Override public void onPrepare(WindowInsetsAnimation animation) {
-                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) imeAnimating = true;
-                }
                 @Override public WindowInsets onProgress(WindowInsets insets, List<WindowInsetsAnimation> animations) {
+                    // Animated/interrupted intermediate heights never replace the reservation.
                     applyInsets(insets); return insets;
                 }
                 @Override public void onEnd(WindowInsetsAnimation animation) {
                     if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0 || disposed) return;
-                    imeAnimating = false;
                     WindowInsets current = getRootWindowInsets();
                     if (current != null) {
+                        rememberKeyboardHeight(current);
                         applyInsets(current);
                         if (!current.isVisible(WindowInsets.Type.ime()) && current.getInsets(WindowInsets.Type.ime()).bottom == 0) callback.onEditingChanged(false);
                     }
@@ -539,6 +543,9 @@ final class FloatingSearchView extends FrameLayout {
         if (keyboard > dp(120) && keyboard != legacyImeCandidate) {
             legacyImeCandidate = keyboard;
             removeCallbacks(commitLegacyIme); postDelayed(commitLegacyIme, 150);
+        } else if (!state.isKeyboardVisible()) {
+            legacyImeCandidate = 0;
+            removeCallbacks(commitLegacyIme);
         }
 
         // TYPE_PHONE can retain a full-height surface and pan its root to the
@@ -580,7 +587,17 @@ final class FloatingSearchView extends FrameLayout {
     };
 
     private int composerBottomSpace() {
-        return Math.max(safeBottom, keyboardSpace.reserved(getHeight() - topInset));
+        return composerBottomSpace(getHeight());
+    }
+
+    private int composerBottomSpace(int windowHeight) {
+        return Math.max(safeBottom, keyboardSpace.reserved(windowHeight - topInset));
+    }
+
+    private void rememberKeyboardHeight(WindowInsets insets) {
+        if (Build.VERSION.SDK_INT >= 30 && insets.isVisible(WindowInsets.Type.ime())) {
+            keyboardSpace.measured(insets.getInsets(WindowInsets.Type.ime()).bottom);
+        }
     }
 
     private void applyInsets(WindowInsets insets) {
@@ -591,7 +608,6 @@ final class FloatingSearchView extends FrameLayout {
             safeBottom = bars.bottom;
             imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom;
             state.setKeyboardVisible(insets.isVisible(WindowInsets.Type.ime()) || imeBottom > 0);
-            if (!imeAnimating && state.isKeyboardVisible()) keyboardSpace.measured(imeBottom);
         } else {
             safeBottom = insets.getStableInsetBottom();
             if (Build.VERSION.SDK_INT >= 29) systemBackInset = insets.getSystemGestureInsets().left;
@@ -1122,19 +1138,34 @@ final class FloatingSearchView extends FrameLayout {
         drawerDismiss.setTranslationX(drawerWidth * drawerProgress);
     }
 
+    @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            // onSizeChanged is after measurement: applying the reservation there
+            // lets the first frame use full-height children and jump on the next frame.
+            int height = MeasureSpec.getSize(heightMeasureSpec);
+            int bottomSpace = composerBottomSpace(height);
+            page.setPadding(0, topInset, 0, bottomSpace);
+            updateCompactLayout(height - topInset - bottomSpace);
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
         drawerWidth = Math.min(dp(380), Math.round(w * .89f));
         ViewGroup.LayoutParams lp = drawer.getLayoutParams(); lp.width = drawerWidth; drawer.setLayoutParams(lp);
         applyDrawerProgress(drawerProgress); post(this::positionMenu);
-        if (Build.VERSION.SDK_INT < 30) updateLegacyViewport(); else updateCompactLayout();
-        if (Build.VERSION.SDK_INT >= 30) page.setPadding(0, topInset, 0, composerBottomSpace());
+        if (Build.VERSION.SDK_INT < 30) updateLegacyViewport();
     }
 
     private void updateCompactLayout() {
         if (getHeight() == 0) return;
         int available = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
                 ? page.getLayoutParams().height : getHeight() - topInset - composerBottomSpace();
+        updateCompactLayout(available);
+    }
+
+    private void updateCompactLayout(int available) {
         header.setVisibility(available < dp(240) ? GONE : VISIBLE);
         recommendations.setVisibility(!draftDragging && !state.isPrivateMode() && available >= dp(320) ? VISIBLE : GONE);
         boolean tight = available < dp(240);
@@ -1153,7 +1184,9 @@ final class FloatingSearchView extends FrameLayout {
         }
         // Maintain an 8dp gap above the keyboard and the display's lower edge.
         int bottomPadding = dp(8);
-        int topPadding = dp(tight ? 2 : 8);
+        // Blank space above suggestions belongs to body, so its mark is centered
+        // all the way down to the hint instead of excluding invisible padding.
+        int topPadding = dp(tight ? 2 : 0);
         if (bottom.getPaddingTop() != topPadding || bottom.getPaddingBottom() != bottomPadding) {
             bottom.setPadding(0, topPadding, 0, bottomPadding);
         }
