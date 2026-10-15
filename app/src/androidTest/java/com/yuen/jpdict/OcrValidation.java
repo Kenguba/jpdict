@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.*;
 import com.google.android.gms.tasks.TaskCompletionSource;
+import com.google.android.gms.tasks.Tasks;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognizer;
 import java.lang.reflect.Proxy;
@@ -24,7 +25,7 @@ final class OcrValidation {
     private void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
     static String run(Instrumentation instrumentation, boolean fonts) throws Exception {
         OcrValidation test = new OcrValidation();
-        test.mainFailureReporting(instrumentation); test.images(); test.selection(); test.repeatedCapture(instrumentation); test.canceledCapture(instrumentation); test.gestures(instrumentation);
+        test.mainFailureReporting(instrumentation); test.images(); test.selection(); test.repeatedCapture(instrumentation); test.canceledCapture(instrumentation); test.stalledPreviewRecovery(instrumentation); test.captureStopRecovery(instrumentation); test.repeatedStallStopsCapture(instrumentation); test.gestures(instrumentation);
         String measured = fonts ? test.fonts(instrumentation) : "";
         return "OCR: " + test.checks + " assertions passed\n" + OcrLanguageValidation.run(instrumentation) + measured;
     }
@@ -220,16 +221,19 @@ final class OcrValidation {
             capture.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",53L));
             capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",52L),0,2);
             check(capture.pendingPreview!=null && capture.pendingPreview.getLongExtra("session",-1)==53
-                            && renewals[0]==0 && calls[0]==1 && responses.isEmpty(),
-                    "Repeated gestures retain only the latest request without creating another screenshot or model task");
+                            && renewals[0]==0 && calls[0]==1 && responses.size()==2
+                            && responses.get(0).getBooleanExtra("queued",false)
+                            && responses.get(1).getBooleanExtra("queued",false),
+                    "Repeated gestures retain only the latest request, acknowledge queueing, and create no extra screenshot or model task");
             first.setResult(new Text("",Collections.emptyList()));
         });
         for(int i=0;i<100 && nextRequest.get()==null;i++)Thread.sleep(20);
         onMain(instrumentation, () -> {
             check(old.isRecycled(),"Canceled screenshot is recycled after the old OCR callback releases it");
             check(nextRequest.get()!=null && nextRequest.get().getLongExtra("session",-1)==53 && renewals[0]==1
-                            && !capture.previewInFlight && capture.pendingPreview==null && responses.isEmpty(),
+                            && !capture.previewInFlight && capture.pendingPreview==null && responses.size()==2,
                     "Old completion starts only the newest pending capture and never publishes its stale result");
+            responses.clear();
             capture.previewSession=capture.previewOperation=53;capture.previewInFlight=true;capture.recognizePreview(current,53);
             capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",51L),0,3);
             capture.sendPreview(51,Collections.emptyList(),null);capture.sendRefined(51,"stale",null);
@@ -249,6 +253,136 @@ final class OcrValidation {
             capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",53L),0,4);
             check(current.isRecycled(),"Canceling the completed replacement disposes its screenshot");
             recognizer.close();
+        });
+    }
+    private void stalledPreviewRecovery(Instrumentation instrumentation) throws Exception {
+        AtomicReference<Intent> dispatched=new AtomicReference<>();
+        CountDownLatch started=new CountDownLatch(1);
+        MultilingualOcrRecognizer replacement=fakeRecognizer();
+        OcrPreviewFrame abandonedFrame=new OcrPreviewFrame(71,Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888));
+        List<Intent> responses=new ArrayList<>();
+        MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+            @Override public String getPackageName(){return instrumentation.getTargetContext().getPackageName();}
+            @Override public void sendBroadcast(Intent intent){responses.add(new Intent(intent));}
+            @Override MultilingualOcrRecognizer createOcrRecognizer(){return replacement;}
+            @Override void captureOnce(Intent request){dispatched.set(new Intent(request));started.countDown();}
+        };
+        MultilingualOcrRecognizer stalled=fakeRecognizer();
+        abandonedFrame.borrow(71);
+        onMain(instrumentation,()->{
+            service.ocrRecognizer=stalled;
+            service.previewFrame=abandonedFrame;
+            service.previewSession=service.previewOperation=71;
+            service.previewInFlight=true;
+            service.pendingPreview=new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",72L);
+            service.previewSession=0; // A newer gesture replaced the visible session while 71 was in flight.
+            service.timeoutPreviewOperation(71);
+            check(!service.previewInFlight && service.previewOperation==0 && service.previewFrame==null,
+                    "A lost callback releases the logical gate and retires its screenshot without recycling a borrowed bitmap");
+            check(service.ocrRecognizer==replacement && service.retiredPreviewOperations.contains(71L),
+                    "A timed-out model client is replaced while its uncancelable task remains isolated");
+        });
+        check(started.await(5,TimeUnit.SECONDS),"The newest floating OCR request starts after a lost callback is retired");
+        onMain(instrumentation,()->{
+            check(dispatched.get()!=null && dispatched.get().getLongExtra("session",-1)==72
+                            && service.pendingPreview==null,
+                    "Recovery dispatches only the latest queued gesture");
+            service.previewSession=72;
+            service.beginPreviewOperation(72);
+            service.finishPreviewOperation(71);
+            check(service.previewInFlight && service.previewOperation==72,
+                    "A late callback from the retired sweep cannot release a newer OCR operation");
+            check(responses.size()==1 && responses.get(0).getLongExtra("session",-1)==72
+                            && responses.get(0).getBooleanExtra("processing",false),
+                    "The replacement request receives progress while retired work emits no stale result");
+            service.finishPreviewOperation(72);
+            check(!service.previewInFlight,"The replacement operation clears its own gate normally");
+            service.captureMain.removeCallbacksAndMessages(null);
+            stalled.close();replacement.close();
+        });
+        abandonedFrame.release();
+        check(abandonedFrame.borrow(71)==null,"A retired frame rejects future use after its original reader releases it");
+    }
+    private static MultilingualOcrRecognizer fakeRecognizer(){
+        TextRecognizer model=(TextRecognizer)Proxy.newProxyInstance(TextRecognizer.class.getClassLoader(),
+                new Class<?>[]{TextRecognizer.class},(proxy,method,args)->{
+                    if("process".equals(method.getName()))return Tasks.forResult(new Text("",Collections.emptyList()));
+                    return null;
+                });
+        return new MultilingualOcrRecognizer(model,model,model,model,null);
+    }
+    private void captureStopRecovery(Instrumentation instrumentation) throws Exception {
+        MultilingualOcrRecognizer replacement=fakeRecognizer();
+        MultilingualOcrRecognizer stalled=fakeRecognizer();
+        MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+            @Override public String getPackageName(){return instrumentation.getTargetContext().getPackageName();}
+            @Override public void sendBroadcast(Intent intent){}
+            @Override MultilingualOcrRecognizer createOcrRecognizer(){return replacement;}
+        };
+        onMain(instrumentation,()->{
+            service.ocrRecognizer=stalled;
+            service.previewSession=88;
+            service.beginPreviewOperation(88);
+            service.stopCapture();
+            check(service.previewInFlight && service.previewOperation==88,
+                    "Stopping screen capture does not mistake an uncancelable OCR task for a completed operation");
+            check(service.previewSession==0,"A stopped capture session cannot publish its eventual OCR result");
+            service.timeoutPreviewOperation(88);
+            check(!service.previewInFlight && service.ocrRecognizer==replacement,
+                    "The OCR watchdog still retires a stalled task after screen capture stops");
+            service.finishPreviewOperation(88);
+            service.captureMain.removeCallbacksAndMessages(null);
+            stalled.close();replacement.close();
+        });
+    }
+    private void repeatedStallStopsCapture(Instrumentation instrumentation) throws Exception {
+        List<Intent> responses=new ArrayList<>();int[] stopped={0};
+        MultilingualOcrRecognizer recognizer=fakeRecognizer();
+        MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+            @Override public String getPackageName(){return instrumentation.getTargetContext().getPackageName();}
+            @Override public void sendBroadcast(Intent intent){responses.add(new Intent(intent));}
+            @Override void stopCaptureService(){stopped[0]++;}
+            @Override MultilingualOcrRecognizer createOcrRecognizer(){throw new AssertionError("A second uncancelable task must stop capture instead of allocating another model client");}
+        };
+        boolean wasReady=MainActivity.ScreenCaptureService.READY;
+        onMain(instrumentation,()->{
+            MainActivity.ScreenCaptureService.READY=false;
+            service.ocrRecognizer=recognizer;
+            service.previewSession=service.previewOperation=94;
+            service.previewInFlight=true;
+            service.retiredPreviewOperations.add(93L);
+            synchronized(MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS){
+                MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.add(93L);
+            }
+            service.pendingPreview=new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",95L);
+            service.timeoutPreviewOperation(94);
+            check(!service.previewInFlight && service.previewOperation==0 && service.pendingPreview==null,
+                    "A second permanently stalled task stops the retry queue instead of accumulating orphan jobs");
+            check(responses.size()==1 && responses.get(0).getLongExtra("session",-1)==95
+                            && responses.get(0).getBooleanExtra("permission_required",false)
+                            && stopped[0]==1 && !MainActivity.ScreenCaptureService.READY,
+                    "The bounded recovery asks the controller to renew capture and tears down the failed projection service");
+            check(service.retiredPreviewOperations.size()==2 && service.retiredPreviewOperations.contains(93L)
+                            && service.retiredPreviewOperations.contains(94L)
+                            && MainActivity.ScreenCaptureService.retiredPreviewTaskCount()==2,
+                    "Repeated stalls are counted across the service restart boundary and capped at two physical tasks");
+            List<Intent> blocked=new ArrayList<>();
+            MainActivity.ScreenCaptureService restarted=new MainActivity.ScreenCaptureService(){
+                @Override public String getPackageName(){return instrumentation.getTargetContext().getPackageName();}
+                @Override public void sendBroadcast(Intent intent){blocked.add(new Intent(intent));}
+                @Override boolean captureAlive(){throw new AssertionError("No new capture may start while two retired tasks remain");}
+            };
+            restarted.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",96L));
+            check(blocked.size()==1 && "仍有 OCR 任务未返回，请稍后重试".equals(blocked.get(0).getStringExtra("error")),
+                    "A newly created service cannot reset the process-wide retired-task cap");
+            synchronized(MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS){
+                MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.remove(93L);
+                MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.remove(94L);
+            }
+            service.retiredPreviewOperations.clear();
+            service.captureMain.removeCallbacksAndMessages(null);
+            recognizer.close();
+            MainActivity.ScreenCaptureService.READY=wasReady;
         });
     }
     private void repeatedCapture(Instrumentation instrumentation) throws Exception {

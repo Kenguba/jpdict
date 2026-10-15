@@ -369,6 +369,7 @@ public class MainActivity extends Activity {
 
     public static class ScreenCaptureService extends Service {
         static final String CH="ocr_capture", ACT_OCR="ocr_now", ACT_STOP="ocr_stop";
+        static final long PREVIEW_OPERATION_TIMEOUT_MS=22_000;
         public static final String ACT_OCR_REGION="ocr_region";
         public static final String ACT_OCR_PREVIEW="ocr_preview";
         public static final String ACT_OCR_REFINE="ocr_refine", ACT_OCR_CANCEL="ocr_cancel";
@@ -382,16 +383,24 @@ public class MainActivity extends Activity {
         MultilingualOcrRecognizer ocrRecognizer;
         boolean previewInFlight;
         long previewSession, previewOperation;
+        long previewWatchdogSession;
         Intent pendingPreview;
         OcrPreviewFrame previewFrame;
         OcrLanguageSettings.Language previewLanguage;
         OcrPickupMode previewMode=OcrPickupMode.WORD;
         final Handler captureMain=new Handler(Looper.getMainLooper());
+        final Set<Long> retiredPreviewOperations=new HashSet<>();
+        static final Set<Long> RETIRED_PREVIEW_TASKS=new HashSet<>();
+        final Runnable previewWatchdog=()->timeoutPreviewOperation(previewWatchdogSession);
         @Override public void onCreate(){
             super.onCreate();
-            ocrRecognizer=new MultilingualOcrRecognizer();
-            ocrRecognizer.initialize(this);
+            ocrRecognizer=createOcrRecognizer();
             ensureChannel();
+        }
+        MultilingualOcrRecognizer createOcrRecognizer(){
+            MultilingualOcrRecognizer recognizer=new MultilingualOcrRecognizer();
+            recognizer.initialize(this);
+            return recognizer;
         }
         @Override public int onStartCommand(Intent in,int flags,int id){
             if(in==null)return START_NOT_STICKY;
@@ -494,10 +503,16 @@ public class MainActivity extends Activity {
         void captureOnce(Intent request){
             final boolean preview=request!=null && ACT_OCR_PREVIEW.equals(request.getAction());
             final long session=request==null?0:request.getLongExtra("session",0);
+            if(preview && retiredPreviewTaskCount()>=2){
+                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session)
+                        .putExtra("error","仍有 OCR 任务未返回，请稍后重试"));
+                return;
+            }
             if(preview && (previewInFlight || pendingPreview!=null)){
                 // Keep at most one physical capture/model operation and one
                 // latest request. Retired SDK tasks still own their bitmap.
                 pendingPreview=new Intent(request);
+                sendPreviewStatus(session,"queued");
                 if(session!=previewSession){
                     previewSession=0;
                     if(previewFrame!=null){previewFrame.close();previewFrame=null;}
@@ -513,7 +528,7 @@ public class MainActivity extends Activity {
             final int rh=region?request.getIntExtra("h",h):h;
 
             if(preview){
-                previewInFlight=true;previewSession=previewOperation=session;
+                previewSession=session;beginPreviewOperation(session);
                 previewMode=OcrPickupMode.fromValue(request.getStringExtra("pickup_mode"));
                 previewLanguage=previewMode==OcrPickupMode.ENGLISH?OcrLanguageSettings.Language.ENGLISH
                         :previewMode==OcrPickupMode.JAPANESE?OcrLanguageSettings.Language.JAPANESE
@@ -579,10 +594,54 @@ public class MainActivity extends Activity {
             Intent next=pendingPreview;pendingPreview=null;captureOnce(next);
         }
         void finishPreviewOperation(long session){
+            retiredPreviewOperations.remove(session);
+            synchronized(RETIRED_PREVIEW_TASKS){RETIRED_PREVIEW_TASKS.remove(session);}
             if(!previewInFlight || session!=previewOperation)return;
+            captureMain.removeCallbacks(previewWatchdog);
             previewInFlight=false;previewOperation=0;
             if(pendingPreview!=null)captureMain.post(this::runPendingPreview);
         }
+        void beginPreviewOperation(long session){
+            previewInFlight=true;previewOperation=session;previewWatchdogSession=session;
+            captureMain.removeCallbacks(previewWatchdog);
+            captureMain.postDelayed(previewWatchdog,PREVIEW_OPERATION_TIMEOUT_MS);
+            if(previewSession==session)sendPreviewStatus(session,"processing");
+        }
+        void sendPreviewStatus(long session,String status){
+            sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName())
+                    .putExtra("session",session).putExtra(status,true));
+        }
+        void timeoutPreviewOperation(long session){
+            if(!previewInFlight || session!=previewOperation)return;
+            captureMain.removeCallbacks(previewWatchdog);
+            previewInFlight=false;previewOperation=0;
+            boolean notify=previewSession==session;
+            if(notify)previewSession=0;
+            if(previewFrame!=null && previewFrame.session==session){previewFrame.close();previewFrame=null;}
+            retiredPreviewOperations.add(session);
+            synchronized(RETIRED_PREVIEW_TASKS){RETIRED_PREVIEW_TASKS.add(session);}
+
+            // ML Kit Tasks cannot be canceled. Keep the borrowed bitmap alive
+            // for a late callback, but replace the model client so a lost
+            // callback cannot hold every later floating OCR gesture forever.
+            // This process-wide cap survives MediaProjection service recreation;
+            // if the process dies, its uncancelable SDK tasks die with it.
+            if(retiredPreviewTaskCount()>1){
+                Intent recovery=pendingPreview;
+                pendingPreview=null;
+                if(recovery!=null)sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName())
+                        .putExtra("session",recovery.getLongExtra("session",-1)).putExtra("permission_required",true));
+                READY=false;stopCapture();stopCaptureService();
+                return;
+            }
+            MultilingualOcrRecognizer stalled=ocrRecognizer;
+            ocrRecognizer=createOcrRecognizer();
+            if(stalled!=null)stalled.close();
+            if(notify)sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName())
+                    .putExtra("session",session).putExtra("error","OCR 响应超时，已重置识别器，请重试"));
+            if(pendingPreview!=null)captureMain.post(this::runPendingPreview);
+        }
+        static int retiredPreviewTaskCount(){synchronized(RETIRED_PREVIEW_TASKS){return RETIRED_PREVIEW_TASKS.size();}}
         void recognizePreview(Bitmap bitmap,long session){
             if(ocrRecognizer==null){bitmap.recycle();sendPreview(session,null,"OCR 识别器尚未就绪");return;}
             if(previewFrame!=null)previewFrame.close();
@@ -624,7 +683,7 @@ public class MainActivity extends Activity {
                 if(bitmap!=null)frame.release();
                 sendRefined(session,null,"屏幕共享或截图已失效，请重新拖动取词");return;
             }
-            previewInFlight=true;previewOperation=session;
+            beginPreviewOperation(session);
             String seedText=request.getStringExtra("seed");
             MultilingualOcrRecognizer.Region seed=seedText==null?null:new MultilingualOcrRecognizer.Region(seedText,target);
             if(seed!=null){
@@ -760,6 +819,9 @@ public class MainActivity extends Activity {
         void stopCapture(){
             boolean wasReady=READY;
             previewSession=0;pendingPreview=null;
+            // Stopping MediaProjection does not cancel an ML Kit Task. Keep
+            // its operation lock and watchdog until its callback or watchdog
+            // retires it; a renewed projection must not overlap that client.
             if(previewFrame!=null){previewFrame.close();previewFrame=null;}
             VirtualDisplay v=vd; vd=null;
             ScreenCaptureFrames r=captureFrames; captureFrames=null;
@@ -770,12 +832,14 @@ public class MainActivity extends Activity {
             if(r!=null) r.close();
             if(p!=null) try{ p.stop(); }catch(Exception ignored){}
         }
+        void stopCaptureService(){stopSelf();}
         @Override public void onDestroy(){
             captureMain.removeCallbacksAndMessages(null);
             MultilingualOcrRecognizer recognizer=ocrRecognizer;
             ocrRecognizer=null;
             if(recognizer!=null) recognizer.close();
             stopCapture();
+            previewInFlight=false;previewOperation=0;previewWatchdogSession=0;
             super.onDestroy();
         }
         @Override public android.os.IBinder onBind(Intent i){ return null; }
