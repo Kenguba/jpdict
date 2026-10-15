@@ -10,6 +10,7 @@ import java.util.*;
 
 /** One pickup gesture/session for the original bubble and its overlay proxy. */
 final class OcrPickupController implements AutoCloseable {
+    private static final long OCR_TIMEOUT_MS = 20_000;
     interface Host {
         Rect position();
         Rect move(int x, int y);
@@ -61,6 +62,9 @@ final class OcrPickupController implements AutoCloseable {
             }
             if (!armed || intent.getLongExtra("session", -1) != session) return;
             if (intent.getBooleanExtra("permission_required", false)) { requestAuthorization(); return; }
+            if (intent.getBooleanExtra("queued", false) || intent.getBooleanExtra("processing", false)) {
+                main.removeCallbacks(timeout);main.postDelayed(timeout,OCR_TIMEOUT_MS);return;
+            }
             if (MainActivity.ScreenCaptureService.ACTION_PREVIEW_FRAME.equals(intent.getAction())) {
                 captureVisible = true; showOverlay(); return;
             }
@@ -246,7 +250,7 @@ final class OcrPickupController implements AutoCloseable {
         // Let the outgoing white direction ring leave the next display frame
         // before requesting capture; it must never cover the text being read.
         if (dismissingJoystick != null) main.postDelayed(capture, 160); else capture.run();
-        main.removeCallbacks(timeout); main.postDelayed(timeout, 10000);
+        main.removeCallbacks(timeout); main.postDelayed(timeout, OCR_TIMEOUT_MS);
     }
     private void requestAuthorization() {
         cancel(); pendingAuthorization = true;
@@ -255,17 +259,22 @@ final class OcrPickupController implements AutoCloseable {
     }
     private void hideJoystick() {
         if (dismissingJoystick != null) {
-            dismissingJoystick.animate().cancel(); wm.removeView(dismissingJoystick); dismissingJoystick = null;
+            dismissingJoystick.animate().cancel(); removeWindow(dismissingJoystick); dismissingJoystick = null;
         }
         if (joystick == null) return;
         OcrJoystickView outgoing = joystick; joystick = null;
         outgoing.animate().cancel();
-        if (closed) { wm.removeView(outgoing); return; }
+        if (closed) { removeWindow(outgoing); return; }
         dismissingJoystick = outgoing;
         outgoing.animate().alpha(0).setDuration(140).withEndAction(() -> {
             if (dismissingJoystick != outgoing) return;
-            wm.removeView(outgoing); dismissingJoystick = null;
+            removeWindow(outgoing); dismissingJoystick = null;
         }).start();
+    }
+    private void removeWindow(View view) {
+        if (view == null || !view.isAttachedToWindow()) return;
+        try { wm.removeView(view); }
+        catch (IllegalArgumentException ignored) { /* OEM window teardown may race the animation end. */ }
     }
     static String swipeDirection(float dx, float dy, float threshold) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return null;
@@ -314,12 +323,12 @@ final class OcrPickupController implements AutoCloseable {
         if (overlay == null) return;
         SelectionView outgoing = overlay;
         outgoing.animate().cancel();
-        if (closed) { wm.removeView(outgoing); overlay = null; overlayHiding = false; return; }
+        if (closed) { removeWindow(outgoing); overlay = null; overlayHiding = false; return; }
         outgoing.freeze();
         overlayHiding = true;
         outgoing.animate().alpha(0).setDuration(140).withEndAction(() -> {
             if (overlay != outgoing || !overlayHiding) return;
-            wm.removeView(outgoing); overlay = null; overlayHiding = false;
+            removeWindow(outgoing); overlay = null; overlayHiding = false;
         }).start();
     }
     private WindowManager.LayoutParams overlayParams() {
@@ -351,7 +360,7 @@ final class OcrPickupController implements AutoCloseable {
             request.putExtra("selection_boxes",selectionBoxes);
         }
         context.startService(request);
-        main.removeCallbacks(timeout); main.postDelayed(timeout, 10000);
+        main.removeCallbacks(timeout); main.postDelayed(timeout, OCR_TIMEOUT_MS);
         if (overlay != null) overlay.invalidate();
     }
     private void fail(String error) { cancel(); Toast.makeText(context, error, Toast.LENGTH_LONG).show(); }
