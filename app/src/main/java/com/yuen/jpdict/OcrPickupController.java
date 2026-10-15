@@ -199,7 +199,11 @@ final class OcrPickupController implements AutoCloseable {
                         if (held) {
                             hideJoystick(); updateAim(host.move(start.left, start.top));
                             OcrPickupMode chosen = OcrPickupMode.forDirection(direction);
-                            if (chosen != null) {
+                            if (direction == 3) {
+                                LookupDestinationSettings.get(context).toggleSystem();
+                                startPickup(true);
+                            }
+                            else if (chosen != null) {
                                 mode = chosen;
                                 OcrLanguageSettings.get(context).setLanguage(chosen == OcrPickupMode.ENGLISH
                                         ? OcrLanguageSettings.Language.ENGLISH : chosen == OcrPickupMode.JAPANESE
@@ -295,8 +299,17 @@ final class OcrPickupController implements AutoCloseable {
         Intent request = new Intent(context, MainActivity.ScreenCaptureService.class)
                 .setAction(MainActivity.ScreenCaptureService.ACT_OCR_REFINE).putExtra("session", session)
                 .putExtra("target", target).putExtra("aim_x", aimX).putExtra("aim_y", aimY).putExtra("tolerance", 12*density);
-        if (selected != null) request.putExtra("seed", selected.text).putExtra("quality", selected.quality)
-                .putExtra("bounded_range", selected.boundedRange);
+        if (selected != null) {
+            request.putExtra("seed", selected.text).putExtra("quality", selected.quality)
+                    .putExtra("bounded_range", selected.boundedRange);
+            int[] selectionBoxes = new int[sweep.picked.size()*4];
+            for (int i=0;i<sweep.picked.size();i++) {
+                Rect bounds=sweep.picked.get(i).bounds;
+                selectionBoxes[i*4]=bounds.left;selectionBoxes[i*4+1]=bounds.top;
+                selectionBoxes[i*4+2]=bounds.right;selectionBoxes[i*4+3]=bounds.bottom;
+            }
+            request.putExtra("selection_boxes",selectionBoxes);
+        }
         context.startService(request);
         main.removeCallbacks(timeout); main.postDelayed(timeout, 10000);
         if (overlay != null) overlay.invalidate();
@@ -328,8 +341,8 @@ final class OcrPickupController implements AutoCloseable {
             canvas.drawCircle(aimX, aimY, 4*density, paint);
             paint.setStrokeWidth(1.5f*density); paint.setColor(selected == null ? 0xff168af2 : 0xff00a777);
             canvas.drawCircle(aimX, aimY, 4*density, paint); paint.setStyle(Paint.Style.FILL);
-            if (!captureVisible) { canvas.restore(); return; }
-            String tip = waiting ? (released ? "正在精读所选文字…" : "识别中 · 继续按住并拖动") : selected == null ? "移动准星对准文字 · 松手取词" : mode.label+" · 可来回划选 · 松手查词";
+            if (!captureVisible || (waiting && released)) { canvas.restore(); return; }
+            String tip = waiting ? "识别中 · 继续按住并拖动" : selected == null ? "移动准星对准文字 · 松手取词" : mode.label+" · 可来回划选 · 松手查词";
             paint.setTextSize(12*density);
             float width = paint.measureText(tip) + 24*density;
             float left = Math.max(8*density, Math.min(aimX-width/2, getWidth()-width-8*density));

@@ -70,6 +70,8 @@ public class FloatingService extends Service {
     private WindowManager.LayoutParams searchPanelLp;
     private boolean searchPanelHosted;
     private String activeHostSession = "";
+    private String pendingSearchPageRequest = "";
+    private String pendingSearchPageHostSession = "";
     private boolean searchPrivateMode;
     private boolean searchKeyboardRequested;
     private boolean lookupPrivateMode;
@@ -502,7 +504,6 @@ public class FloatingService extends Service {
             @Override public void onPrivateModeChanged(boolean privacy) { searchPrivateMode = privacy; }
             @Override public void onLookup(String query, boolean privacy) {
                 searchPrivateMode = privacy;
-                rootSearchForLookup();
                 openQuickLookup(query);
             }
             @Override public void onEditingChanged(boolean editing) { setSearchFocusable(editing); }
@@ -712,7 +713,26 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
+        if (routeThirdPartyLookup(q)) return;
+        rootSearchForLookup();
         openLookupHost(q, true, LOOKUP_MODE_FLOAT);
+    }
+
+    private boolean routeThirdPartyLookup(String query) {
+        if (!LookupDestinationSettings.get(this).isThirdParty()) return false;
+        if (ThirdPartyLookup.launch(this, query)) {
+            removeSearchPanel();
+            removeLookupOverlay(true);
+            lookupOverlayHosted = false;
+            lookupPrivateMode = false;
+            notifyLookupHostFinish();
+            removeBubbleProxyIfUnused();
+        } else if (searchPanel == null && lookupOverlay == null) {
+            lookupOverlayHosted = false;
+            lookupPrivateMode = false;
+            notifyLookupHostFinish();
+        }
+        return true;
     }
 
     private void openLookupHost(String q, boolean returnToSearch, String mode) {
@@ -737,6 +757,7 @@ public class FloatingService extends Service {
     }
 
     private void openOcrLookupPopup(String q) {
+        if (routeThirdPartyLookup(q)) return;
         dispatchLookupOverlay(q, false);
     }
 
@@ -1748,6 +1769,8 @@ public class FloatingService extends Service {
     private void removeSearchPanel() { removeSearchPanel(true); }
 
     private void removeSearchPanel(boolean finishHost) {
+        pendingSearchPageRequest = "";
+        pendingSearchPageHostSession = "";
         boolean hosted = searchPanelHosted;
         clearSearchBackCallback();
 
@@ -1793,9 +1816,14 @@ public class FloatingService extends Service {
             // search surface for density/font changes, retaining its draft
             // and privacy state while leaving the real bubble mounted.
             boolean hosted = searchPanelHosted;
+            String pageRequest = pendingSearchPageRequest;
+            String pageHostSession = pendingSearchPageHostSession;
             removeSearchPanel(false);
             searchPanelHosted = hosted;
             showSearchPanel();
+            pendingSearchPageRequest = pageRequest;
+            pendingSearchPageHostSession = pageHostSession;
+            if (!pageRequest.isEmpty()) rootSearchForLookup();
         }
     }
 
@@ -1819,26 +1847,50 @@ public class FloatingService extends Service {
             if (searchPanel != null && searchPanelHosted) {
                 String query = privateMode ? "" : currentSearchQuery;
                 searchKeyboardRequested = false;
-                removeSearchPanel(false);
+                pendingSearchPageRequest = java.util.UUID.randomUUID().toString();
+                pendingSearchPageHostSession = activeHostSession;
+                rootSearchForLookup();
                 Intent open = new Intent(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE)
                         .setPackage(getPackageName())
                         .putExtra(EXTRA_HOST_SESSION, activeHostSession)
+                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, pendingSearchPageRequest)
                         .putExtra(FloatingSearchRoutes.EXTRA_PAGE, page)
                         .putExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY, query)
                         .putExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, true)
                         .putExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE, privateMode);
                 sendBroadcast(open);
             } else if (page != null) {
+                if (searchPanel != null) {
+                    pendingSearchPageRequest = java.util.UUID.randomUUID().toString();
+                    pendingSearchPageHostSession = "";
+                    rootSearchForLookup();
+                }
                 Intent open = FloatingSearchRoutes.pageIntent(this, page,
                         privateMode ? "" : currentSearchQuery,
                         searchPanel != null, false, privateMode, false)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, pendingSearchPageRequest);
                 try { startActivity(open); }
-                catch (RuntimeException error) { safeToast("无法打开设置页面"); }
+                catch (RuntimeException error) {
+                    pendingSearchPageRequest = "";
+                    pendingSearchPageHostSession = "";
+                    if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).resumeAfterLookup();
+                    safeToast("无法打开设置页面");
+                }
             }
         }
 
+        if (intent != null && FloatingSearchRoutes.ACTION_PAGE_READY.equals(intent.getAction())
+                && !pendingSearchPageRequest.isEmpty()
+                && pendingSearchPageRequest.equals(intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST))
+                && (pendingSearchPageHostSession.isEmpty()
+                    || pendingSearchPageHostSession.equals(intent.getStringExtra(EXTRA_HOST_SESSION)))) {
+            removeSearchPanel(false);
+        }
+
         if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())) {
+            pendingSearchPageRequest = "";
+            pendingSearchPageHostSession = "";
             // Search replaces the result surface, including its mask hit target
             // and Back callback. Never leave both modal overlays mounted.
             removeLookupOverlay(true);
@@ -1871,7 +1923,9 @@ public class FloatingService extends Service {
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 
             if (!q.isEmpty()) {
-                if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
+                if (routeThirdPartyLookup(q)) {
+                    // All initial lookup entry points share the selected destination.
+                } else if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
                     lookupPrivateMode = intent.getBooleanExtra(EXTRA_LOOKUP_PRIVATE, false);
                     lookupOverlayHosted = true;
                     showLookupOverlay(q, returnToSearch, mode);

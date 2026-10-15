@@ -8,6 +8,7 @@ import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -381,7 +382,8 @@ public class MainActivity extends Activity {
         MediaProjection projection; ImageReader reader; VirtualDisplay vd; int w,h,dpi;
         MultilingualOcrRecognizer ocrRecognizer;
         boolean previewInFlight;
-        long previewSession;
+        long previewSession, previewOperation;
+        Intent pendingPreview;
         OcrPreviewFrame previewFrame;
         OcrLanguageSettings.Language previewLanguage;
         OcrPickupMode previewMode=OcrPickupMode.WORD;
@@ -406,6 +408,7 @@ public class MainActivity extends Activity {
             if(ACT_OCR_CANCEL.equals(a)){
                 long canceled=in.getLongExtra("session",-1);
                 if(previewSession==canceled)previewSession=0;
+                if(pendingPreview!=null && pendingPreview.getLongExtra("session",-1)==canceled)pendingPreview=null;
                 if(previewFrame!=null && previewFrame.session==canceled){previewFrame.close();previewFrame=null;}
                 return START_NOT_STICKY;
             }
@@ -452,7 +455,8 @@ public class MainActivity extends Activity {
         void requireProjection(Intent request){
             // A static READY flag alone cannot prove an actual live projection.
             // Dispose the revoked session before launching the system grant UI.
-            READY=false;stopCapture();previewInFlight=false;
+            if(pendingPreview!=null)request=pendingPreview;
+            READY=false;stopCapture();
             if(request!=null && (ACT_OCR_PREVIEW.equals(request.getAction()) || ACT_OCR_REFINE.equals(request.getAction()))){
                 sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName())
                         .putExtra("session",request.getLongExtra("session",-1)).putExtra("permission_required",true));
@@ -490,8 +494,16 @@ public class MainActivity extends Activity {
         void captureOnce(Intent request){
             final boolean preview=request!=null && ACT_OCR_PREVIEW.equals(request.getAction());
             final long session=request==null?0:request.getLongExtra("session",0);
-            if(preview && previewInFlight){
-                sendBroadcast(new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("error","OCR 正在识别，请稍后再拖动"));return;
+            if(preview && (previewInFlight || pendingPreview!=null)){
+                // Keep at most one physical capture/model operation and one
+                // latest request. Retired SDK tasks still own their bitmap.
+                pendingPreview=new Intent(request);
+                if(session!=previewSession){
+                    previewSession=0;
+                    if(previewFrame!=null){previewFrame.close();previewFrame=null;}
+                }
+                if(!previewInFlight)captureMain.post(this::runPendingPreview);
+                return;
             }
             if(!captureAlive()){requireProjection(request);return;}
             final boolean region=request!=null && ACT_OCR_REGION.equals(request.getAction());
@@ -510,7 +522,7 @@ public class MainActivity extends Activity {
             }catch(RuntimeException error){requireProjection(request);return;}
 
             if(preview){
-                previewInFlight=true;previewSession=session;
+                previewInFlight=true;previewSession=previewOperation=session;
                 previewMode=OcrPickupMode.fromValue(request.getStringExtra("pickup_mode"));
                 previewLanguage=previewMode==OcrPickupMode.ENGLISH?OcrLanguageSettings.Language.ENGLISH
                         :previewMode==OcrPickupMode.JAPANESE?OcrLanguageSettings.Language.JAPANESE
@@ -519,14 +531,14 @@ public class MainActivity extends Activity {
             captureMain.postDelayed(new Runnable(){
                 int attempts;
                 @Override public void run(){
-                if(preview && session!=previewSession){if(previewSession==0)previewInFlight=false;return;}
-                if(!captureAlive()){requireProjection(request);return;}
+                if(preview && session!=previewSession){finishPreviewOperation(session);return;}
+                if(!captureAlive()){if(preview)finishPreviewOperation(session);requireProjection(request);return;}
                 final Image image;
                 try{image=reader.acquireLatestImage();}
-                catch(RuntimeException error){requireProjection(request);return;}
+                catch(RuntimeException error){if(preview)finishPreviewOperation(session);requireProjection(request);return;}
                 if(image==null){
                     if(++attempts<8){captureMain.postDelayed(this,80);return;}
-                    requireProjection(request);return;
+                    if(preview)finishPreviewOperation(session);requireProjection(request);return;
                 }
                 Bitmap bmp=null;
                 try{
@@ -562,6 +574,15 @@ public class MainActivity extends Activity {
                 }
             },preview?100:280);
         }
+        void runPendingPreview(){
+            if(previewInFlight || pendingPreview==null)return;
+            Intent next=pendingPreview;pendingPreview=null;captureOnce(next);
+        }
+        void finishPreviewOperation(long session){
+            if(!previewInFlight || session!=previewOperation)return;
+            previewInFlight=false;previewOperation=0;
+            if(pendingPreview!=null)captureMain.post(this::runPendingPreview);
+        }
         void recognizePreview(Bitmap bitmap,long session){
             if(ocrRecognizer==null){bitmap.recycle();sendPreview(session,null,"OCR 识别器尚未就绪");return;}
             if(previewFrame!=null)previewFrame.close();
@@ -569,9 +590,10 @@ public class MainActivity extends Activity {
             frame.borrow(session);
             // Keep the preview and its local refinement on the same selected model.
             final OcrPickupMode requestMode=previewMode;
-            ocrRecognizer.recognizeRegions(bitmap,previewLanguage,requestMode==OcrPickupMode.SENTENCE,new MultilingualOcrRecognizer.RegionsCallback(){
+            final OcrLanguageSettings.Language requestLanguage=previewLanguage;
+            ocrRecognizer.recognizeRegions(bitmap,requestLanguage,requestMode==OcrPickupMode.SENTENCE,new MultilingualOcrRecognizer.RegionsCallback(){
                 public void onSuccess(java.util.List<MultilingualOcrRecognizer.Region> regions){
-                    if(previewLanguage==OcrLanguageSettings.Language.ENGLISH){
+                    if(requestLanguage==OcrLanguageSettings.Language.ENGLISH){
                         java.util.List<MultilingualOcrRecognizer.Region> cleaned=new java.util.ArrayList<>();
                         for(MultilingualOcrRecognizer.Region region:regions){
                             MultilingualOcrRecognizer.Region word=region.clean(OcrPickupMode.ENGLISH);
@@ -602,28 +624,38 @@ public class MainActivity extends Activity {
                 if(bitmap!=null)frame.release();
                 sendRefined(session,null,"屏幕共享或截图已失效，请重新拖动取词");return;
             }
-            previewInFlight=true;
+            previewInFlight=true;previewOperation=session;
             String seedText=request.getStringExtra("seed");
             MultilingualOcrRecognizer.Region seed=seedText==null?null:new MultilingualOcrRecognizer.Region(seedText,target);
-            if(seed!=null){seed.quality=request.getFloatExtra("quality",0);seed.boundedRange=request.getBooleanExtra("bounded_range",false);}
-            ocrRecognizer.recognizeSelection(bitmap,target,seed,request.getFloatExtra("aim_x",0),request.getFloatExtra("aim_y",0),request.getFloatExtra("tolerance",0),previewLanguage,previewMode==OcrPickupMode.SENTENCE,new MultilingualOcrRecognizer.Callback(){
+            if(seed!=null){
+                seed.quality=request.getFloatExtra("quality",0);seed.boundedRange=request.getBooleanExtra("bounded_range",false);
+                int[] selectionBoxes=request.getIntArrayExtra("selection_boxes");
+                if(selectionBoxes!=null && selectionBoxes.length%4==0 && selectionBoxes.length<=64*4)
+                    for(int i=0;i<selectionBoxes.length;i+=4){
+                        Rect bounds=new Rect(selectionBoxes[i],selectionBoxes[i+1],selectionBoxes[i+2],selectionBoxes[i+3]);
+                        if(!bounds.isEmpty() && target.contains(bounds))seed.selectedBounds.add(bounds);
+                    }
+            }
+            final OcrPickupMode requestMode=previewMode;
+            final OcrLanguageSettings.Language requestLanguage=previewLanguage;
+            ocrRecognizer.recognizeSelection(bitmap,target,seed,request.getFloatExtra("aim_x",0),request.getFloatExtra("aim_y",0),request.getFloatExtra("tolerance",0),requestLanguage,requestMode==OcrPickupMode.SENTENCE,new MultilingualOcrRecognizer.Callback(){
                 public void onSuccess(String text){try{
-                    String cleaned=previewLanguage==OcrLanguageSettings.Language.ENGLISH?OcrPickupMode.ENGLISH.clean(text):previewMode.clean(text);
+                    String cleaned=requestLanguage==OcrLanguageSettings.Language.ENGLISH?OcrPickupMode.ENGLISH.clean(text):requestMode.clean(text);
                     sendRefined(session,cleaned,cleaned.isEmpty()?"准星附近没有拉丁字母单词，请重新对准":null);
                 }finally{frame.close();frame.release();}}
                 public void onFailure(Exception error){try{sendRefined(session,null,error.getMessage());}finally{frame.close();frame.release();}}
             });
         }
         void sendRefined(long session,String text,String error){
-            if(session!=previewSession){if(previewSession==0)previewInFlight=false;return;}
-            previewInFlight=false;
+            finishPreviewOperation(session);
+            if(session!=previewSession)return;
             Intent out=new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session).putExtra("refined",true);
             if(text!=null)out.putExtra("text",text);if(error!=null)out.putExtra("error",error);
             sendBroadcast(out);
         }
         void sendPreview(long session,java.util.List<MultilingualOcrRecognizer.Region> regions,String error){
-            if(session!=previewSession){if(previewSession==0)previewInFlight=false;return;}
-            previewInFlight=false;
+            finishPreviewOperation(session);
+            if(session!=previewSession)return;
             Intent out=new Intent(ACTION_PREVIEW).setPackage(getPackageName()).putExtra("session",session);
             if(regions!=null){
                 int chars=0;for(MultilingualOcrRecognizer.Region region:regions)chars+=region.text.length();
@@ -727,7 +759,7 @@ public class MainActivity extends Activity {
         }
         void stopCapture(){
             boolean wasReady=READY;
-            previewSession=0;previewInFlight=false;
+            previewSession=0;pendingPreview=null;
             if(previewFrame!=null){previewFrame.close();previewFrame=null;}
             VirtualDisplay v=vd; vd=null;
             ImageReader r=reader; reader=null;

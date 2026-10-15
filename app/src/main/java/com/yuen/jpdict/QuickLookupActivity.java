@@ -91,6 +91,12 @@ public class QuickLookupActivity extends Activity {
 
         String incoming = readQuery(getIntent());
         query = incoming == null ? "" : incoming.trim();
+        if (!query.isEmpty() && LookupDestinationSettings.get(this).isThirdParty()) {
+            ThirdPartyLookup.launch(this, query);
+            finish();
+            overridePendingTransition(0, 0);
+            return;
+        }
         saveHistory(query);
 
         configureWindow();

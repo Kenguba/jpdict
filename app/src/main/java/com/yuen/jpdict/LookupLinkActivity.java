@@ -72,9 +72,12 @@ public final class LookupLinkActivity extends Activity {
                         intent.getBooleanExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, false),
                         false,
                         privateMode,
-                        true);
+                        true)
+                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST,
+                                intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST))
+                        .putExtra(FloatingService.EXTRA_HOST_SESSION, hostSession);
                 startActivity(page);
-                overridePendingTransition(R.anim.page_enter, R.anim.page_hold);
+                overridePendingTransition(0, 0);
             }
         }
     };

@@ -4,6 +4,7 @@ import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.content.Context;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.google.android.gms.tasks.Task;
@@ -37,6 +38,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         final String text;
         final Rect bounds;
         final List<Symbol> symbols = new ArrayList<>();
+        final List<Rect> selectedBounds = new ArrayList<>();
         float quality;
         boolean boundedRange;
         Region(String text, Rect bounds) { this.text = text; this.bounds = new Rect(bounds); }
@@ -46,6 +48,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             for (int i = first; i <= last; i++) selected.union(symbols.get(i).bounds);
             Region result = new Region(text.substring(begin.start, end.end), selected);
             result.quality = quality; result.boundedRange = true;
+            result.selectedBounds.add(new Rect(selected));
             return result;
         }
         Region clean(OcrPickupMode mode) {
@@ -142,12 +145,18 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         catch (RuntimeException error) { completeSelection(found, seed, x, y, tolerance, callback, error); return; }
         process(prepared.image, language, sentences, null, new RegionsCallback() {
             public void onSuccess(List<Region> regions) {
+                List<Region> mappedRegions = new ArrayList<>();
                 for (Region region : regions) {
                     Region mapped = new Region(region.text, prepared.toScreen(region.bounds));
                     for (Symbol symbol : region.symbols)
                         mapped.symbols.add(new Symbol(symbol.start, symbol.end, prepared.toScreen(symbol.bounds)));
-                    mapped.quality = region.quality; merge(found, mapped);
+                    mapped.quality = region.quality; mappedRegions.add(mapped);
                 }
+                // Assemble this pass before merging variants. A swept phrase
+                // may span several model elements, none of which alone covers
+                // enough of the seed to qualify as a refinement.
+                Region candidate = selectionResult(mappedRegions, seed, x, y, tolerance);
+                if (candidate != null && candidate != seed) merge(found, candidate);
                 next(null);
             }
             public void onFailure(Exception error) { next(error); }
@@ -159,7 +168,10 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         });
     }
     private static void completeSelection(List<Region> found, Region seed, float x, float y, float tolerance, Callback callback, Exception error) {
-        Region best = selectionResult(found, seed, x, y, tolerance);
+        // Every variant added to found already passed selectionResult against
+        // the original mask. Do not crop a validated multi-line phrase again.
+        Region best = regionAt(found, x, y, tolerance);
+        if (best == null) best = seed;
         if (best != null) callback.onSuccess(best.text);
         else callback.onFailure(error != null ? error : new IllegalStateException("准星附近没有识别到文字"));
     }
@@ -167,25 +179,51 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         // A user-defined character range must not expand to a whole model element
         // during refinement. Preserve it when the model cannot supply glyphs.
         if (seed != null && seed.boundedRange) {
+            if (seed.selectedBounds.isEmpty() && seed.text.indexOf('\n')>=0) return seed;
+            List<Rect> mask = seed.selectedBounds.isEmpty() ? java.util.Collections.singletonList(seed.bounds) : seed.selectedBounds;
             List<Region> clipped = new ArrayList<>();
+            OcrSweepSelection selection = new OcrSweepSelection();
             for (Region region : found) {
-                if (region == seed) { clipped.add(seed); continue; }
-                int first = -1, last = -1;
-                for (int i = 0; i < region.symbols.size(); i++) {
-                    Rect b = region.symbols.get(i).bounds;
-                    if (seed.bounds.contains(b.centerX(), b.centerY())) {
-                        if (first < 0) first = i;
-                        last = i;
+                if (region == seed) continue;
+                for (Rect range : mask) {
+                    int first = -1, last = -1;
+                    for (int i = 0; i < region.symbols.size(); i++) {
+                        Rect b = region.symbols.get(i).bounds;
+                        if (range.contains(b.centerX(), b.centerY())) {
+                            if (first < 0) first = i;
+                            last = i;
+                        }
                     }
+                    Region piece = null;
+                    if (first >= 0) piece = region.slice(first, last);
+                    else if ((range.contains(region.bounds) || preservesSelection(range, region.bounds))
+                            && region.bounds.width() <= range.width() * 1.15f
+                            && region.bounds.height() <= range.height() * 1.15f) piece = region;
+                    if (piece != null) merge(clipped, piece);
                 }
-                if (first >= 0) clipped.add(region.slice(first, last));
-                else if (preservesSelection(seed.bounds, region.bounds)
-                        && region.bounds.width() <= seed.bounds.width() * 1.15f
-                        && region.bounds.height() <= seed.bounds.height() * 1.15f) clipped.add(region);
+            }
+            // Different scripts may segment the same glyphs as one whole
+            // element or several parts. Prefer the smaller, precise elements
+            // and never concatenate overlapping alternatives as extra words.
+            Collections.sort(clipped, (first, second) -> {
+                int area = Long.compare((long)first.bounds.width()*first.bounds.height(),
+                        (long)second.bounds.width()*second.bounds.height());
+                return area!=0 ? area : Float.compare(second.quality,first.quality);
+            });
+            List<Region> distinct = new ArrayList<>();
+            for (Region region : clipped) {
+                boolean overlap = false;
+                for (Region accepted : distinct) if (Rect.intersects(region.bounds,accepted.bounds)) { overlap=true;break; }
+                if (!overlap) { distinct.add(region);selection.touch(region,OcrPickupMode.WORD); }
+            }
+            Region combined = selection.combined();
+            if (combined != null && selection.picked.size() > 1) {
+                clipped.clear(); clipped.add(combined);
             }
             found = clipped;
         }
         Region best = regionAt(found, x, y, tolerance);
+        if (best == null) return seed;
         if (seed != null && best != null && !best.text.equals(seed.text)
                 && (!preservesSelection(seed.bounds, best.bounds)
                 || (seed.boundedRange && !preservesRangeEdges(seed.bounds, best.bounds))

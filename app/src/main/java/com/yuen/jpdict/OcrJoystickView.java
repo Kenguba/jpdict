@@ -8,15 +8,24 @@ import android.view.View;
 final class OcrJoystickView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float density, x, y, hole;
+    private final LookupDestinationSettings destination;
+    private final LookupDestinationSettings.Listener destinationChanged = this::invalidate;
     private int direction = -1;
     private float knobX, knobY;
     OcrJoystickView(Context context, Rect bubble) {
         super(context); density = getResources().getDisplayMetrics().density;
+        destination = LookupDestinationSettings.get(context);
         x = bubble.exactCenterX(); y = bubble.exactCenterY(); hole = bubble.width()/2f + 5*density;
         knobX=x;knobY=y;
         setAlpha(0); animate().alpha(1).setDuration(150).start();
     }
     void select(int next, Rect knob) { direction = next; knobX=knob.exactCenterX();knobY=knob.exactCenterY();invalidate(); }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow(); destination.observe(destinationChanged); invalidate();
+    }
+    @Override protected void onDetachedFromWindow() {
+        destination.removeObserver(destinationChanged); super.onDetachedFromWindow();
+    }
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         int[] location = new int[2]; getLocationOnScreen(location);
@@ -27,13 +36,13 @@ final class OcrJoystickView extends View {
         paint.setColor(0xedffffff); canvas.drawPath(ring, paint);
         canvas.save(); canvas.clipPath(ring);
         if (direction >= 0) {
-            paint.setColor(direction == 3 ? 0x22e34a56 : 0x29168af2);
+            paint.setColor(0x29168af2);
             canvas.drawArc(x-radius, y-radius, x+radius, y+radius, direction*90-135, 90, true, paint);
         }
         canvas.restore();
         paint.setColor(0x30168af2); paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(density);
         canvas.drawCircle(x, y, radius, paint); paint.setStyle(Paint.Style.FILL);
-        String[] labels = {"句子 OCR", "日语 OCR", "英语 OCR", "取消"};
+        String[] labels = {"句子 OCR", "日语 OCR", "英语 OCR", destination.isThirdParty() ? "系统" : "第三方"};
         paint.setTextAlign(Paint.Align.CENTER); paint.setTextSize(12*density);
         for (int index = 0; index < 4; index++) {
             float angle = (float)Math.toRadians(index*90-90), r = hole+(radius-hole)*0.55f;
@@ -41,7 +50,7 @@ final class OcrJoystickView extends View {
             float half = paint.measureText(labels[index])/2;
             tx = Math.max(location[0]+half+8*density, Math.min(tx, location[0]+getWidth()-half-8*density));
             ty = Math.max(location[1]+24*density, Math.min(ty, location[1]+getHeight()-24*density));
-            paint.setColor(direction == index ? (index == 3 ? 0xffc93648 : 0xff0878d3) : 0xff566273);
+            paint.setColor(direction == index ? 0xff0878d3 : 0xff566273);
             paint.setTypeface(direction == index ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
             canvas.drawText(labels[index], tx, ty-(paint.ascent()+paint.descent())/2, paint);
         }
