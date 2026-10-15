@@ -9,9 +9,6 @@ import java.util.List;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
-import com.google.android.gms.common.moduleinstall.ModuleInstall;
-import com.google.android.gms.common.moduleinstall.ModuleInstallRequest;
-import com.google.mlkit.common.MlKitException;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
@@ -23,7 +20,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 /**
  * Reusable OCR-only facade for Latin, Chinese, Japanese and Korean scripts.
- * Recognition models are provided by Google Play services to keep APK size low.
+ * Recognition models are bundled in the APK so recognition works without Google Play services.
  */
 final class MultilingualOcrRecognizer implements AutoCloseable {
     interface Callback {
@@ -105,12 +102,8 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         this.latin = latin; this.chinese = chinese; this.japanese = japanese; this.korean = korean;
         languageSettings = settings;
     }
-    void prepareModels(Context context) {
+    void initialize(Context context) {
         languageSettings = OcrLanguageSettings.get(context);
-        // An accepted request is not proof of installation; process() still
-        // reports UNAVAILABLE until Play services finishes each model download.
-        ModuleInstall.getClient(context).installModules(ModuleInstallRequest.newBuilder()
-                .addApi(latin).addApi(chinese).addApi(japanese).addApi(korean).build());
     }
 
     void recognize(Bitmap bitmap, Callback callback) {
@@ -336,8 +329,6 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         }
     }
     private static void fail(Callback text, RegionsCallback regions, Exception error) {
-        if (error instanceof MlKitException && ((MlKitException)error).getErrorCode() == MlKitException.UNAVAILABLE)
-            error = new IllegalStateException("OCR 识别模型尚未就绪，请保持联网让 Google Play 服务完成所选语言模型下载后重试", error);
         if (regions != null) regions.onFailure(error); else text.onFailure(error);
     }
     private static void addRegions(List<Region> regions, Task<Text> task, Script script, boolean sentences) {

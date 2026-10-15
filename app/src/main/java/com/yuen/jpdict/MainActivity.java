@@ -390,7 +390,7 @@ public class MainActivity extends Activity {
         @Override public void onCreate(){
             super.onCreate();
             ocrRecognizer=new MultilingualOcrRecognizer();
-            ocrRecognizer.prepareModels(this);
+            ocrRecognizer.initialize(this);
             ensureChannel();
         }
         @Override public int onStartCommand(Intent in,int flags,int id){
@@ -526,7 +526,10 @@ public class MainActivity extends Activity {
                 if(!captureAlive()){if(preview)finishPreviewOperation(session);requireProjection(request);return;}
                 final Image image;
                 try{image=captureFrames.latest();}
-                catch(RuntimeException error){if(preview)finishPreviewOperation(session);requireProjection(request);return;}
+                catch(RuntimeException error){
+                    if(++attempts<25){captureMain.postDelayed(this,80);return;}
+                    captureFailed(preview,region,session,"屏幕帧暂时不可用，请稍后重试");return;
+                }
                 if(image==null){
                     if(++attempts<25){captureMain.postDelayed(this,80);return;}
                     captureFailed(preview,region,session,"尚未收到屏幕画面，请稍后重试");return;

@@ -177,7 +177,7 @@ jobs:
       - name: Enforce APK size budget
         shell: bash
         run: |
-          MAX_BYTES=$((5 * 1024 * 1024))
+          MAX_BYTES=$((30 * 1024 * 1024))
           FAILED=0
           shopt -s nullglob
           APKS=(dist/*.apk)
@@ -189,11 +189,42 @@ jobs:
             SIZE=$(stat -c '%s' "$apk")
             echo "$(basename "$apk"): $SIZE bytes / $MAX_BYTES bytes"
             if (( SIZE > MAX_BYTES )); then
-              echo "::error file=$apk::APK exceeds the 5 MB hard limit."
+              echo "::error file=$apk::APK exceeds the 30 MiB hard limit."
               FAILED=1
             fi
           done
           exit "$FAILED"
+
+      - name: Verify all offline OCR script models are packaged
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob
+          import sys
+          import zipfile
+
+          required = (
+              "Latn_ctc_cpu.binarypb",
+              "Hani_ctc_cpu.binarypb",
+              "Jpan_ctc_cpu.binarypb",
+              "Kore_ctc_cpu.binarypb",
+          )
+          apks = sorted(glob.glob("dist/*.apk"))
+          if not apks:
+              sys.exit("No APK files were prepared for OCR model verification.")
+          failed = False
+          for apk in apks:
+              with zipfile.ZipFile(apk) as package:
+                  names = package.namelist()
+              missing = [model for model in required if not any(name.endswith(model) for name in names)]
+              if missing:
+                  print(f"::error file={apk}::Missing bundled OCR script models: {', '.join(missing)}")
+                  failed = True
+              else:
+                  print(f"{apk}: Latin, Chinese, Japanese, and Korean models are bundled.")
+          if failed:
+              sys.exit(1)
+          PY
 
       - name: Verify release identity and signatures
         if: env.HAS_SIGNING == 'true'
