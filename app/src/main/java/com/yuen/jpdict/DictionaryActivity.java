@@ -301,6 +301,12 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         runOperation(work, null);
     }
     private void runOperation(DictionaryRepository.Work work, DictionaryOperation.Continuation after) {
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                && !getPreferences(MODE_PRIVATE).getBoolean("operation_notification_requested", false)) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("operation_notification_requested", true).apply();
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 205);
+        }
         java.lang.ref.WeakReference<DictionaryActivity> activity = new java.lang.ref.WeakReference<>(this);
         operations.start(this, repository, work, error -> {
             DictionaryActivity page = activity.get();

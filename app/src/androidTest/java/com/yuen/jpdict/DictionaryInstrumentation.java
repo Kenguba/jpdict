@@ -20,6 +20,7 @@ public final class DictionaryInstrumentation extends Instrumentation {
     private String htmlEditingMode;
     private boolean composerMode;
     private boolean operationMode;
+    private boolean remoteMode;
     private void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
     private static void write(File file, byte[] bytes) throws IOException {
         try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
@@ -30,11 +31,16 @@ public final class DictionaryInstrumentation extends Instrumentation {
         htmlEditingMode = arguments == null ? null : arguments.getString("html_editing");
         composerMode = arguments != null && arguments.containsKey("composer");
         operationMode = arguments != null && arguments.containsKey("dictionary_operation");
+        remoteMode = arguments != null && arguments.containsKey("dictionary_remote");
         start();
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (remoteMode) {
+                result.putString("stream", DictionaryRemoteValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
             if (operationMode) {
                 result.putString("stream", DictionaryOperationValidation.run(this));
                 finish(android.app.Activity.RESULT_OK, result); return;

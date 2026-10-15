@@ -61,10 +61,42 @@ final class OcrValidation {
         sweep.touch(first, OcrPickupMode.ENGLISH);
         check(sweep.picked.size() == 2, "Repeated points do not duplicate existing selection");
         sweep.clear(); sweep.touch(first, OcrPickupMode.ENGLISH); sweep.touch(second, OcrPickupMode.ENGLISH);
-        check(sweep.picked.size() == 1 && "second".equals(sweep.combined().text), "English-word mode selects only the pointed word");
+        check(sweep.picked.size() == 2 && "first second".equals(sweep.combined().text), "English supports user-selected phrases as well as single words");
         MultilingualOcrRecognizer.Region distant = new MultilingualOcrRecognizer.Region("distant", new Rect(700, 500, 760, 520));
         sweep.touch(distant, OcrPickupMode.WORD);
         check(sweep.picked.size() == 1 && "distant".equals(sweep.combined().text), "Moving to a distant region clears the old sweep");
+        MultilingualOcrRecognizer.Region mixed = symbols("这是father父亲", 100, 40);
+        List<MultilingualOcrRecognizer.Region> regions = Collections.singletonList(mixed);
+        sweep.clear(); sweep.move(regions, 125, 50, 0);
+        check(mixed.text.equals(sweep.combined().text), "Dwell alone keeps the complete model element");
+        sweep.move(regions, 175, 50, 0); sweep.move(regions, 125, 50, 0);
+        check("father".equals(sweep.combined().text), "One f-to-r-to-f sweep selects just father from mixed Chinese and Latin");
+        check(sweep.combined().boundedRange && sweep.bounds().equals(new Rect(120,40,180,60)), "Substring selection uses actual symbol extrema");
+        MultilingualOcrRecognizer.Region nested = symbols("father",120,40);
+        regions=Arrays.asList(mixed,nested);
+        sweep.clear();sweep.move(regions,125,50,0);sweep.move(regions,175,50,0);sweep.move(regions,125,50,0);
+        check("father".equals(sweep.combined().text),"Overlapping mixed-script and Latin model regions cannot duplicate the swept word");
+        mixed = symbols("あいうえお", 100, 40); regions = Collections.singletonList(mixed);
+        sweep.clear(); sweep.move(regions,115,50,0); sweep.move(regions,135,50,0); sweep.move(regions,115,50,0);
+        check("いうえ".equals(sweep.combined().text), "Return sweeps can select arbitrary Japanese ranges");
+        MultilingualOcrRecognizer.Region latin = symbols("hello",100,40), next = symbols("world",155,40);
+        regions = Arrays.asList(latin,next);
+        sweep.clear(); sweep.move(regions,105,50,0); sweep.move(regions,200,50,0); sweep.move(regions,105,50,0);
+        check("hello world".equals(sweep.combined().text), "A coalesced return sweep fills all intervening glyphs and adjacent words");
+        mixed = symbols("中文father",100,40);
+        MultilingualOcrRecognizer.Region cleaned = mixed.clean(OcrPickupMode.ENGLISH);
+        check("father".equals(cleaned.text) && cleaned.symbols.size()==6 && cleaned.symbols.get(0).start==0,
+                "English filtering preserves exact glyph locations and reindexes substring offsets");
+        MultilingualOcrRecognizer.Region seed = new MultilingualOcrRecognizer.Region("abcdefg",new Rect(0,0,70,20));
+        seed.boundedRange=true;
+        MultilingualOcrRecognizer.Region shortened = new MultilingualOcrRecognizer.Region("abcdef",new Rect(0,0,60,20));shortened.quality=100;
+        check(MultilingualOcrRecognizer.selectionResult(Arrays.asList(seed,shortened),seed,5,10,0)==seed,
+                "Higher-confidence 6-of-7 refinement cannot shorten a user-defined range despite 85 percent overlap");
+    }
+    private static MultilingualOcrRecognizer.Region symbols(String text, int left, int top) {
+        MultilingualOcrRecognizer.Region region = new MultilingualOcrRecognizer.Region(text,new Rect(left,top,left+text.length()*10,top+20));
+        for(int i=0;i<text.length();i++)region.symbols.add(new MultilingualOcrRecognizer.Symbol(i,i+1,new Rect(left+i*10,top,left+(i+1)*10,top+20)));
+        return region;
     }
     private void gestures(Instrumentation instrumentation) throws Exception {
         Context app = instrumentation.getTargetContext();
@@ -95,6 +127,11 @@ final class OcrValidation {
             instrumentation.runOnMainSync(() -> { owner.set(new OcrPickupController(capture, host)); listener.set(owner.get().listener()); view.set(new View(app)); });
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
+            instrumentation.runOnMainSync(() -> {
+                try { java.lang.reflect.Field field=OcrPickupController.class.getDeclaredField("overlay");field.setAccessible(true);
+                    check(field.get(owner.get()) != null && request.get()==null, "Pointer is mounted as soon as dragging starts, before dwell or screenshot");
+                } catch(ReflectiveOperationException error){throw new AssertionError(error);}
+            });
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 520, 720);
             instrumentation.runOnMainSync(() -> {
                 check(moves[0] == 1 && saves[0] == 1 && position.left == 500, "Quick ordinary drag moves and saves the button");
@@ -136,11 +173,11 @@ final class OcrValidation {
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 421, 721);
             instrumentation.runOnMainSync(() -> check(request.get() == null && moves[0] == 0, "Finger jitter cannot move the bubble or start OCR"));
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
-            Thread.sleep(150);
-            instrumentation.runOnMainSync(() -> check(request.get() == null, "Moving the button cannot start OCR before 300ms dwell"));
+            Thread.sleep(50);
+            instrumentation.runOnMainSync(() -> check(request.get() == null, "Moving the button cannot start OCR before 150ms dwell"));
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 560, 720);
-            Thread.sleep(200);
-            instrumentation.runOnMainSync(() -> check(request.get() == null, "Travel to another pointer area resets the 300ms delay"));
+            Thread.sleep(50);
+            instrumentation.runOnMainSync(() -> check(request.get() == null, "Travel to another pointer area resets the 150ms delay"));
             Thread.sleep(130);
             instrumentation.runOnMainSync(() -> check(request.get() != null && MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW.equals(request.get().getAction())
                     && "word".equals(request.get().getStringExtra("pickup_mode")), "Normal dwell uses the composer language rather than inheriting a previous joystick mode"));
@@ -170,6 +207,8 @@ final class OcrValidation {
                 touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_MOVE,420+directions[index][0],720+directions[index][1]);
                 touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_UP,420+directions[index][0],720+directions[index][1]);
                 check(request.get()!=null && modes[index].equals(request.get().getStringExtra("pickup_mode")),"Joystick release dispatches "+modes[index]+" as a single-session mode");
+                OcrLanguageSettings.Language[] expected={OcrLanguageSettings.Language.MIXED,OcrLanguageSettings.Language.JAPANESE,OcrLanguageSettings.Language.ENGLISH};
+                check(OcrLanguageSettings.get(app).language()==expected[index],"Joystick selection also commits the shared cached language");
                 instrumentation.runOnMainSync(owner.get()::cancel);
             }
             request.set(null);
@@ -193,6 +232,26 @@ final class OcrValidation {
                     .putExtra("session",revokedSession).putExtra("refined",true).putExtra("text","revoked"));
             Thread.sleep(100);
             check("日本語".equals(query.get()),"Revoked projection updates never reach lookup after reauthorization");
+            instrumentation.runOnMainSync(() -> {owner.get().cancel();position.set(rendered);request.set(null);query.set(null);});
+            touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_DOWN,420,720);
+            touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_MOVE,520,720);
+            touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_MOVE,570,720);
+            touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_MOVE,520,720);
+            Thread.sleep(190);
+            long sweepSession=request.get().getLongExtra("session",-1);
+            int[] owners=new int[10],offsets=new int[20],glyphBoxes=new int[40];
+            for(int i=0;i<10;i++){
+                offsets[i*2]=i;offsets[i*2+1]=i+1;
+                glyphBoxes[i*4]=497+i*10;glyphBoxes[i*4+1]=(int)y-10;glyphBoxes[i*4+2]=507+i*10;glyphBoxes[i*4+3]=(int)y+10;
+            }
+            app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",sweepSession)
+                    .putExtra("words",new String[]{"这是father父亲"}).putExtra("boxes",new int[]{497,(int)y-10,597,(int)y+10})
+                    .putExtra("symbol_owners",owners).putExtra("symbol_offsets",offsets).putExtra("symbol_boxes",glyphBoxes));
+            Thread.sleep(150);
+            touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_UP,520,720);
+            check(MainActivity.ScreenCaptureService.ACT_OCR_REFINE.equals(request.get().getAction()) && "father".equals(request.get().getStringExtra("seed")),
+                    "A real f-to-r-to-f gesture made while recognition is pending is replayed into the exact mixed-text range");
+            check(request.get().getBooleanExtra("bounded_range",false),"Refinement carries the explicit range so it cannot expand back to the whole phrase");
             instrumentation.runOnMainSync(() -> {
                 MainActivity.ScreenCaptureService detached = new MainActivity.ScreenCaptureService();
                 check(!detached.captureAlive(), "A stale READY flag without actual projection, reader and virtual display cannot authorize capture");

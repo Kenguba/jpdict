@@ -91,6 +91,7 @@ final class FloatingSearchView extends FrameLayout {
     private final LinearLayout modelButton;
     private final TextView languageLabel;
     private final OcrLanguageSettings ocrLanguage;
+    private final OcrLanguageSettings.Listener languageChanged = this::refreshLanguage;
     private final LinearLayout[] languageRows = new LinearLayout[OcrLanguageSettings.Language.values().length];
     private OcrLanguageSettings.Language hoveredLanguage;
     private boolean languageDrag;
@@ -471,8 +472,15 @@ final class FloatingSearchView extends FrameLayout {
         if (copied != null) draftChips.replaceFromClipboard(copied);
     }
 
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        ocrLanguage.observe(languageChanged);
+        refreshLanguage();
+    }
+
     @Override protected void onDetachedFromWindow() {
         stopClipboard();
+        ocrLanguage.removeObserver(languageChanged);
         super.onDetachedFromWindow();
     }
 
@@ -836,16 +844,26 @@ final class FloatingSearchView extends FrameLayout {
     private void updateLanguageHighlight() {
         for (OcrLanguageSettings.Language language : OcrLanguageSettings.Language.values()) {
             View row = languageRows[language.ordinal()];
-            if (row != null) row.setBackground(ripple(language == hoveredLanguage
-                    || (hoveredLanguage == null && language == ocrLanguage.language()) ? 0xffe9e9e9 : PAPER, 12));
+            if (row != null) {
+                row.setBackground(ripple(language == hoveredLanguage
+                        || (hoveredLanguage == null && language == ocrLanguage.language()) ? 0xffe9e9e9 : PAPER, 12));
+                ((LinearLayout)row).getChildAt(1).setVisibility(language == ocrLanguage.language() ? VISIBLE : INVISIBLE);
+                row.setContentDescription("OCR " + language.label + (language == ocrLanguage.language() ? "，当前选中" : ""));
+            }
         }
     }
 
     private void selectLanguage(OcrLanguageSettings.Language language) {
         ocrLanguage.setLanguage(language);
+        if (!isAttachedToWindow()) refreshLanguage();
+        closeMenu();
+    }
+
+    private void refreshLanguage() {
+        if (disposed) return;
         applyKeyboardLanguage(true);
         updateLanguageButton();
-        closeMenu();
+        updateLanguageHighlight();
     }
 
     private void applyKeyboardLanguage(boolean restart) {
@@ -1167,6 +1185,7 @@ final class FloatingSearchView extends FrameLayout {
 
     void dispose() {
         stopClipboard();
+        ocrLanguage.removeObserver(languageChanged);
         suggestions.close();
         explosionController.close();
         removeCallbacks(commitLegacyIme);

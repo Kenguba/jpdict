@@ -534,6 +534,7 @@ public class FloatingService extends Service {
             root.requestFocus();
             if (!searchPanelHosted) registerSearchBackCallback();
             bringBubbleToFront();
+            DictionaryOperation.overlayAdded(this);
             if (searchKeyboardRequested) {
                 searchKeyboardRequested = false;
                 root.post(() -> {
@@ -1264,6 +1265,7 @@ public class FloatingService extends Service {
             // Keep the original bubble mounted continuously. A proxy is added
             // above the result layer instead of removing/re-adding the bubble.
             ensureBubbleProxyOnTop();
+            DictionaryOperation.overlayAdded(this);
         } catch (Throwable e) {
             lookupOverlay = null;
             lookupOverlayLp = null;
@@ -1698,6 +1700,7 @@ public class FloatingService extends Service {
 
         resultCard = card;
         wm.addView(resultCard, lp);
+        DictionaryOperation.overlayAdded(this);
 
         card.setOnClickListener(v -> removeResultCard());
 

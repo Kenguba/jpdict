@@ -1,9 +1,9 @@
 package com.yuen.jpdict;
 
-/** Explicit pickup intent; it never changes the composer's saved language. */
+/** Explicit pickup intent; the joystick also commits its language to shared settings. */
 enum OcrPickupMode {
     WORD("word", "取词"), SENTENCE("sentence", "句子 OCR"),
-    JAPANESE("japanese", "日语 OCR"), ENGLISH("english", "英语单词");
+    JAPANESE("japanese", "日语 OCR"), ENGLISH("english", "英语 OCR");
 
     final String value, label;
     OcrPickupMode(String value, String label) { this.value = value; this.label = label; }

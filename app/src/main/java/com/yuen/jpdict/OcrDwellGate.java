@@ -2,7 +2,7 @@ package com.yuen.jpdict;
 
 /** Movement inside a small area is intentional; travel between areas resets dwell. */
 final class OcrDwellGate {
-    static final long DELAY_MS = 300;
+    static final long DELAY_MS = 150;
     private final float radius;
     private float x, y;
     private long since;

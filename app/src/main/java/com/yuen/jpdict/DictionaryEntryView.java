@@ -31,6 +31,9 @@ final class DictionaryEntryView extends WebView {
     private final Navigation navigation;
     private final String origin, entryUrl;
     private final Runnable onReady;
+    private final DictionaryRemoteClient remote;
+    private String remoteError;
+    private long remoteErrorAt;
     private boolean ready;
     private boolean editing;
     private int editingProbe;
@@ -58,21 +61,28 @@ final class DictionaryEntryView extends WebView {
     }
     DictionaryEntryView(Context context, DictionaryRepository repository,
             DictionaryRepository.Dictionary dictionary, List<String> entries, Navigation navigation, Runnable onReady) {
-        this(context, repository, dictionary, entries, null, navigation, onReady);
+        this(context, repository, dictionary, entries, null, navigation, onReady, null);
+    }
+    DictionaryEntryView(Context context, DictionaryRepository repository,
+            DictionaryRepository.Dictionary dictionary, List<String> entries, Navigation navigation,
+            Runnable onReady, DictionaryRemoteClient.Connections connections) {
+        this(context, repository, dictionary, entries, null, navigation, onReady, connections);
     }
     DictionaryEntryView(Context context, DictionaryRepository repository,
             DictionaryRepository.Dictionary dictionary, DictionaryHtmlDocument document, Navigation navigation, Runnable onReady) {
-        this(context, repository, dictionary, null, document, navigation, onReady);
+        this(context, repository, dictionary, null, document, navigation, onReady, null);
     }
     private DictionaryEntryView(Context context, DictionaryRepository repository,
             DictionaryRepository.Dictionary dictionary, List<String> entries, DictionaryHtmlDocument document,
-            Navigation navigation, Runnable onReady) {
+            Navigation navigation, Runnable onReady, DictionaryRemoteClient.Connections connections) {
         super(context);
         this.document = document == null ? null : document.retain();
         this.repository = repository; this.dictionary = dictionary; this.navigation = navigation;
         this.onReady = onReady;
         origin = "https://" + dictionary.id + ".dict.invalid/";
         entryUrl = origin + "__jpdict_entry__.html";
+        remote = connections == null ? new DictionaryRemoteClient(origin.substring(0, origin.length() - 1))
+                : new DictionaryRemoteClient(origin.substring(0, origin.length() - 1), connections);
         WebSettings settings = getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
@@ -103,7 +113,25 @@ final class DictionaryEntryView extends WebView {
                 scheduleHeight();
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (closed || !"GET".equals(request.getMethod())) return denied();
+                if (closed) return denied();
+                if (!request.isForMainFrame()) {
+                    DictionaryRemoteClient.Response allowed = remote.request(request.getMethod(),
+                            request.getUrl().toString(), request.getRequestHeaders());
+                    if (allowed != null) {
+                        if (allowed.error != null) main.post(() -> {
+                            long now = android.os.SystemClock.uptimeMillis();
+                            if (!closed && (!allowed.error.equals(remoteError) || now - remoteErrorAt >= 4000)) {
+                                remoteError = allowed.error;
+                                remoteErrorAt = now;
+                                android.widget.Toast.makeText(getContext(), allowed.error, android.widget.Toast.LENGTH_LONG).show();
+                            }
+                        });
+                        return new WebResourceResponse(allowed.mime, "UTF-8", allowed.status,
+                                allowed.status < 400 ? "OK" : "Unavailable", allowed.headers,
+                                new ByteArrayInputStream(allowed.body));
+                    }
+                }
+                if (!"GET".equals(request.getMethod())) return denied();
                 try {
                     if (request.isForMainFrame()) {
                         return entryUrl.equals(request.getUrl().toString())
@@ -329,6 +357,7 @@ final class DictionaryEntryView extends WebView {
         if (closed) return;
         stopEditing();
         closed = true;
+        remote.close();
         main.removeCallbacks(measureHeight);
         if (soundTask != null) soundTask.cancel();
         releaseSound(); stopLoading(); loadUrl("about:blank");
