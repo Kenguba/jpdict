@@ -1,6 +1,6 @@
 # JPDict 界面样式
 
-本文件记录视觉与手势约定。工程、兼容、体积及发布规则以根目录 [README.md](README.md) 为准。
+本文件记录视觉与手势约定。长期开发规则见 [AGENTS.md](AGENTS.md)，工程与体积约束见 [工程约束](docs/engineering-guidelines.md)，发布规则由 [发布 Skill](.agents/skills/jpdict-release/SKILL.md) 管理。
 
 ## 弹窗
 
