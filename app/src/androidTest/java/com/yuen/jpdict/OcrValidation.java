@@ -643,7 +643,7 @@ final class OcrValidation {
     }
     private String fonts(Instrumentation instrumentation) throws Exception {
         AtomicReference<MultilingualOcrRecognizer> client = new AtomicReference<>();
-        onMain(instrumentation, () -> { client.set(new MultilingualOcrRecognizer()); client.get().prepareModels(instrumentation.getTargetContext()); });
+        onMain(instrumentation, () -> { client.set(new MultilingualOcrRecognizer()); client.get().initialize(instrumentation.getTargetContext()); });
         StringBuilder report = new StringBuilder();
         int original = 0, refined = 0, total = 0;
         try {

@@ -39,7 +39,7 @@ final class OcrPickupController implements AutoCloseable {
     private boolean armed, waiting, released, closed, dragging, captureVisible;
     private float aimX, aimY;
     private final Rect aimBubble = new Rect();
-    private final Runnable timeout = () -> fail("OCR 超时，请确认识别模型已下载后重试");
+    private final Runnable timeout = () -> fail("OCR 处理超时，请缩小选区或稍后重试");
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent intent) {
             if (closed) return;

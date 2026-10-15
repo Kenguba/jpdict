@@ -23,6 +23,7 @@ final class ScreenCaptureFrames implements AutoCloseable {
                 if (next == null) return;
                 if (latest != null) latest.close();
                 latest = next;
+                failure = null;
             } catch (RuntimeException error) {
                 failure = error;
             }
