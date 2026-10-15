@@ -47,6 +47,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Locale;
+import java.util.EnumMap;
 
 /** Native search surface. The Service retains window ownership and lookup routing. */
 final class FloatingSearchView extends FrameLayout {
@@ -91,6 +92,10 @@ final class FloatingSearchView extends FrameLayout {
     private final LinearLayout modelButton;
     private final TextView languageLabel;
     private final OcrLanguageSettings ocrLanguage;
+    private final LookupDestinationSettings destination;
+    private final LookupDestinationSettings.Listener destinationChanged = this::refreshDestination;
+    private final EnumMap<LookupDestinationSettings.Model, LinearLayout> modelRows =
+            new EnumMap<>(LookupDestinationSettings.Model.class);
     private final OcrLanguageSettings.Listener languageChanged = this::refreshLanguage;
     private final LinearLayout[] languageRows = new LinearLayout[OcrLanguageSettings.Language.values().length];
     private OcrLanguageSettings.Language hoveredLanguage;
@@ -129,6 +134,7 @@ final class FloatingSearchView extends FrameLayout {
         super(context);
         this.callback = callback;
         ocrLanguage = OcrLanguageSettings.get(context);
+        destination = LookupDestinationSettings.get(context);
         keyboardSpace = new SearchKeyboardSpace(context);
         state.setPrivateMode(privateMode);
         setBackgroundColor(PAPER);
@@ -475,12 +481,15 @@ final class FloatingSearchView extends FrameLayout {
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         ocrLanguage.observe(languageChanged);
+        destination.observe(destinationChanged);
         refreshLanguage();
+        refreshDestination();
     }
 
     @Override protected void onDetachedFromWindow() {
         stopClipboard();
         ocrLanguage.removeObserver(languageChanged);
+        destination.removeObserver(destinationChanged);
         super.onDetachedFromWindow();
     }
 
@@ -880,7 +889,7 @@ final class FloatingSearchView extends FrameLayout {
     private void updateLanguageButton() {
         String label = ocrLanguage.language().label;
         languageLabel.setText(label);
-        modelButton.setContentDescription("当前 OCR 语言：" + label + "；长按选择语言，轻点选择模型");
+        refreshDestination();
     }
 
     private int menuWidth() {
@@ -895,11 +904,42 @@ final class FloatingSearchView extends FrameLayout {
         heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         TextView badge = text(GroqKeyStore.hasKey(getContext()) ? "已配置" : "待配置", 11, Color.WHITE, true); badge.setPadding(dp(10), dp(6), dp(10), dp(6)); badge.setBackground(shape(INK, 16));
         heading.addView(badge); menuCard.addView(heading);
-        menuRow(SearchIconView.Kind.PROJECT, "Build  Beta", "构建应用和网站 · 未接入", false, false);
-        menuRow(SearchIconView.Kind.CONNECTOR, "重型", "专家团队 · 未接入", false, false);
-        menuRow(SearchIconView.Kind.SKILLS, "专家", "深度思考 · 未接入", false, false);
-        menuRow(SearchIconView.Kind.LIGHTNING, "快速", "Groq · " + BuildConfig.GROQ_MODEL, true, true);
-        menuRow(SearchIconView.Kind.BOT, "自动", "自动选择模型 · 未接入", false, false);
+        modelRow(SearchIconView.Kind.PROJECT, "Build  Beta", "构建应用和网站 · 未接入", false, LookupDestinationSettings.Model.BUILD);
+        modelRow(SearchIconView.Kind.CONNECTOR, "重型", "专家团队 · 未接入", false, LookupDestinationSettings.Model.HEAVY);
+        modelRow(SearchIconView.Kind.SKILLS, "专家", "深度思考 · 未接入", false, LookupDestinationSettings.Model.EXPERT);
+        modelRow(SearchIconView.Kind.LIGHTNING, "快速", "Groq · " + BuildConfig.GROQ_MODEL, true, LookupDestinationSettings.Model.FAST);
+        modelRow(SearchIconView.Kind.CONNECTOR, "第三方", "欧路词典 · 悬浮查词", true, LookupDestinationSettings.Model.THIRD_PARTY);
+        refreshDestination();
+    }
+
+    private void modelRow(SearchIconView.Kind kind, String title, String subtitle, boolean enabled,
+                          LookupDestinationSettings.Model model) {
+        LinearLayout row = menuRow(kind, title, subtitle, enabled, false);
+        SearchIconView check = icon(SearchIconView.Kind.CHECK, INK);
+        row.addView(check, new LinearLayout.LayoutParams(dp(22), dp(26)));
+        modelRows.put(model, row);
+        row.setOnClickListener(v -> {
+            if (!enabled) { unavailable(title); return; }
+            destination.select(model);
+            closeMenu();
+        });
+    }
+
+    private void refreshDestination() {
+        if (disposed) return;
+        for (java.util.Map.Entry<LookupDestinationSettings.Model, LinearLayout> entry : modelRows.entrySet()) {
+            LinearLayout row = entry.getValue();
+            boolean selected = destination.model() == entry.getKey();
+            row.setSelected(selected);
+            row.setBackground(ripple(selected ? 0xffe9e9e9 : PAPER, 16));
+            row.getChildAt(row.getChildCount() - 1).setVisibility(selected ? VISIBLE : GONE);
+            String title = ((TextView)((LinearLayout)row.getChildAt(1)).getChildAt(0)).getText().toString();
+            boolean enabled = entry.getKey() == LookupDestinationSettings.Model.FAST
+                    || entry.getKey() == LookupDestinationSettings.Model.THIRD_PARTY;
+            row.setContentDescription(title + (selected ? "，当前选中" : enabled ? "，点击选择" : "，尚未接入"));
+        }
+        modelButton.setContentDescription("查询方式：" + (destination.isThirdParty() ? "第三方，欧路词典" : "系统")
+                + "；OCR 语言：" + ocrLanguage.language().label + "，点击选择查询方式，长按选择语言");
     }
 
     private void buildAttachmentMenu() {
@@ -912,7 +952,7 @@ final class FloatingSearchView extends FrameLayout {
         menuRow(SearchIconView.Kind.CONNECTOR, "连接器", "未接入", false, false);
     }
 
-    private void menuRow(SearchIconView.Kind kind, String title, String subtitle, boolean enabled, boolean selected) {
+    private LinearLayout menuRow(SearchIconView.Kind kind, String title, String subtitle, boolean enabled, boolean selected) {
         LinearLayout row = new LinearLayout(getContext()); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(10), dp(6), dp(8), dp(6));
         row.setBackground(ripple(selected ? 0xffe9e9e9 : PAPER, 16));
         row.addView(icon(kind, enabled ? INK : 0xff909396), new LinearLayout.LayoutParams(dp(25), dp(30)));
@@ -922,8 +962,9 @@ final class FloatingSearchView extends FrameLayout {
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         if (selected) row.addView(icon(SearchIconView.Kind.CHECK, INK), new LinearLayout.LayoutParams(dp(22), dp(26)));
         row.setOnClickListener(v -> { if (enabled) closeMenu(); else unavailable(title); });
-        row.setContentDescription(title + (enabled ? "，当前选中" : "，尚未接入"));
+        row.setContentDescription(title + (selected ? "，当前选中" : enabled ? "，点击选择" : "，尚未接入"));
         menuCard.addView(row, new LinearLayout.LayoutParams(-1, dp(58)));
+        return row;
     }
 
     private boolean containsPoint(View view, float x, float y) {
@@ -967,6 +1008,7 @@ final class FloatingSearchView extends FrameLayout {
     private void closeMenu() {
         state.setMenu(FloatingSearchState.Menu.NONE);
         hoveredLanguage = null;
+        modelRows.clear();
         for (int i = 0; i < languageRows.length; i++) languageRows[i] = null;
         if (menuDismiss != null) removeView(menuDismiss);
         menuDismiss = null;
@@ -1186,6 +1228,7 @@ final class FloatingSearchView extends FrameLayout {
     void dispose() {
         stopClipboard();
         ocrLanguage.removeObserver(languageChanged);
+        destination.removeObserver(destinationChanged);
         suggestions.close();
         explosionController.close();
         removeCallbacks(commitLegacyIme);

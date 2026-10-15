@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat;
 final class FloatingSearchRoutes {
     static final String ACTION_OPEN_PAGE = "com.yuen.jpdict.OPEN_FLOATING_SEARCH_PAGE";
     static final String ACTION_HOST_OPEN_PAGE = "com.yuen.jpdict.HOST_OPEN_FLOATING_SEARCH_PAGE";
+    static final String ACTION_PAGE_READY = "com.yuen.jpdict.FLOATING_SEARCH_PAGE_READY";
     static final String ACTION_CLEAR_PAGE_SESSION = "com.yuen.jpdict.CLEAR_FLOATING_SEARCH_PAGE_SESSION";
     static final String EXTRA_PAGE = "floating_search_page";
     static final String EXTRA_RETURN_QUERY = "floating_search_return_query";
@@ -20,6 +21,7 @@ final class FloatingSearchRoutes {
     static final String EXTRA_RETURN_TO_SETTINGS = "floating_search_return_to_settings";
     static final String EXTRA_PRIVATE_MODE = "floating_search_private_mode";
     static final String EXTRA_HOSTED_SEARCH = "floating_search_has_return_host";
+    static final String EXTRA_PAGE_REQUEST = "floating_search_page_request";
 
     static final String PAGE_SETTINGS = "settings";
     static final String PAGE_BUBBLE_SETTINGS = "bubble_settings";
@@ -58,7 +60,7 @@ final class FloatingSearchRoutes {
                 .putExtra(EXTRA_RETURN_TO_SETTINGS, returnToSettings)
                 .putExtra(EXTRA_PRIVATE_MODE, privateMode)
                 .putExtra(EXTRA_HOSTED_SEARCH, hostedSearch)
-                .addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION);
+                .addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION | Intent.FLAG_ACTIVITY_NO_ANIMATION);
     }
 
     static void openFromActivity(Activity activity, String page, boolean returnToSettings) {
@@ -70,7 +72,7 @@ final class FloatingSearchRoutes {
                 current != null && current.getBooleanExtra(EXTRA_PRIVATE_MODE, false),
                 current != null && current.getBooleanExtra(EXTRA_HOSTED_SEARCH, false));
         activity.startActivity(next);
-        activity.overridePendingTransition(R.anim.page_enter, R.anim.page_hold);
+        activity.overridePendingTransition(0, 0);
     }
 
     static void finishPage(Activity activity) {
@@ -95,7 +97,7 @@ final class FloatingSearchRoutes {
             startService(activity, search);
         }
         activity.finish();
-        activity.overridePendingTransition(R.anim.page_hold, R.anim.page_exit);
+        activity.overridePendingTransition(0, 0);
     }
 
     static void onPageBackground(Activity activity) {
@@ -112,6 +114,7 @@ final class FloatingSearchRoutes {
         source.putExtra(EXTRA_RESTORE_SEARCH, false)
                 .putExtra(EXTRA_PRIVATE_MODE, false)
                 .putExtra(EXTRA_RETURN_QUERY, "");
+        source.removeExtra(EXTRA_PAGE_REQUEST);
     }
 
     static BroadcastReceiver pageSessionReceiver(Activity activity) {
@@ -122,6 +125,7 @@ final class FloatingSearchRoutes {
                 route.putExtra(EXTRA_RESTORE_SEARCH, false)
                         .putExtra(EXTRA_PRIVATE_MODE, false)
                         .putExtra(EXTRA_RETURN_QUERY, "");
+                route.removeExtra(EXTRA_PAGE_REQUEST);
                 activity.setIntent(route);
             }
         };

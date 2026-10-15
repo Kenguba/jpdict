@@ -21,6 +21,8 @@ public final class DictionaryInstrumentation extends Instrumentation {
     private boolean composerMode;
     private boolean operationMode;
     private boolean remoteMode;
+    private boolean destinationMode;
+    private boolean pagesMode;
     private void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
     private static void write(File file, byte[] bytes) throws IOException {
         try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
@@ -32,11 +34,21 @@ public final class DictionaryInstrumentation extends Instrumentation {
         composerMode = arguments != null && arguments.containsKey("composer");
         operationMode = arguments != null && arguments.containsKey("dictionary_operation");
         remoteMode = arguments != null && arguments.containsKey("dictionary_remote");
+        destinationMode = arguments != null && arguments.containsKey("destination");
+        pagesMode = arguments != null && arguments.containsKey("pages");
         start();
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (destinationMode) {
+                result.putString("stream", LookupDestinationValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
+            if (pagesMode) {
+                result.putString("stream", PageTransitionValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
             if (remoteMode) {
                 result.putString("stream", DictionaryRemoteValidation.run(this));
                 finish(android.app.Activity.RESULT_OK, result); return;

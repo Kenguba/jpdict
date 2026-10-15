@@ -5,6 +5,10 @@ import android.content.*;
 import android.graphics.*;
 import android.os.SystemClock;
 import android.view.*;
+import com.google.android.gms.tasks.TaskCompletionSource;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognizer;
+import java.lang.reflect.Proxy;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -15,7 +19,7 @@ final class OcrValidation {
     private void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
     static String run(Instrumentation instrumentation, boolean fonts) throws Exception {
         OcrValidation test = new OcrValidation();
-        test.images(); test.selection(); test.gestures(instrumentation);
+        test.images(); test.selection(); test.canceledCapture(instrumentation); test.gestures(instrumentation);
         String measured = fonts ? test.fonts(instrumentation) : "";
         return "OCR: " + test.checks + " assertions passed\n" + OcrLanguageValidation.run(instrumentation) + measured;
     }
@@ -92,6 +96,122 @@ final class OcrValidation {
         MultilingualOcrRecognizer.Region shortened = new MultilingualOcrRecognizer.Region("abcdef",new Rect(0,0,60,20));shortened.quality=100;
         check(MultilingualOcrRecognizer.selectionResult(Arrays.asList(seed,shortened),seed,5,10,0)==seed,
                 "Higher-confidence 6-of-7 refinement cannot shorten a user-defined range despite 85 percent overlap");
+        MultilingualOcrRecognizer.Region phrase = new MultilingualOcrRecognizer.Region("helo wurld",new Rect(100,40,205,60));
+        phrase.boundedRange=true;
+        MultilingualOcrRecognizer.Region hello = symbols("hello",100,40), world = symbols("world",155,40);
+        hello.quality=world.quality=1;
+        check("hello world".equals(MultilingualOcrRecognizer.selectionResult(Arrays.asList(hello,world),phrase,110,50,0).text),
+                "Refinement combines separate model elements to correct the complete swept phrase");
+        check(MultilingualOcrRecognizer.selectionResult(Collections.singletonList(hello),phrase,110,50,0)==phrase,
+                "A correct first word alone cannot truncate a swept phrase");
+        MultilingualOcrRecognizer.Region geometrylessHello = new MultilingualOcrRecognizer.Region("hello",hello.bounds);
+        MultilingualOcrRecognizer.Region geometrylessWorld = new MultilingualOcrRecognizer.Region("world",world.bounds);
+        geometrylessHello.quality=geometrylessWorld.quality=1;
+        check("hello world".equals(MultilingualOcrRecognizer.selectionResult(Arrays.asList(geometrylessHello,geometrylessWorld),phrase,110,50,0).text),
+                "Models without symbol geometry can still refine all selected words together");
+        hello.quality=world.quality=-1;
+        check(MultilingualOcrRecognizer.selectionResult(Arrays.asList(hello,world),phrase,110,50,0)==phrase,
+                "Lower-quality phrase refinement retains the complete original selection");
+        MultilingualOcrRecognizer.Region substring = new MultilingualOcrRecognizer.Region("fether",new Rect(120,40,180,60));
+        substring.boundedRange=true;
+        MultilingualOcrRecognizer.Region mixedSource=symbols("这是father父亲",100,40), nestedSource=symbols("father",120,40);
+        mixedSource.quality=nestedSource.quality=1;
+        check("father".equals(MultilingualOcrRecognizer.selectionResult(Arrays.asList(mixedSource,nestedSource),substring,125,50,0).text),
+                "Clipped mixed-script and Latin elements cannot duplicate an improved substring");
+        MultilingualOcrRecognizer.Region whole = new MultilingualOcrRecognizer.Region("father",new Rect(0,0,60,20));whole.quality=1;
+        MultilingualOcrRecognizer.Region partA = new MultilingualOcrRecognizer.Region("fat",new Rect(0,0,30,20));partA.quality=1;
+        MultilingualOcrRecognizer.Region partB = new MultilingualOcrRecognizer.Region("her",new Rect(30,0,60,20));partB.quality=1;
+        MultilingualOcrRecognizer.Region fatherSeed = new MultilingualOcrRecognizer.Region("father",whole.bounds);fatherSeed.boundedRange=true;
+        check("father".equals(MultilingualOcrRecognizer.selectionResult(Arrays.asList(whole,partA,partB),fatherSeed,5,10,0).text),
+                "Whole-word and split-element alternatives covering the same glyphs cannot concatenate father twice");
+        MultilingualOcrRecognizer.Region repeatSeed = new MultilingualOcrRecognizer.Region("had had",new Rect(0,0,70,20));repeatSeed.boundedRange=true;
+        MultilingualOcrRecognizer.Region repeatA = new MultilingualOcrRecognizer.Region("had",new Rect(0,0,30,20));repeatA.quality=1;
+        MultilingualOcrRecognizer.Region repeatB = new MultilingualOcrRecognizer.Region("had",new Rect(40,0,70,20));repeatB.quality=1;
+        check("had had".equals(MultilingualOcrRecognizer.selectionResult(Arrays.asList(repeatA,repeatB),repeatSeed,5,10,0).text),
+                "Identical words at different screen positions remain a valid repeated phrase");
+        MultilingualOcrRecognizer.Region lines = new MultilingualOcrRecognizer.Region("helo\nwurld",new Rect(100,40,150,90));
+        lines.boundedRange=true;
+        lines.selectedBounds.add(new Rect(100,40,150,60));lines.selectedBounds.add(new Rect(100,70,150,90));
+        hello=symbols("hello",100,40); world=symbols("world",100,70);hello.quality=world.quality=1;
+        check("hello\nworld".equals(MultilingualOcrRecognizer.selectionResult(Arrays.asList(hello,world),lines,110,50,0).text),
+                "Refinement preserves reading order and line breaks across a swept range");
+        MultilingualOcrRecognizer.Region sparse = new MultilingualOcrRecognizer.Region("end\nstart",new Rect(0,0,100,60));
+        sparse.boundedRange=true;sparse.quality=1;
+        MultilingualOcrRecognizer.Region end = new MultilingualOcrRecognizer.Region("end",new Rect(60,0,100,20));end.quality=2;
+        MultilingualOcrRecognizer.Region start = new MultilingualOcrRecognizer.Region("start",new Rect(0,40,40,60));start.quality=2;
+        MultilingualOcrRecognizer.Region extraFirst = new MultilingualOcrRecognizer.Region("EXTRA",new Rect(0,0,40,20));extraFirst.quality=2;
+        MultilingualOcrRecognizer.Region extraLast = new MultilingualOcrRecognizer.Region("EXTRA",new Rect(60,40,100,60));extraLast.quality=2;
+        List<MultilingualOcrRecognizer.Region> sparseFound=Arrays.asList(extraFirst,end,start,extraLast);
+        check(MultilingualOcrRecognizer.selectionResult(sparseFound,sparse,80,10,0)==sparse,
+                "A multi-line selection without a precise mask retains its original text rather than collecting its bounding rectangle");
+        sparse.selectedBounds.add(new Rect(end.bounds));sparse.selectedBounds.add(new Rect(start.bounds));
+        check("end\nstart".equals(MultilingualOcrRecognizer.selectionResult(sparseFound,sparse,80,10,0).text),
+                "Precise selected rectangles exclude unselected EXTRA words inside the same multi-line bounding rectangle");
+        MultilingualOcrRecognizer.Region firstLine = new MultilingualOcrRecognizer.Region("EXTRA end",new Rect(0,0,100,20));firstLine.quality=2;
+        firstLine.symbols.add(new MultilingualOcrRecognizer.Symbol(0,5,extraFirst.bounds));firstLine.symbols.add(new MultilingualOcrRecognizer.Symbol(6,9,end.bounds));
+        MultilingualOcrRecognizer.Region lastLine = new MultilingualOcrRecognizer.Region("start EXTRA",new Rect(0,40,100,60));lastLine.quality=2;
+        lastLine.symbols.add(new MultilingualOcrRecognizer.Symbol(0,5,start.bounds));lastLine.symbols.add(new MultilingualOcrRecognizer.Symbol(6,11,extraLast.bounds));
+        check("end\nstart".equals(MultilingualOcrRecognizer.selectionResult(Arrays.asList(firstLine,lastLine),sparse,80,10,0).text),
+                "Symbol clipping obeys each selected rectangle when another model merges selected and unselected text into full lines");
+    }
+    private void canceledCapture(Instrumentation instrumentation) throws Exception {
+        List<Intent> responses = new ArrayList<>(); int[] renewals = {0}, calls = {0};
+        AtomicReference<Intent> nextRequest = new AtomicReference<>();
+        TaskCompletionSource<Text> first = new TaskCompletionSource<>(), second = new TaskCompletionSource<>();
+        MainActivity.ScreenCaptureService capture = new MainActivity.ScreenCaptureService() {
+            @Override public String getPackageName() { return instrumentation.getTargetContext().getPackageName(); }
+            @Override public void sendBroadcast(Intent intent) { responses.add(new Intent(intent)); }
+            @Override boolean captureAlive() { return false; }
+            @Override void requireProjection(Intent request) { renewals[0]++; nextRequest.set(new Intent(request)); }
+        };
+        TextRecognizer model = (TextRecognizer)Proxy.newProxyInstance(TextRecognizer.class.getClassLoader(),
+                new Class<?>[]{TextRecognizer.class}, (proxy, method, arguments) -> {
+                    if ("process".equals(method.getName())) return calls[0]++==0 ? first.getTask() : second.getTask();
+                    return null;
+                });
+        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(model,model,model,model,null);
+        Bitmap old = Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888), current = Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888);
+        instrumentation.runOnMainSync(() -> {
+            capture.ocrRecognizer=recognizer;capture.previewLanguage=OcrLanguageSettings.Language.ENGLISH;
+            capture.previewSession=capture.previewOperation=51;capture.previewInFlight=true;capture.recognizePreview(old,51);
+            capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",51L),0,1);
+            check(capture.previewSession==0 && capture.previewInFlight && capture.previewFrame==null,
+                    "Cancel retires the current session while preserving the single physical model operation");
+            check(!old.isRecycled(),"Canceled OCR work retains its borrowed screenshot until its callback returns");
+            capture.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",52L));
+            capture.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",53L));
+            capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",52L),0,2);
+            check(capture.pendingPreview!=null && capture.pendingPreview.getLongExtra("session",-1)==53
+                            && renewals[0]==0 && calls[0]==1 && responses.isEmpty(),
+                    "Repeated gestures retain only the latest request without creating another screenshot or model task");
+            first.setResult(new Text("",Collections.emptyList()));
+        });
+        for(int i=0;i<100 && nextRequest.get()==null;i++)Thread.sleep(20);
+        instrumentation.runOnMainSync(() -> {
+            check(old.isRecycled(),"Canceled screenshot is recycled after the old OCR callback releases it");
+            check(nextRequest.get()!=null && nextRequest.get().getLongExtra("session",-1)==53 && renewals[0]==1
+                            && !capture.previewInFlight && capture.pendingPreview==null && responses.isEmpty(),
+                    "Old completion starts only the newest pending capture and never publishes its stale result");
+            capture.previewSession=capture.previewOperation=53;capture.previewInFlight=true;capture.recognizePreview(current,53);
+            capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",51L),0,3);
+            capture.sendPreview(51,Collections.emptyList(),null);capture.sendRefined(51,"stale",null);
+            check(capture.previewSession==53 && capture.previewInFlight && responses.isEmpty(),
+                    "Old cancellation and completion cannot release a replacement model operation");
+            second.setResult(new Text("",Collections.emptyList()));
+        });
+        for(int i=0;i<100;i++){
+            instrumentation.waitForIdleSync();
+            if(!responses.isEmpty())break;
+            Thread.sleep(20);
+        }
+        instrumentation.runOnMainSync(() -> {
+            check(responses.size()==1 && responses.get(0).getLongExtra("session",-1)==53 && !capture.previewInFlight,
+                    "Only the replacement session publishes its completed preview");
+            check(!current.isRecycled(),"The replacement screenshot stays available for refinement");
+            capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",53L),0,4);
+            check(current.isRecycled(),"Canceling the completed replacement disposes its screenshot");
+            recognizer.close();
+        });
     }
     private static MultilingualOcrRecognizer.Region symbols(String text, int left, int top) {
         MultilingualOcrRecognizer.Region region = new MultilingualOcrRecognizer.Region(text,new Rect(left,top,left+text.length()*10,top+20));
@@ -100,6 +220,9 @@ final class OcrValidation {
     }
     private void gestures(Instrumentation instrumentation) throws Exception {
         Context app = instrumentation.getTargetContext();
+        LookupDestinationSettings destinations = LookupDestinationSettings.get(app);
+        LookupDestinationSettings.Model previousDestination = destinations.model();
+        boolean previousThirdParty = destinations.isThirdParty();
         AtomicReference<Intent> request = new AtomicReference<>();
         int[] activities = {0};
         Context capture = new ContextWrapper(app) {
@@ -156,10 +279,15 @@ final class OcrValidation {
             Thread.sleep(170);
             instrumentation.runOnMainSync(() -> check(request.get() == null && activities[0] == 0, "Showing the joystick alone does not request sharing"));
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 320, 720);
+            instrumentation.runOnMainSync(() -> MainActivity.ScreenCaptureService.READY=true);
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 320, 720);
             instrumentation.runOnMainSync(() -> {
                 check(position.equals(rendered) && saves[0] == 1, "Joystick springs back without changing the saved bubble position");
-                check(request.get() == null && activities[0] == 0, "Left sector cancels without OCR or authorization");
+                check(request.get()!=null && MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW.equals(request.get().getAction())
+                                && "word".equals(request.get().getStringExtra("pickup_mode")) && activities[0]==0,
+                        "Left sector starts OCR with the shared language and the changed lookup destination");
+                check(destinations.isThirdParty()!=previousThirdParty,"Joystick left release toggles the same persisted destination used by the search model menu");
+                owner.get().cancel();request.set(null);MainActivity.ScreenCaptureService.READY=false;
             });
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
             Thread.sleep(760);
@@ -252,12 +380,15 @@ final class OcrValidation {
             check(MainActivity.ScreenCaptureService.ACT_OCR_REFINE.equals(request.get().getAction()) && "father".equals(request.get().getStringExtra("seed")),
                     "A real f-to-r-to-f gesture made while recognition is pending is replayed into the exact mixed-text range");
             check(request.get().getBooleanExtra("bounded_range",false),"Refinement carries the explicit range so it cannot expand back to the whole phrase");
+            int[] selectionBoxes=request.get().getIntArrayExtra("selection_boxes");
+            check(selectionBoxes!=null && selectionBoxes.length==4 && selectionBoxes[0]==517 && selectionBoxes[2]==577,
+                    "Refinement carries the actual swept glyph bounds instead of only a union rectangle");
             instrumentation.runOnMainSync(() -> {
                 MainActivity.ScreenCaptureService detached = new MainActivity.ScreenCaptureService();
                 check(!detached.captureAlive(), "A stale READY flag without actual projection, reader and virtual display cannot authorize capture");
             });
         } finally {
-            instrumentation.runOnMainSync(() -> { if (owner.get() != null) owner.get().close(); });
+            instrumentation.runOnMainSync(() -> { if (owner.get() != null) owner.get().close(); destinations.select(previousDestination); });
             MainActivity.ScreenCaptureService.READY = wasReady;
         }
     }

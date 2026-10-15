@@ -142,6 +142,7 @@ final class OcrSweepSelection {
             text.append(region.text); quality += region.quality; previous = region;
         }
         MultilingualOcrRecognizer.Region combined = new MultilingualOcrRecognizer.Region(text.toString(), bounds());
+        for (MultilingualOcrRecognizer.Region region : ordered) combined.selectedBounds.add(new Rect(region.bounds));
         combined.quality = quality / picked.size(); combined.boundedRange = true; return combined;
     }
     private static boolean cjk(int codePoint) {

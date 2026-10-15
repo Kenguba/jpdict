@@ -2,11 +2,13 @@ package com.yuen.jpdict;
 
 import android.app.Activity;
 import android.content.BroadcastReceiver;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Build;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.ViewTreeObserver;
 import android.graphics.Typeface;
 import android.view.Gravity;
 import android.widget.LinearLayout;
@@ -19,7 +21,8 @@ abstract class FloatingSearchPageActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         pageSessionReceiver = FloatingSearchRoutes.pageSessionReceiver(this);
         FloatingSearchRoutes.registerPageSessionReceiver(this, pageSessionReceiver);
@@ -69,6 +72,7 @@ abstract class FloatingSearchPageActivity extends Activity {
 
     @Override public void setContentView(View view) {
         super.setContentView(view);
+        notifySearchAfterFirstFrame(view);
         if (Build.VERSION.SDK_INT < 30) return;
         int left = view.getPaddingLeft(), top = view.getPaddingTop();
         int right = view.getPaddingRight(), bottom = view.getPaddingBottom();
@@ -81,6 +85,40 @@ abstract class FloatingSearchPageActivity extends Activity {
             return WindowInsets.CONSUMED;
         });
         view.requestApplyInsets();
+    }
+
+    private void notifySearchAfterFirstFrame(View view) {
+        Intent route = getIntent();
+        String request = route == null ? null
+                : route.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST);
+        if (request == null || request.isEmpty()) return;
+        view.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                view.getViewTreeObserver().removeOnPreDrawListener(this);
+                Runnable ready = () -> {
+                    Intent current = getIntent();
+                    if (isFinishing() || isDestroyed() || current == null
+                            || !request.equals(current.getStringExtra(
+                                    FloatingSearchRoutes.EXTRA_PAGE_REQUEST))) return;
+                    Intent shown = new Intent(FloatingSearchPageActivity.this, FloatingService.class)
+                            .setAction(FloatingSearchRoutes.ACTION_PAGE_READY)
+                            .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, request);
+                    if (current.hasExtra(FloatingService.EXTRA_HOST_SESSION)) {
+                        shown.putExtra(FloatingService.EXTRA_HOST_SESSION,
+                                current.getStringExtra(FloatingService.EXTRA_HOST_SESSION));
+                    }
+                    FloatingSearchRoutes.startService(FloatingSearchPageActivity.this, shown);
+                };
+                // Keep the search window covering the old page until this
+                // Activity has submitted its own first frame to the display.
+                if (Build.VERSION.SDK_INT >= 29 && view.isHardwareAccelerated()) {
+                    view.getViewTreeObserver().registerFrameCommitCallback(ready);
+                } else {
+                    view.postOnAnimation(ready);
+                }
+                return true;
+            }
+        });
     }
 
     @Override protected void onUserLeaveHint() {
