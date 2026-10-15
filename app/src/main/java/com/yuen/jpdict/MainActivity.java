@@ -12,7 +12,6 @@ import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
-import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
@@ -379,7 +378,7 @@ public class MainActivity extends Activity {
         public static final String ACTION_STOPPED="com.yuen.jpdict.OCR_STOPPED";
         public static final String ACTION_READY="com.yuen.jpdict.OCR_READY";
         public static volatile boolean READY=false;
-        MediaProjection projection; ImageReader reader; VirtualDisplay vd; int w,h,dpi;
+        MediaProjection projection; ScreenCaptureFrames captureFrames; VirtualDisplay vd; int w,h,dpi;
         MultilingualOcrRecognizer ocrRecognizer;
         boolean previewInFlight;
         long previewSession, previewOperation;
@@ -437,8 +436,8 @@ public class MainActivity extends Activity {
                     android.view.WindowMetrics m=((WindowManager)getSystemService(WINDOW_SERVICE)).getMaximumWindowMetrics();
                     w=m.getBounds().width(); h=m.getBounds().height();
                 } else { w=dm.widthPixels; h=dm.heightPixels; }
-                reader=ImageReader.newInstance(w,h,PixelFormat.RGBA_8888,2);
-                vd=current.createVirtualDisplay("jp-ocr",w,h,dpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,null);
+                captureFrames=new ScreenCaptureFrames(w,h,captureMain);
+                vd=current.createVirtualDisplay("jp-ocr",w,h,dpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,captureFrames.surface(),null,null);
                 if(vd==null)throw new IllegalStateException("屏幕捕获窗口创建失败");
                 READY=true;
                 Notification n=notification("录屏 OCR 已开启","拖动停留 150ms 取词；长按选择并保存识别语言");
@@ -450,7 +449,7 @@ public class MainActivity extends Activity {
             }
         }
         boolean captureAlive(){
-            return READY && projection!=null && reader!=null && vd!=null && vd.getDisplay()!=null && vd.getDisplay().isValid();
+            return READY && projection!=null && captureFrames!=null && vd!=null && vd.getDisplay()!=null && vd.getDisplay().isValid();
         }
         void requireProjection(Intent request){
             // A static READY flag alone cannot prove an actual live projection.
@@ -467,10 +466,11 @@ public class MainActivity extends Activity {
         }
         void resizeCapture(int width,int height){
             if(vd==null || width<=0 || height<=0 || (width==w && height==h))return;
-            ImageReader next=ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,2);
-            ImageReader old=reader;
-            vd.resize(width,height,dpi);vd.setSurface(next.getSurface());
-            reader=next;w=width;h=height;
+            ScreenCaptureFrames next=new ScreenCaptureFrames(width,height,captureMain);
+            ScreenCaptureFrames old=captureFrames;
+            try{vd.resize(width,height,dpi);vd.setSurface(next.surface());}
+            catch(RuntimeException error){next.close();throw error;}
+            captureFrames=next;w=width;h=height;
             if(old!=null)old.close();
         }
         @Override public void onConfigurationChanged(android.content.res.Configuration config){
@@ -512,15 +512,6 @@ public class MainActivity extends Activity {
             final int rw=region?request.getIntExtra("w",w):w;
             final int rh=region?request.getIntExtra("h",h):h;
 
-            // Bind a new consumer surface for this attempt. An old buffered
-            // image is not evidence that a stolen/revoked projection is alive.
-            try{
-                ImageReader next=ImageReader.newInstance(w,h,PixelFormat.RGBA_8888,2);
-                try{vd.setSurface(next.getSurface());}
-                catch(RuntimeException error){next.close();throw error;}
-                ImageReader old=reader;reader=next;old.close();
-            }catch(RuntimeException error){requireProjection(request);return;}
-
             if(preview){
                 previewInFlight=true;previewSession=previewOperation=session;
                 previewMode=OcrPickupMode.fromValue(request.getStringExtra("pickup_mode"));
@@ -534,16 +525,18 @@ public class MainActivity extends Activity {
                 if(preview && session!=previewSession){finishPreviewOperation(session);return;}
                 if(!captureAlive()){if(preview)finishPreviewOperation(session);requireProjection(request);return;}
                 final Image image;
-                try{image=reader.acquireLatestImage();}
+                try{image=captureFrames.latest();}
                 catch(RuntimeException error){if(preview)finishPreviewOperation(session);requireProjection(request);return;}
                 if(image==null){
-                    if(++attempts<8){captureMain.postDelayed(this,80);return;}
-                    if(preview)finishPreviewOperation(session);requireProjection(request);return;
+                    if(++attempts<25){captureMain.postDelayed(this,80);return;}
+                    captureFailed(preview,region,session,"尚未收到屏幕画面，请稍后重试");return;
                 }
                 Bitmap bmp=null;
                 try{
                     Image.Plane p=image.getPlanes()[0];
-                    ByteBuffer buf=p.getBuffer();
+                    // The latest native frame can serve repeated requests on
+                    // a static screen, so never advance its shared buffer.
+                    ByteBuffer buf=p.getBuffer().duplicate();buf.rewind();
                     int imageWidth=image.getWidth(), imageHeight=image.getHeight();
                     int px=p.getPixelStride(), row=p.getRowStride(), pad=row-px*imageWidth;
                     Bitmap tmp=Bitmap.createBitmap(imageWidth+pad/px,imageHeight,Bitmap.Config.ARGB_8888);
@@ -562,10 +555,9 @@ public class MainActivity extends Activity {
                         bmp=full;
                     }
                 } catch(Exception e){
-                    if(preview) sendPreview(session,null,"截图失败："+e.getMessage());
-                    else if(region) sendOcrResult(null,"截图裁剪失败："+e.getMessage());
+                    captureFailed(preview,region,session,"截图失败："+e.getMessage());
                     return;
-                } finally { image.close(); }
+                }
 
                 if(preview){
                     sendBroadcast(new Intent(ACTION_PREVIEW_FRAME).setPackage(getPackageName()).putExtra("session",session));
@@ -573,6 +565,11 @@ public class MainActivity extends Activity {
                 }else recognize(bmp,region);
                 }
             },preview?100:280);
+        }
+        void captureFailed(boolean preview,boolean region,long session,String error){
+            if(preview)sendPreview(session,null,error);
+            else if(region)sendOcrResult(null,error);
+            else Toast.makeText(this,error,Toast.LENGTH_LONG).show();
         }
         void runPendingPreview(){
             if(previewInFlight || pendingPreview==null)return;
@@ -762,7 +759,7 @@ public class MainActivity extends Activity {
             previewSession=0;pendingPreview=null;
             if(previewFrame!=null){previewFrame.close();previewFrame=null;}
             VirtualDisplay v=vd; vd=null;
-            ImageReader r=reader; reader=null;
+            ScreenCaptureFrames r=captureFrames; captureFrames=null;
             MediaProjection p=projection; projection=null;
             READY=false;
             if(wasReady)sendBroadcast(new Intent(ACTION_STOPPED).setPackage(getPackageName()));

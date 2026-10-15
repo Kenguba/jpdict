@@ -3,6 +3,8 @@ package com.yuen.jpdict;
 import android.app.Instrumentation;
 import android.content.*;
 import android.graphics.*;
+import android.media.Image;
+import android.media.ImageWriter;
 import android.os.SystemClock;
 import android.view.*;
 import com.google.android.gms.tasks.TaskCompletionSource;
@@ -19,7 +21,7 @@ final class OcrValidation {
     private void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
     static String run(Instrumentation instrumentation, boolean fonts) throws Exception {
         OcrValidation test = new OcrValidation();
-        test.images(); test.selection(); test.canceledCapture(instrumentation); test.gestures(instrumentation);
+        test.images(); test.selection(); test.repeatedCapture(instrumentation); test.canceledCapture(instrumentation); test.gestures(instrumentation);
         String measured = fonts ? test.fonts(instrumentation) : "";
         return "OCR: " + test.checks + " assertions passed\n" + OcrLanguageValidation.run(instrumentation) + measured;
     }
@@ -212,6 +214,87 @@ final class OcrValidation {
             check(current.isRecycled(),"Canceling the completed replacement disposes its screenshot");
             recognizer.close();
         });
+    }
+    private void repeatedCapture(Instrumentation instrumentation) throws Exception {
+        List<Bitmap> copies = new ArrayList<>(); List<Intent> responses = new ArrayList<>(); int[] renewals = {0};
+        MainActivity.ScreenCaptureService service = new MainActivity.ScreenCaptureService() {
+            @Override public String getPackageName() { return instrumentation.getTargetContext().getPackageName(); }
+            @Override public void sendBroadcast(Intent intent) { responses.add(new Intent(intent)); }
+            @Override boolean captureAlive() { return captureFrames != null; }
+            @Override void requireProjection(Intent request) { renewals[0]++; }
+            @Override void recognizePreview(Bitmap bitmap, long session) {
+                copies.add(bitmap); sendPreview(session, Collections.emptyList(), null);
+            }
+        };
+        AtomicReference<ImageWriter> writer = new AtomicReference<>();
+        instrumentation.runOnMainSync(() -> {
+            service.w = 7; service.h = 5;
+            service.captureFrames = new ScreenCaptureFrames(7, 5, service.captureMain);
+            writer.set(ImageWriter.newInstance(service.captureFrames.surface(), 1));
+        });
+        try {
+            for (int frame = 0; frame < 5; frame++) {
+                final int color = Color.rgb(31 + frame, 73, 149);
+                instrumentation.runOnMainSync(() -> queueCaptureFrame(writer.get(), color));
+                // No new display frame is produced during these two captures.
+                for (int request = 0; request < 2; request++) {
+                    final long session = 100 + frame * 2 + request; final int count = copies.size() + 1;
+                    instrumentation.runOnMainSync(() -> service.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
+                            .putExtra("session", session).putExtra("pickup_mode", OcrPickupMode.ENGLISH.value)));
+                    for (int wait = 0; wait < 150; wait++) {
+                        instrumentation.waitForIdleSync();
+                        if (copies.size() >= count) break;
+                        Thread.sleep(20);
+                    }
+                    instrumentation.runOnMainSync(() -> {
+                        check(copies.size() == count && copies.get(count - 1).getPixel(2, 2) == color,
+                                "Every repeated capture reads the current frame, including an unchanged static screen");
+                        check(!service.previewInFlight && renewals[0] == 0,
+                                "Successful repeated captures release the operation without requesting another grant");
+                    });
+                }
+            }
+            instrumentation.runOnMainSync(() -> {
+                check(copies.get(0) != copies.get(1) && copies.get(0).getPixel(2, 2) == Color.rgb(31, 73, 149),
+                        "Each OCR owns its bitmap and later native frames cannot overwrite an earlier screenshot");
+                service.captureFrames.close(); service.captureFrames = new ScreenCaptureFrames(7, 5, service.captureMain);
+                service.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
+                        .putExtra("session", 200L).putExtra("pickup_mode", OcrPickupMode.ENGLISH.value));
+            });
+            Thread.sleep(2300); instrumentation.waitForIdleSync();
+            instrumentation.runOnMainSync(() -> {
+                Intent response = responses.get(responses.size() - 1);
+                check(response.getLongExtra("session", -1) == 200 && response.hasExtra("error")
+                                && !service.previewInFlight && renewals[0] == 0,
+                        "No first frame reports a retryable error without revoking valid sharing or locking later OCR");
+                writer.get().close(); writer.set(ImageWriter.newInstance(service.captureFrames.surface(), 1));
+                queueCaptureFrame(writer.get(), Color.GREEN);
+                service.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
+                        .putExtra("session", 201L).putExtra("pickup_mode", OcrPickupMode.ENGLISH.value));
+            });
+            for (int wait = 0; wait < 150; wait++) {
+                instrumentation.waitForIdleSync(); if (copies.size() == 11) break; Thread.sleep(20);
+            }
+            instrumentation.runOnMainSync(() -> check(copies.size() == 11 && copies.get(10).getPixel(2, 2) == Color.GREEN
+                            && !service.previewInFlight && renewals[0] == 0,
+                    "A delayed first frame recovers on the next request using the same authorized capture"));
+        } finally {
+            instrumentation.runOnMainSync(() -> {
+                service.captureMain.removeCallbacksAndMessages(null);
+                writer.get().close(); service.captureFrames.close();
+                for (Bitmap bitmap : copies) bitmap.recycle();
+            });
+        }
+    }
+    private static void queueCaptureFrame(ImageWriter writer, int color) {
+        Image image = writer.dequeueInputImage();
+        Image.Plane plane = image.getPlanes()[0]; java.nio.ByteBuffer buffer = plane.getBuffer();
+        for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
+            int offset = y * plane.getRowStride() + x * plane.getPixelStride();
+            buffer.put(offset, (byte)Color.red(color)); buffer.put(offset + 1, (byte)Color.green(color));
+            buffer.put(offset + 2, (byte)Color.blue(color)); buffer.put(offset + 3, (byte)255);
+        }
+        writer.queueInputImage(image);
     }
     private static MultilingualOcrRecognizer.Region symbols(String text, int left, int top) {
         MultilingualOcrRecognizer.Region region = new MultilingualOcrRecognizer.Region(text,new Rect(left,top,left+text.length()*10,top+20));
