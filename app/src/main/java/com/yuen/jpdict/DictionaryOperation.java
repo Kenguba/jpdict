@@ -20,6 +20,16 @@ final class DictionaryOperation {
         if (instance == null) instance = new DictionaryOperation(context.getApplicationContext());
         return instance;
     }
+    /** New app overlays are added above older windows of the same type. */
+    static void overlayAdded(Context context) {
+        DictionaryOperation operation;
+        synchronized (DictionaryOperation.class) { operation = instance; }
+        if (operation == null) return;
+        operation.main.post(() -> {
+            if (!operation.hasTask() || !operation.background || operation.dialog != null || operation.animation != null) return;
+            operation.hideBubble(); operation.showBubble();
+        });
+    }
     private final Context context;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final WindowManager windows;
@@ -44,8 +54,8 @@ final class DictionaryOperation {
     private final Runnable update = this::updateViews;
 
     private DictionaryOperation(Context context) { this.context = context; windows = (WindowManager)context.getSystemService(Context.WINDOW_SERVICE); }
-    boolean running() { return work != null && !complete; }
-    boolean hasTask() { return work != null && !released; }
+    boolean running() { return hasTask() && !complete; }
+    boolean hasTask() { return generation > 0 && !released; }
     boolean start(Activity activity, DictionaryRepository repository, DictionaryRepository.Work task, DictionaryRepository.Complete callback) {
         return start(activity, repository, task, callback, null);
     }
@@ -60,7 +70,7 @@ final class DictionaryOperation {
         work = repository.execute(task, error -> {
             if (request != generation) return;
             complete = true; failure = error;
-            if (error != null) continuation = null;
+            if (error != null) { continuation = null; }
             message = error == null ? (continuation == null ? "操作完成" : "扫描完成，点按继续选择词库") : "操作失败";
             updateViews(); callback.done(error);
             Activity foreground = owner.get();
@@ -71,7 +81,7 @@ final class DictionaryOperation {
     }
     void attach(Activity activity) {
         owner = new WeakReference<>(activity);
-        if (activity instanceof DictionaryActivity && continueIn((DictionaryActivity)activity)) return;
+        if (activity instanceof DictionaryActivity && continueIn((DictionaryActivity)activity)) { return; }
         if (hasTask() && !background) show(activity);
     }
     void detach(Activity activity) {
@@ -222,6 +232,7 @@ final class DictionaryOperation {
     void cancel() { if (work != null && !complete) work.cancel(true); }
     void dismiss() {
         released = true; continuation = null; stopAnimation(); dismissDialog(); hideBubble();
+        DictionaryOperationService.clearResult(context);
         context.stopService(new Intent(context, DictionaryOperationService.class));
     }
     private final class Bubble extends View {

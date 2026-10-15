@@ -36,8 +36,40 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     static final class Region {
         final String text;
         final Rect bounds;
+        final List<Symbol> symbols = new ArrayList<>();
         float quality;
+        boolean boundedRange;
         Region(String text, Rect bounds) { this.text = text; this.bounds = new Rect(bounds); }
+        Region slice(int first, int last) {
+            Symbol begin = symbols.get(first), end = symbols.get(last);
+            Rect selected = new Rect();
+            for (int i = first; i <= last; i++) selected.union(symbols.get(i).bounds);
+            Region result = new Region(text.substring(begin.start, end.end), selected);
+            result.quality = quality; result.boundedRange = true;
+            return result;
+        }
+        Region clean(OcrPickupMode mode) {
+            String cleaned = mode.clean(text);
+            if (cleaned.equals(text)) return this;
+            Region result = new Region(cleaned, bounds); result.quality = quality;
+            int cursor = 0;
+            for (Symbol symbol : symbols) {
+                String letter = mode.clean(text.substring(symbol.start, symbol.end));
+                if (letter.isEmpty()) continue;
+                int start = cleaned.indexOf(letter, cursor);
+                if (start < 0) { result.symbols.clear(); break; }
+                cursor = start + letter.length();
+                result.symbols.add(new Symbol(start, cursor, symbol.bounds));
+            }
+            return result;
+        }
+    }
+    static final class Symbol {
+        final int start, end;
+        final Rect bounds;
+        Symbol(int start, int end, Rect bounds) {
+            this.start = start; this.end = end; this.bounds = new Rect(bounds);
+        }
     }
 
     enum Script {
@@ -112,6 +144,8 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             public void onSuccess(List<Region> regions) {
                 for (Region region : regions) {
                     Region mapped = new Region(region.text, prepared.toScreen(region.bounds));
+                    for (Symbol symbol : region.symbols)
+                        mapped.symbols.add(new Symbol(symbol.start, symbol.end, prepared.toScreen(symbol.bounds)));
                     mapped.quality = region.quality; merge(found, mapped);
                 }
                 next(null);
@@ -125,11 +159,43 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         });
     }
     private static void completeSelection(List<Region> found, Region seed, float x, float y, float tolerance, Callback callback, Exception error) {
-        Region best = regionAt(found, x, y, tolerance);
-        if (seed != null && best != null && !best.text.equals(seed.text)
-                && (!preservesSelection(seed.bounds, best.bounds) || best.quality < seed.quality+0.05f)) best = seed;
+        Region best = selectionResult(found, seed, x, y, tolerance);
         if (best != null) callback.onSuccess(best.text);
         else callback.onFailure(error != null ? error : new IllegalStateException("准星附近没有识别到文字"));
+    }
+    static Region selectionResult(List<Region> found, Region seed, float x, float y, float tolerance) {
+        // A user-defined character range must not expand to a whole model element
+        // during refinement. Preserve it when the model cannot supply glyphs.
+        if (seed != null && seed.boundedRange) {
+            List<Region> clipped = new ArrayList<>();
+            for (Region region : found) {
+                if (region == seed) { clipped.add(seed); continue; }
+                int first = -1, last = -1;
+                for (int i = 0; i < region.symbols.size(); i++) {
+                    Rect b = region.symbols.get(i).bounds;
+                    if (seed.bounds.contains(b.centerX(), b.centerY())) {
+                        if (first < 0) first = i;
+                        last = i;
+                    }
+                }
+                if (first >= 0) clipped.add(region.slice(first, last));
+                else if (preservesSelection(seed.bounds, region.bounds)
+                        && region.bounds.width() <= seed.bounds.width() * 1.15f
+                        && region.bounds.height() <= seed.bounds.height() * 1.15f) clipped.add(region);
+            }
+            found = clipped;
+        }
+        Region best = regionAt(found, x, y, tolerance);
+        if (seed != null && best != null && !best.text.equals(seed.text)
+                && (!preservesSelection(seed.bounds, best.bounds)
+                || (seed.boundedRange && !preservesRangeEdges(seed.bounds, best.bounds))
+                || best.quality < seed.quality+0.05f)) best = seed;
+        return best;
+    }
+    private static boolean preservesRangeEdges(Rect original, Rect refined) {
+        float horizontal = Math.max(1, original.width()*0.04f), vertical = Math.max(1, original.height()*0.04f);
+        return refined.left <= original.left+horizontal && refined.right >= original.right-horizontal
+                && refined.top <= original.top+vertical && refined.bottom >= original.bottom-vertical;
     }
     static Region regionAt(List<Region> regions, float x, float y, float tolerance) {
         Region selected = null; double best = Double.MAX_VALUE;
@@ -240,18 +306,41 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         if (!task.isSuccessful() || task.getResult() == null) return;
         Text result = task.getResult();
         for (Text.TextBlock block : result.getTextBlocks()) for (Text.Line line : block.getLines()) {
-            if (sentences) addRegion(regions, line.getText(), line.getBoundingBox(), script, line.getConfidence());
-            else for (Text.Element element : line.getElements())
-                addRegion(regions, element.getText(), element.getBoundingBox(), script, element.getConfidence());
+            if (sentences) {
+                Region candidate = createRegion(line.getText(), line.getBoundingBox(), script, line.getConfidence());
+                if (candidate == null) continue;
+                int cursor = 0;
+                for (Text.Element element : line.getElements()) {
+                    int start = candidate.text.indexOf(element.getText(), cursor);
+                    if (start < 0) continue;
+                    addSymbols(candidate, element, start); cursor = start + element.getText().length();
+                }
+                merge(regions, candidate);
+            } else for (Text.Element element : line.getElements()) {
+                Region candidate = createRegion(element.getText(), element.getBoundingBox(), script, element.getConfidence());
+                if (candidate == null) continue;
+                addSymbols(candidate, element, 0); merge(regions, candidate);
+            }
         }
     }
-    private static void addRegion(List<Region> regions, String text, Rect bounds, Script script, float confidence) {
-        if (bounds == null || bounds.isEmpty() || text.trim().isEmpty()) return;
+    private static void addSymbols(Region region, Text.Element element, int offset) {
+        int cursor = 0;
+        for (Text.Symbol symbol : element.getSymbols()) {
+            Rect bounds = symbol.getBoundingBox();
+            String text = symbol.getText();
+            int start = element.getText().indexOf(text, cursor);
+            if (start < 0 || bounds == null || bounds.isEmpty() || text.isEmpty()) continue;
+            cursor = start + text.length();
+            region.symbols.add(new Symbol(offset + start, offset + cursor, bounds));
+        }
+    }
+    private static Region createRegion(String text, Rect bounds, Script script, float confidence) {
+        if (bounds == null || bounds.isEmpty() || text.trim().isEmpty()) return null;
         Region candidate = new Region(text, bounds);
         int letters = 0;
         for (int i = 0; i < text.length(); i++) if (Character.isLetterOrDigit(text.charAt(i))) letters++;
         candidate.quality = (float)score(text, script) / Math.max(1, letters) + confidence;
-        merge(regions, candidate);
+        return candidate;
     }
     private static boolean overlaps(Rect first, Rect second) {
         if (!Rect.intersects(first, second)) return false;
@@ -271,6 +360,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             if (!overlaps(old.bounds, candidate.bounds)) continue;
             if (old.text.equals(candidate.text)) {
                 old.quality = Math.max(old.quality, candidate.quality)+0.02f;
+                if (old.symbols.isEmpty()) old.symbols.addAll(candidate.symbols);
             } else if (candidate.quality > old.quality) regions.set(i, candidate);
             return;
         }

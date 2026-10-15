@@ -8,12 +8,24 @@ public final class OcrGestureRulesTest {
     }
     public static void main(String[] args) {
         OcrDwellGate dwell = new OcrDwellGate(12);
-        check(dwell.move(100, 100, 1000) == 300, "A new area requires a full 300ms");
-        check(dwell.move(102, 99, 1200) == 100, "Small jitter preserves dwell");
-        check(dwell.move(110, 100, 1299) == 1, "299ms does not arm OCR");
-        check(dwell.move(100, 101, 1300) == 0, "300ms permits OCR");
-        check(dwell.move(125, 100, 1320) == 300, "Travel to another area restarts dwell");
-        dwell.reset(); check(dwell.move(125, 100, 1600) == 300, "New gestures cannot inherit previous dwell");
+        check(dwell.move(100, 100, 1000) == 150, "A new area requires a full 150ms");
+        check(dwell.move(102, 99, 1100) == 50, "Small jitter preserves dwell");
+        check(dwell.move(110, 100, 1149) == 1, "149ms does not arm OCR");
+        check(dwell.move(100, 101, 1150) == 0, "150ms permits OCR");
+        check(dwell.move(125, 100, 1170) == 150, "Travel to another area restarts dwell");
+        dwell.reset(); check(dwell.move(125, 100, 1600) == 150, "New gestures cannot inherit previous dwell");
+        OcrPointerGeometry pointer = new OcrPointerGeometry();
+        check(pointer.update(800,844,1000,1) == 788 && !pointer.below(), "Pointer normally clears the top of the bubble");
+        check(pointer.update(896,940,1000,1) == 952 && pointer.below(), "Bubble-height plus pointer clearance enters the lower-screen mode");
+        check(pointer.update(882,926,1000,1) == 938 && pointer.below(), "Small return motion cannot flip the pointer repeatedly");
+        check(pointer.update(872,916,1000,1) == 860 && !pointer.below(), "24dp extra room returns the pointer above");
+        pointer.update(956,1000,1000,1);
+        float bottomTop = pointer.clampBubbleTop(956,44,1000,1);
+        check(bottomTop == 940 && pointer.update(bottomTop,bottomTop+44,1000,1) == 996, "Reserved edge clearance exposes the bottommost pointer");
+        pointer.reset();
+        check(pointer.clampBubbleTop(0,44,1000,1) == 16 && pointer.update(16,60,1000,1) == 4, "Topmost pointer remains outside the bubble and on screen");
+        pointer.reset();
+        check(pointer.update(1792,1880,2000,2) == 1904 && pointer.below(), "Geometry thresholds use dp across display densities");
         check(OcrPickupMode.direction(0, -50, 28) == 0, "Up selects sentence");
         check(OcrPickupMode.direction(50, 0, 28) == 1, "Right selects Japanese");
         check(OcrPickupMode.direction(0, 50, 28) == 2, "Down selects English");

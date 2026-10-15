@@ -33,7 +33,7 @@ final class OcrJoystickView extends View {
         canvas.restore();
         paint.setColor(0x30168af2); paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(density);
         canvas.drawCircle(x, y, radius, paint); paint.setStyle(Paint.Style.FILL);
-        String[] labels = {"句子 OCR", "日语 OCR", "英语单词", "取消"};
+        String[] labels = {"句子 OCR", "日语 OCR", "英语 OCR", "取消"};
         paint.setTextAlign(Paint.Align.CENTER); paint.setTextSize(12*density);
         for (int index = 0; index < 4; index++) {
             float angle = (float)Math.toRadians(index*90-90), r = hole+(radius-hole)*0.55f;

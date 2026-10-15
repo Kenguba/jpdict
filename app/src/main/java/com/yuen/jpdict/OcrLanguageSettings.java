@@ -2,9 +2,13 @@ package com.yuen.jpdict;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /** One persisted OCR preference shared by search and screen capture in this process. */
 final class OcrLanguageSettings {
+    interface Listener { void onLanguageChanged(); }
     enum Language {
         MIXED("mixed", "混合"), KOREAN("korean", "韩语"),
         JAPANESE("japanese", "日语"), ENGLISH("english", "英语");
@@ -22,6 +26,8 @@ final class OcrLanguageSettings {
     private static OcrLanguageSettings shared;
     private final SharedPreferences preferences;
     private volatile Language language;
+    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
+    private final Handler main = new Handler(Looper.getMainLooper());
 
     static synchronized OcrLanguageSettings get(Context context) {
         if (shared == null) {
@@ -40,10 +46,17 @@ final class OcrLanguageSettings {
     }
 
     Language language() { return language; }
+    void observe(Listener listener) { listeners.addIfAbsent(listener); }
+    void removeObserver(Listener listener) { listeners.remove(listener); }
 
     synchronized void setLanguage(Language value) {
         if (value == null) throw new IllegalArgumentException("OCR language must not be null");
+        if (language == value) return;
         preferences.edit().putString("language", value.value).apply();
         language = value;
+        for (Listener listener : listeners) {
+            if (Looper.myLooper() == Looper.getMainLooper()) listener.onLanguageChanged();
+            else main.post(() -> { if (listeners.contains(listener)) listener.onLanguageChanged(); });
+        }
     }
 }

@@ -56,6 +56,17 @@ final class OcrLanguageValidation {
                 test.check(settings.language() == language, "Selection is immediately shared in memory");
                 test.check(new OcrLanguageSettings(preferences).language() == language, "Recreated settings restore the persisted selection");
             }
+            int[] updates={0};
+            OcrLanguageSettings.Listener observer=()->updates[0]++;
+            instrumentation.runOnMainSync(()->{
+                settings.observe(observer);settings.observe(observer);
+                settings.setLanguage(OcrLanguageSettings.Language.JAPANESE);
+                test.check(updates[0]==1,"Shared preference changes notify a mounted observer once on the UI thread");
+                settings.setLanguage(OcrLanguageSettings.Language.JAPANESE);
+                test.check(updates[0]==1,"Choosing the same language cannot restart every mounted input");
+                settings.removeObserver(observer);settings.setLanguage(OcrLanguageSettings.Language.ENGLISH);
+                test.check(updates[0]==1,"Detached observers receive no further shared language updates");
+            });
             try {
                 settings.setLanguage(null);
                 throw new AssertionError("Null OCR language accepted");
@@ -229,6 +240,12 @@ final class OcrLanguageValidation {
                 check(surface.isAttachedToWindow() && surface.getWidth() > 0, "Language gesture fixture has a real laid-out window");
                 check("英语".contentEquals(((TextView)field(surface, "languageLabel")).getText()),
                         "A reopened search displays the cached language instead of the fixed Fast label");
+                settings.setLanguage(OcrLanguageSettings.Language.JAPANESE);
+                check("日语".contentEquals(((TextView)field(surface,"languageLabel")).getText()),
+                        "An external OCR language choice refreshes an already-mounted homepage input without focus changes");
+                settings.setLanguage(OcrLanguageSettings.Language.ENGLISH);
+                check(new OcrLanguageSettings(test.getTargetContext().getSharedPreferences("ocr_language",Context.MODE_PRIVATE)).language()==OcrLanguageSettings.Language.ENGLISH,
+                        "The externally shared choice survives recreating the preference facade");
                 int width = surface.getWidth(), height = surface.getHeight();
                 keyboardLanguages(surface, false, queries);
                 View button = (View)field(surface, "modelButton");

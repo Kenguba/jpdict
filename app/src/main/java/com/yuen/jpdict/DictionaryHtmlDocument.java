@@ -6,8 +6,8 @@ import java.util.*;
 /** A file-backed immutable entry page; cache, controller and WebView own references. */
 final class DictionaryHtmlDocument implements Closeable {
     static final String POLICY = "default-src 'none'; style-src 'unsafe-inline' 'self'; "
-            + "script-src 'unsafe-inline' 'unsafe-eval' 'self'; img-src 'self' data:; font-src 'self' data:; "
-            + "media-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; "
+            + "script-src 'unsafe-inline' 'unsafe-eval' 'self' " + DictionaryRemoteClient.DEBUG_URL + "; img-src 'self' data:; font-src 'self' data:; "
+            + "media-src 'self'; connect-src 'self' " + DictionaryRemoteClient.NOTE_URL + "; frame-src 'none'; object-src 'none'; "
             + "base-uri 'self'; form-action 'none'; worker-src 'none'; child-src 'none'";
     final File file;
     final int entries;

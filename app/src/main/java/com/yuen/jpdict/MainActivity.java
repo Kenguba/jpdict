@@ -108,7 +108,7 @@ public class MainActivity extends Activity {
         root.addView(button("📷 屏幕 OCR", v->startActivity(new Intent(this,OcrActivity.class))));
         TextView note=text("这是自己的浮动取词功能，不调用欧路。\n"
                 +"轻点浮动按钮：打开原生悬浮搜索。\n"
-                    +"拖动浮动按钮：对准文字停留 300ms 后识别，高亮后松手查词；授权失效会重新申请。原地长按 700ms 打开方向摇杆：上方句子、右侧日语、下方英语单词。\n"
+                    +"拖动浮动按钮：对准文字停留 150ms 后识别，高亮后松手查词；来回划过文字可选定范围，屏幕底部指针自动移到按钮下方。原地长按 700ms 打开方向摇杆：上方句子、右侧日语、下方英语，所选语言与主页共用并保存。\n"
                 +"屏幕共享只请求“共享整个屏幕”。");
         root.addView(note);
         setContentView(root);
@@ -438,7 +438,7 @@ public class MainActivity extends Activity {
                 vd=current.createVirtualDisplay("jp-ocr",w,h,dpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,null);
                 if(vd==null)throw new IllegalStateException("屏幕捕获窗口创建失败");
                 READY=true;
-                Notification n=notification("录屏 OCR 已开启","拖动停留 300ms 取词；长按选择识别模式");
+                Notification n=notification("录屏 OCR 已开启","拖动停留 150ms 取词；长按选择并保存识别语言");
                 ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(42,n);
                 sendBroadcast(new Intent(ACTION_READY).setPackage(getPackageName()));
             }catch(RuntimeException error){
@@ -571,12 +571,11 @@ public class MainActivity extends Activity {
             final OcrPickupMode requestMode=previewMode;
             ocrRecognizer.recognizeRegions(bitmap,previewLanguage,requestMode==OcrPickupMode.SENTENCE,new MultilingualOcrRecognizer.RegionsCallback(){
                 public void onSuccess(java.util.List<MultilingualOcrRecognizer.Region> regions){
-                    if(requestMode==OcrPickupMode.ENGLISH){
+                    if(previewLanguage==OcrLanguageSettings.Language.ENGLISH){
                         java.util.List<MultilingualOcrRecognizer.Region> cleaned=new java.util.ArrayList<>();
                         for(MultilingualOcrRecognizer.Region region:regions){
-                            String latin=requestMode.clean(region.text);
-                            if(latin.isEmpty())continue;
-                            MultilingualOcrRecognizer.Region word=new MultilingualOcrRecognizer.Region(latin,region.bounds);word.quality=region.quality;cleaned.add(word);
+                            MultilingualOcrRecognizer.Region word=region.clean(OcrPickupMode.ENGLISH);
+                            if(!word.text.isEmpty())cleaned.add(word);
                         }
                         regions=cleaned;
                     }
@@ -606,10 +605,10 @@ public class MainActivity extends Activity {
             previewInFlight=true;
             String seedText=request.getStringExtra("seed");
             MultilingualOcrRecognizer.Region seed=seedText==null?null:new MultilingualOcrRecognizer.Region(seedText,target);
-            if(seed!=null)seed.quality=request.getFloatExtra("quality",0);
+            if(seed!=null){seed.quality=request.getFloatExtra("quality",0);seed.boundedRange=request.getBooleanExtra("bounded_range",false);}
             ocrRecognizer.recognizeSelection(bitmap,target,seed,request.getFloatExtra("aim_x",0),request.getFloatExtra("aim_y",0),request.getFloatExtra("tolerance",0),previewLanguage,previewMode==OcrPickupMode.SENTENCE,new MultilingualOcrRecognizer.Callback(){
                 public void onSuccess(String text){try{
-                    String cleaned=previewMode.clean(text);
+                    String cleaned=previewLanguage==OcrLanguageSettings.Language.ENGLISH?OcrPickupMode.ENGLISH.clean(text):previewMode.clean(text);
                     sendRefined(session,cleaned,cleaned.isEmpty()?"准星附近没有拉丁字母单词，请重新对准":null);
                 }finally{frame.close();frame.release();}}
                 public void onFailure(Exception error){try{sendRefined(session,null,error.getMessage());}finally{frame.close();frame.release();}}
@@ -631,12 +630,24 @@ public class MainActivity extends Activity {
                 if(regions.size()>4096 || chars>65536){error="屏幕文字过多，请缩放页面后重试";}
                 else{
                     String[] words=new String[regions.size()];int[] boxes=new int[regions.size()*4];float[] quality=new float[regions.size()];
+                    int symbolCount=0;for(MultilingualOcrRecognizer.Region region:regions)symbolCount+=region.symbols.size();
+                    // Bound optional glyph geometry well below Binder's transaction limit.
+                    symbolCount=Math.min(symbolCount,8192);
+                    int[] symbolOwners=new int[symbolCount],symbolOffsets=new int[symbolCount*2],symbolBoxes=new int[symbolCount*4];
+                    int symbolIndex=0;
                     for(int i=0;i<regions.size();i++){
                         MultilingualOcrRecognizer.Region region=regions.get(i);words[i]=region.text;
                         quality[i]=region.quality;
                         boxes[i*4]=region.bounds.left;boxes[i*4+1]=region.bounds.top;boxes[i*4+2]=region.bounds.right;boxes[i*4+3]=region.bounds.bottom;
+                        for(MultilingualOcrRecognizer.Symbol symbol:region.symbols){
+                            if(symbolIndex>=symbolCount)break;
+                            symbolOwners[symbolIndex]=i;symbolOffsets[symbolIndex*2]=symbol.start;symbolOffsets[symbolIndex*2+1]=symbol.end;
+                            symbolBoxes[symbolIndex*4]=symbol.bounds.left;symbolBoxes[symbolIndex*4+1]=symbol.bounds.top;
+                            symbolBoxes[symbolIndex*4+2]=symbol.bounds.right;symbolBoxes[symbolIndex*4+3]=symbol.bounds.bottom;symbolIndex++;
+                        }
                     }
-                    out.putExtra("words",words).putExtra("boxes",boxes).putExtra("quality",quality);
+                    out.putExtra("words",words).putExtra("boxes",boxes).putExtra("quality",quality)
+                            .putExtra("symbol_owners",symbolOwners).putExtra("symbol_offsets",symbolOffsets).putExtra("symbol_boxes",symbolBoxes);
                 }
             }
             if(error!=null)out.putExtra("error",error);
