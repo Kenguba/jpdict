@@ -17,14 +17,15 @@ final class OcrJoystickView extends View {
         destination = LookupDestinationSettings.get(context);
         x = bubble.exactCenterX(); y = bubble.exactCenterY(); hole = bubble.width()/2f + 5*density;
         knobX=x;knobY=y;
-        setAlpha(0); animate().alpha(1).setDuration(150).start();
+        setAlpha(0);
     }
     void select(int next, Rect knob) { direction = next; knobX=knob.exactCenterX();knobY=knob.exactCenterY();invalidate(); }
     @Override protected void onAttachedToWindow() {
-        super.onAttachedToWindow(); destination.observe(destinationChanged); invalidate();
+        super.onAttachedToWindow(); destination.observe(destinationChanged);
+        animate().alpha(1).setDuration(150).start(); invalidate();
     }
     @Override protected void onDetachedFromWindow() {
-        destination.removeObserver(destinationChanged); super.onDetachedFromWindow();
+        animate().cancel(); destination.removeObserver(destinationChanged); super.onDetachedFromWindow();
     }
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);

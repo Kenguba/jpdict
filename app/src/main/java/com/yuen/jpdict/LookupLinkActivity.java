@@ -33,6 +33,7 @@ public final class LookupLinkActivity extends Activity {
     private boolean showingSearch;
     private boolean hostVisible;
     private boolean pageInFront;
+    private boolean externalLookupPending;
     private String hostSession = java.util.UUID.randomUUID().toString();
     private Intent pendingForward;
 
@@ -47,6 +48,18 @@ public final class LookupLinkActivity extends Activity {
                 showingSearch = true;
                 configureTransparentHost();
                 forwardSearch(getIntent());
+            } else if (FloatingService.ACTION_LOOKUP_HOST_EXTERNAL.equals(intent.getAction())) {
+                if (!hostVisible || isFinishing() || !showingSearch || externalLookupPending) return;
+                String query = intent.getStringExtra(FloatingService.EXTRA_LOOKUP_QUERY);
+                if (query == null || query.trim().isEmpty()) { forwardSearch(getIntent()); return; }
+                // Set this before startActivity: onUserLeaveHint must not
+                // dismiss the search surface that will be restored on return.
+                externalLookupPending = true;
+                pageInFront = true;
+                if (!ThirdPartyLookup.launch(LookupLinkActivity.this, query)) {
+                    externalLookupPending = false; pageInFront = false;
+                    forwardSearch(getIntent());
+                }
             } else if (FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE.equals(intent.getAction())) {
                 if (!hostVisible || isFinishing()) return;
                 if (intent.getBooleanExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, false)) {
@@ -91,6 +104,8 @@ public final class LookupLinkActivity extends Activity {
         showingSearch = getIntent().getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false)
                 || (state != null && state.getBoolean(STATE_SHOWING_SEARCH, false));
         pageInFront = state != null && state.getBoolean("page_in_front", false);
+        externalLookupPending = state != null && state.getBoolean("external_lookup_pending", false);
+        if (state != null) hostSession = state.getString("host_session", hostSession);
         configureTransparentHost();
         registerFinishReceiver();
         // A lookup host can switch back to search without a new Activity intent.
@@ -104,12 +119,16 @@ public final class LookupLinkActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putBoolean(STATE_SHOWING_SEARCH, showingSearch);
         state.putBoolean("page_in_front", pageInFront);
+        state.putBoolean("external_lookup_pending", externalLookupPending);
+        state.putString("host_session", hostSession);
         super.onSaveInstanceState(state);
     }
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         hostSession = java.util.UUID.randomUUID().toString();
+        externalLookupPending = false;
+        pageInFront = false;
         setIntent(intent);
         currentMode = extractMode(intent);
         showingSearch = intent.getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false);
@@ -128,6 +147,14 @@ public final class LookupLinkActivity extends Activity {
         // A settings/search page launched above this bridge protects it from
         // onStop cleanup. Once the bridge resumes, that page has left the top.
         pageInFront = false;
+        if (externalLookupPending) {
+            externalLookupPending = false;
+            // Use the retained Service draft, including private input, rather
+            // than copying a possibly older query from this host's Intent.
+            pendingForward = new Intent(this, LookupLinkActivity.class)
+                    .putExtra(FloatingService.EXTRA_HOST_SEARCH, true)
+                    .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, true);
+        }
         // Register only after the Activity is truly resumed. Some OriginOS
         // versions ignore predictive/system Back callbacks registered too early.
         registerSystemBack();
@@ -228,6 +255,7 @@ public final class LookupLinkActivity extends Activity {
     private void registerFinishReceiver() {
         IntentFilter filter = new IntentFilter(FloatingService.ACTION_LOOKUP_HOST_FINISH);
         filter.addAction(FloatingService.ACTION_LOOKUP_HOST_SEARCH);
+        filter.addAction(FloatingService.ACTION_LOOKUP_HOST_EXTERNAL);
         filter.addAction(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE);
         try {
             ContextCompat.registerReceiver(this, finishReceiver, filter,
@@ -440,6 +468,8 @@ public final class LookupLinkActivity extends Activity {
                 .setAction(FloatingService.ACTION_SHOW_SEARCH)
                 .putExtra(FloatingService.EXTRA_HOST_SESSION, hostSession)
                 .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
+                .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,
+                        source.getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false))
                 .putExtra(FloatingService.EXTRA_SEARCH_QUERY,
                         source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY));
         try {

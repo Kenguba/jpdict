@@ -24,7 +24,9 @@ final class OcrPickupController implements AutoCloseable {
     private final int slop;
     private final float density;
     private SelectionView overlay;
+    private boolean overlayHiding;
     private OcrJoystickView joystick;
+    private OcrJoystickView dismissingJoystick;
     private final OcrSweepSelection sweep = new OcrSweepSelection();
     private final OcrPointerGeometry pointer = new OcrPointerGeometry();
     private final List<float[]> path = new ArrayList<>();
@@ -234,9 +236,16 @@ final class OcrPickupController implements AutoCloseable {
         if (path.isEmpty()) recordPoint();
         showOverlay();
         session = SystemClock.elapsedRealtimeNanos();
-        context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
-                .setAction(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
-                .putExtra("session", session).putExtra("pickup_mode", mode.value));
+        final long requestedSession = session;
+        Runnable capture = () -> {
+            if (!armed || closed || session != requestedSession) return;
+            context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
+                    .setAction(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
+                    .putExtra("session", requestedSession).putExtra("pickup_mode", mode.value));
+        };
+        // Let the outgoing white direction ring leave the next display frame
+        // before requesting capture; it must never cover the text being read.
+        if (dismissingJoystick != null) main.postDelayed(capture, 160); else capture.run();
         main.removeCallbacks(timeout); main.postDelayed(timeout, 10000);
     }
     private void requestAuthorization() {
@@ -245,7 +254,18 @@ final class OcrPickupController implements AutoCloseable {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
     }
     private void hideJoystick() {
-        if (joystick != null) { wm.removeView(joystick); joystick = null; }
+        if (dismissingJoystick != null) {
+            dismissingJoystick.animate().cancel(); wm.removeView(dismissingJoystick); dismissingJoystick = null;
+        }
+        if (joystick == null) return;
+        OcrJoystickView outgoing = joystick; joystick = null;
+        outgoing.animate().cancel();
+        if (closed) { wm.removeView(outgoing); return; }
+        dismissingJoystick = outgoing;
+        outgoing.animate().alpha(0).setDuration(140).withEndAction(() -> {
+            if (dismissingJoystick != outgoing) return;
+            wm.removeView(outgoing); dismissingJoystick = null;
+        }).start();
     }
     static String swipeDirection(float dx, float dy, float threshold) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return null;
@@ -275,13 +295,33 @@ final class OcrPickupController implements AutoCloseable {
         return MultilingualOcrRecognizer.regionAt(regions, x, y, tolerance);
     }
     private void showOverlay() {
-        if (overlay != null) { overlay.invalidate(); return; }
+        if (overlay != null) {
+            overlay.frozen = null;
+            if (overlayHiding) {
+                overlayHiding = false; overlay.animate().cancel();
+                overlay.animate().alpha(1).setDuration(140).start();
+            }
+            overlay.invalidate(); return;
+        }
         if (!armed && !dragging) return;
         overlay = new SelectionView(context);
+        overlay.setAlpha(0);
         wm.addView(overlay, overlayParams());
+        overlay.animate().alpha(1).setDuration(140).start();
         DictionaryOperation.overlayAdded(context);
     }
-    private void hideOverlay() { if (overlay != null) { wm.removeView(overlay); overlay = null; } }
+    private void hideOverlay() {
+        if (overlay == null) return;
+        SelectionView outgoing = overlay;
+        outgoing.animate().cancel();
+        if (closed) { wm.removeView(outgoing); overlay = null; overlayHiding = false; return; }
+        outgoing.freeze();
+        overlayHiding = true;
+        outgoing.animate().alpha(0).setDuration(140).withEndAction(() -> {
+            if (overlay != outgoing || !overlayHiding) return;
+            wm.removeView(outgoing); overlay = null; overlayHiding = false;
+        }).start();
+    }
     private WindowManager.LayoutParams overlayParams() {
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(-1, -1,
                 Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
@@ -318,17 +358,27 @@ final class OcrPickupController implements AutoCloseable {
     void cancel() {
         if (armed && MainActivity.ScreenCaptureService.READY) context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
                 .setAction(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session", session));
+        hideOverlay();
         armed = waiting = released = pendingAuthorization = dragging = captureVisible = false; session++; gestureGeneration++;
         hideJoystick(); sweep.clear();
         main.removeCallbacks(timeout); regions.clear(); path.clear(); selected = null;
-        hideOverlay();
     }
     @Override public void close() { closed = true; cancel(); main.removeCallbacksAndMessages(null); context.unregisterReceiver(receiver); }
     private final class SelectionView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private Picture frozen;
         SelectionView(Context c) { super(c); }
+        void freeze() {
+            if (frozen != null || getWidth() <= 0 || getHeight() <= 0) return;
+            frozen = new Picture();
+            drawSelection(frozen.beginRecording(getWidth(), getHeight())); frozen.endRecording();
+        }
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
+            if (frozen != null) { canvas.drawPicture(frozen); return; }
+            drawSelection(canvas);
+        }
+        private void drawSelection(Canvas canvas) {
             int[] location = new int[2]; getLocationOnScreen(location);
             canvas.save(); canvas.translate(-location[0], -location[1]);
             if (captureVisible && selected != null) {

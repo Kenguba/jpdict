@@ -103,6 +103,19 @@ final class SearchTextSegments {
         }
         return Collections.unmodifiableList(result);
     }
+    /** Replace one bounded batch while retaining earlier/later batches and their source ranges. */
+    static void replaceRange(List<Part> displayed, Page page, List<Part> replacement) {
+        int low = 0, high = displayed.size();
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (displayed.get(middle).end <= page.start) low = middle + 1;
+            else high = middle;
+        }
+        int start = low;
+        while (low < displayed.size() && displayed.get(low).start < page.end) low++;
+        displayed.subList(start, low).clear();
+        displayed.addAll(start, replacement);
+    }
     private static boolean isMark(int cp) {
         int type = Character.getType(cp);
         return type == Character.NON_SPACING_MARK || type == Character.COMBINING_SPACING_MARK;
