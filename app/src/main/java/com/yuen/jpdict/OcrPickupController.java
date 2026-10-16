@@ -32,7 +32,7 @@ final class OcrPickupController implements AutoCloseable {
     private final OcrPointerGeometry pointer = new OcrPointerGeometry();
     private final List<float[]> path = new ArrayList<>();
     private OcrPickupMode mode = OcrPickupMode.WORD;
-    private boolean pendingAuthorization;
+    private boolean singleEnglishWord, pendingAuthorization;
     private long gestureGeneration;
     private final List<MultilingualOcrRecognizer.Region> regions = new ArrayList<>();
     private MultilingualOcrRecognizer.Region selected;
@@ -101,7 +101,7 @@ final class OcrPickupController implements AutoCloseable {
                             new Rect(symbolBoxes[i*4], symbolBoxes[i*4+1], symbolBoxes[i*4+2], symbolBoxes[i*4+3])));
                 }
             }
-            for (float[] point : path) sweep.move(regions, point[0], point[1], 12*density);
+            for (float[] point : path) sweep.move(regions, point[0], point[1], 12*density, singleEnglishWord);
             path.clear();
             select();
             if (released) finish(); else showOverlay();
@@ -234,6 +234,8 @@ final class OcrPickupController implements AutoCloseable {
     private void startPickup(boolean immediatelyRelease) {
         if (!MainActivity.ScreenCaptureService.READY) { requestAuthorization(); return; }
         armed = waiting = true; released = immediatelyRelease;
+        singleEnglishWord = mode == OcrPickupMode.ENGLISH || (mode == OcrPickupMode.WORD
+                && OcrLanguageSettings.get(context).language() == OcrLanguageSettings.Language.ENGLISH);
         captureVisible = false;
         sweep.clear(); regions.clear(); selected = null;
         if (immediatelyRelease) path.clear();
@@ -297,7 +299,7 @@ final class OcrPickupController implements AutoCloseable {
         path.add(new float[]{aimX, aimY});
     }
     private void select() {
-        sweep.move(regions, aimX, aimY, 12*density); selected = sweep.combined();
+        sweep.move(regions, aimX, aimY, 12*density, singleEnglishWord); selected = sweep.combined();
         if (overlay != null) overlay.invalidate();
     }
     static MultilingualOcrRecognizer.Region regionAt(List<MultilingualOcrRecognizer.Region> regions, float x, float y, float tolerance) {
