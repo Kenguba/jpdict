@@ -234,6 +234,9 @@ final class OcrValidation {
         onMain(instrumentation, () -> {
             capture.ocrRecognizer=recognizer;capture.previewLanguage=OcrLanguageSettings.Language.ENGLISH;
             capture.previewSession=capture.previewOperation=51;capture.previewInFlight=true;capture.recognizePreview(old,51);
+        });
+        awaitMain(instrumentation, () -> calls[0]==1, "The background recognizer never started");
+        onMain(instrumentation, () -> {
             capture.onStartCommand(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_CANCEL).putExtra("session",51L),0,1);
             check(capture.previewSession==0 && capture.previewInFlight && capture.previewFrame==null,
                     "Cancel retires the current session while preserving the single physical model operation");
@@ -525,14 +528,14 @@ final class OcrValidation {
         MainActivity.ScreenCaptureService.READY = false;
         try {
             onMain(instrumentation, () -> { owner.set(new OcrPickupController(capture, host)); listener.set(owner.get().listener()); view.set(new View(app)); });
-            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
-            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
             onMain(instrumentation, () -> {
+                touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
+                touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
                 try { java.lang.reflect.Field field=OcrPickupController.class.getDeclaredField("overlay");field.setAccessible(true);
                     check(field.get(owner.get()) != null && request.get()==null, "Pointer is mounted as soon as dragging starts, before dwell or screenshot");
                 } catch(ReflectiveOperationException error){throw new AssertionError(error);}
+                touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 520, 720);
             });
-            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, 520, 720);
             onMain(instrumentation, () -> {
                 check(moves[0] == 1 && saves[0] == 1 && position.left == 500, "Quick ordinary drag moves and saves the button");
                 check(request.get() == null && activities[0] == 0 && taps[0] == 0, "Quick movement never starts OCR or authorization");
