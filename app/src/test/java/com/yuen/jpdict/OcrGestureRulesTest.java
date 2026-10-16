@@ -21,6 +21,12 @@ public final class OcrGestureRulesTest {
         check(denseDwell.move(149,100,2200)==1 && denseDwell.move(149,100,2201)==0,
                 "A replacement pointer area permits capture at exactly 150ms, never at 149ms");
         OcrPointerGeometry pointer = new OcrPointerGeometry();
+        check(pointer.horizontalAim(122,1000,1)==122,
+                "The crosshair follows the raw touch coordinate instead of the bubble center");
+        check(pointer.horizontalAim(0,1000,1)==4 && pointer.horizontalAim(1000,1000,1)==996,
+                "The crosshair stays visible at both display edges");
+        check(pointer.horizontalAim(2100,2160,2)==2100,
+                "Touch coordinates are preserved across display densities");
         check(pointer.update(800,844,1000,1) == 788 && !pointer.below(), "Pointer normally clears the top of the bubble");
         check(pointer.update(896,940,1000,1) == 952 && pointer.below(), "Bubble-height plus pointer clearance enters the lower-screen mode");
         check(pointer.update(882,926,1000,1) == 938 && pointer.below(), "Small return motion cannot flip the pointer repeatedly");
