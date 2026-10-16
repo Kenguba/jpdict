@@ -5,9 +5,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Selects actual glyph bounds along the pointer path; a return pass keeps its extrema. */
 final class OcrSweepSelection {
+    private static final Pattern LATIN_WORD = Pattern.compile("[\\p{IsLatin}\\p{M}]+(?:[-'’][\\p{IsLatin}\\p{M}]+)*");
     final List<MultilingualOcrRecognizer.Region> picked = new ArrayList<>();
     private final IdentityHashMap<MultilingualOcrRecognizer.Region, int[]> ranges = new IdentityHashMap<>();
     private final List<MultilingualOcrRecognizer.Region> sources = new ArrayList<>();
@@ -28,6 +31,18 @@ final class OcrSweepSelection {
     }
 
     void move(List<MultilingualOcrRecognizer.Region> regions, float x, float y, float tolerance) {
+        move(regions, x, y, tolerance, false);
+    }
+
+    void move(List<MultilingualOcrRecognizer.Region> regions, float x, float y, float tolerance, boolean singleEnglishWord) {
+        if (singleEnglishWord) {
+            // In English word mode the pointer is a hit-test, not a sweep rectangle.
+            // Ignore proximity hits in adjacent lines and never cross whitespace.
+            MultilingualOcrRecognizer.Region touched = MultilingualOcrRecognizer.regionAt(regions, x, y, 0);
+            MultilingualOcrRecognizer.Region word = englishWordAt(touched, x, y);
+            if (word != null) { picked.clear(); picked.add(word); }
+            return;
+        }
         MultilingualOcrRecognizer.Region touched = MultilingualOcrRecognizer.regionAt(regions, x, y, tolerance);
         if (touched != null && (distant(touched) || sources.size() >= 64)) clear();
         if (touched == null && !picked.isEmpty()) {
@@ -70,6 +85,31 @@ final class OcrSweepSelection {
         if (touched != null) add(touched, symbolAt(touched, x, y));
         if (!hasPoint) { originX = x; originY = y; }
         lastX = x; lastY = y; hasPoint = true; rebuild();
+    }
+
+    static MultilingualOcrRecognizer.Region englishWordAt(MultilingualOcrRecognizer.Region region, float x, float y) {
+        if (region == null || !region.bounds.contains((int)x, (int)y)) return null;
+        Matcher match = LATIN_WORD.matcher(region.text);
+        while (match.find()) {
+            Rect wordBounds = new Rect();
+            if (region.symbols.isEmpty()) {
+                // No glyph boxes: accept a model element only when it is already one word.
+                // Guessing an offset within an unsplit line can select the wrong word.
+                if (!OcrPickupMode.ENGLISH.clean(region.text).equals(match.group())) continue;
+                wordBounds.set(region.bounds);
+            } else {
+                for (MultilingualOcrRecognizer.Symbol symbol : region.symbols) {
+                    if (symbol.end > match.start() && symbol.start < match.end()) wordBounds.union(symbol.bounds);
+                }
+            }
+            if (wordBounds.isEmpty() || !wordBounds.contains((int)x, (int)y)) continue;
+            MultilingualOcrRecognizer.Region word = new MultilingualOcrRecognizer.Region(match.group(), wordBounds);
+            word.quality = region.quality;
+            word.boundedRange = true;
+            word.selectedBounds.add(new Rect(wordBounds));
+            return word;
+        }
+        return null;
     }
 
     private boolean distant(MultilingualOcrRecognizer.Region region) {
