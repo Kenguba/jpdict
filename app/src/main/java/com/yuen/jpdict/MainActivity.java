@@ -11,7 +11,6 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
-import android.media.Image;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
@@ -24,7 +23,6 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 import android.widget.RemoteViews;
 
-import java.nio.ByteBuffer;
 import java.util.*;
 
 public class MainActivity extends Activity {
@@ -539,48 +537,30 @@ public class MainActivity extends Activity {
                 @Override public void run(){
                 if(preview && session!=previewSession){finishPreviewOperation(session);return;}
                 if(!captureAlive()){if(preview)finishPreviewOperation(session);requireProjection(request);return;}
-                final Image image;
-                try{image=captureFrames.latest();}
-                catch(RuntimeException error){
-                    if(++attempts<25){captureMain.postDelayed(this,80);return;}
-                    captureFailed(preview,region,session,"屏幕帧暂时不可用，请稍后重试");return;
-                }
-                if(image==null){
-                    if(++attempts<25){captureMain.postDelayed(this,80);return;}
-                    captureFailed(preview,region,session,"尚未收到屏幕画面，请稍后重试");return;
-                }
-                Bitmap bmp=null;
-                try{
-                    Image.Plane p=image.getPlanes()[0];
-                    // The latest native frame can serve repeated requests on
-                    // a static screen, so never advance its shared buffer.
-                    ByteBuffer buf=p.getBuffer().duplicate();buf.rewind();
-                    int imageWidth=image.getWidth(), imageHeight=image.getHeight();
-                    int px=p.getPixelStride(), row=p.getRowStride(), pad=row-px*imageWidth;
-                    Bitmap tmp=Bitmap.createBitmap(imageWidth+pad/px,imageHeight,Bitmap.Config.ARGB_8888);
-                    tmp.copyPixelsFromBuffer(buf);
-                    Bitmap full=Bitmap.createBitmap(tmp,0,0,imageWidth,imageHeight);
-                    if(tmp!=full) tmp.recycle();
-
-                    if(region){
-                        int left=Math.max(0,Math.min(rx,imageWidth-1));
-                        int top=Math.max(0,Math.min(ry,imageHeight-1));
-                        int cw=Math.max(1,Math.min(rw,imageWidth-left));
-                        int ch=Math.max(1,Math.min(rh,imageHeight-top));
-                        bmp=Bitmap.createBitmap(full,left,top,cw,ch);
-                        if(bmp!=full) full.recycle();
-                    }else{
-                        bmp=full;
+                final ScreenCaptureFrames source=captureFrames;
+                Rect crop=region?new Rect(rx,ry,rx+rw,ry+rh):null;
+                source.copyLatest(crop,(bitmap,error,retryable)->{
+                    // Copy completion may arrive after cancellation, rotation or
+                    // a renewed projection. Only the owning capture can publish.
+                    if(preview && (session!=previewSession || session!=previewOperation)){
+                        if(bitmap!=null)bitmap.recycle();
+                        finishPreviewOperation(session);return;
                     }
-                } catch(Exception e){
-                    captureFailed(preview,region,session,"截图失败："+e.getMessage());
-                    return;
-                }
-
-                if(preview){
-                    sendBroadcast(new Intent(ACTION_PREVIEW_FRAME).setPackage(getPackageName()).putExtra("session",session));
-                    recognizePreview(bmp,session);
-                }else recognize(bmp,region);
+                    if(source!=captureFrames){
+                        if(bitmap!=null)bitmap.recycle();
+                        captureFailed(preview,region,session,"屏幕画面已变化，请重新取词");return;
+                    }
+                    if(bitmap==null){
+                        if(retryable && ++attempts<25){captureMain.postDelayed(this,80);return;}
+                        captureFailed(preview,region,session,error==null?"尚未收到屏幕画面，请稍后重试"
+                                :retryable?"屏幕帧暂时不可用，请稍后重试":"截图失败："+error.getMessage());
+                        return;
+                    }
+                    if(preview){
+                        sendBroadcast(new Intent(ACTION_PREVIEW_FRAME).setPackage(getPackageName()).putExtra("session",session));
+                        recognizePreview(bitmap,session);
+                    }else recognize(bitmap,region);
+                });
                 }
             },preview?100:280);
         }
