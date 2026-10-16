@@ -1,12 +1,17 @@
 package com.yuen.jpdict;
 
-/** Edge reach and hysteresis for the pointer, independent of window layout timing. */
+/** OCR aim anchoring and edge hysteresis, independent of window layout timing. */
 final class OcrPointerGeometry {
     static final float GAP_DP = 12, RADIUS_DP = 4, HYSTERESIS_DP = 24;
     private boolean below;
 
     void reset() { below = false; }
     boolean below() { return below; }
+
+    float horizontalAim(float touchX, float screenWidth, float density) {
+        float radius = RADIUS_DP * density;
+        return Math.max(radius, Math.min(touchX, screenWidth - radius));
+    }
 
     float update(float bubbleTop, float bubbleBottom, float screenBottom, float density) {
         float threshold = bubbleBottom - bubbleTop + (GAP_DP + RADIUS_DP) * density;

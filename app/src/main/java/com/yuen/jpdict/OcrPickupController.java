@@ -199,7 +199,7 @@ final class OcrPickupController implements AutoCloseable {
                 wm.getDefaultDisplay().getRealMetrics(screen);
                 pointer.update(y, y+start.height(), screen.heightPixels, density);
                 int top = Math.round(pointer.clampBubbleTop(y, start.height(), screen.heightPixels, density));
-                updateAim(host.move(x, top)); lastX = x; lastY = y;
+                updateAim(host.move(x, top), event.getRawX()); lastX = x; lastY = y;
                 if (wasBelow != pointer.below()) {
                     // Side changes are positioning, not a text-selection stroke.
                     sweep.clear(); path.clear(); selected = null; dwell.reset();
@@ -226,7 +226,7 @@ final class OcrPickupController implements AutoCloseable {
                         pointer.reset();
                         downX = event.getRawX(); downY = event.getRawY(); start = host.position();
                         knob.set(start); stopTouch = stop;
-                        updateAim(start); lastX = start.left; lastY = start.top; direction = -1;
+                        updateAim(start, event.getRawX()); lastX = start.left; lastY = start.top; direction = -1;
                         moved = held = ocrRequested = false; pressed = view; dwell.reset();
                         generation = gestureGeneration;
                         main.postDelayed(hold, 700); return true;
@@ -238,7 +238,7 @@ final class OcrPickupController implements AutoCloseable {
                         drag(event); pressed = null; main.removeCallbacks(activate);
                         dragging = false;
                         if (held) {
-                            hideJoystick(); updateAim(host.move(start.left, start.top));
+                            hideJoystick(); updateAim(host.move(start.left, start.top), event.getRawX());
                             OcrPickupMode chosen = OcrPickupMode.forDirection(direction);
                             if (direction == 3) {
                                 LookupDestinationSettings.get(context).toggleSystem();
@@ -319,10 +319,11 @@ final class OcrPickupController implements AutoCloseable {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return null;
         return Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? "向上滑动" : "向下滑动") : (dx < 0 ? "向左滑动" : "向右滑动");
     }
-    private void updateAim(Rect bubble) {
+    private void updateAim(Rect bubble, float touchX) {
         aimBubble.set(bubble);
         wm.getDefaultDisplay().getRealMetrics(screen);
-        aimX = bubble.exactCenterX(); aimY = pointer.update(bubble.top, bubble.bottom, screen.heightPixels, density);
+        aimX = pointer.horizontalAim(touchX, screen.widthPixels, density);
+        aimY = pointer.update(bubble.top, bubble.bottom, screen.heightPixels, density);
         if (overlay != null) overlay.invalidate();
     }
     private void recordPoint() {
