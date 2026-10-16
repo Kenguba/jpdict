@@ -148,6 +148,14 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                 // Assemble this pass before merging variants. A swept phrase
                 // may span several model elements, none of which alone covers
                 // enough of the seed to qualify as a refinement.
+                if (language == OcrLanguageSettings.Language.ENGLISH && !sentences) {
+                    List<Region> words = new ArrayList<>();
+                    for (Region region : mappedRegions) {
+                        Region word = OcrSweepSelection.englishWordAt(region, x, y);
+                        if (word != null) words.add(word);
+                    }
+                    mappedRegions = words;
+                }
                 Region candidate = selectionResult(mappedRegions, seed, x, y, tolerance);
                 if (candidate != null && candidate != seed) merge(found, candidate);
                 next(null);
