@@ -3,9 +3,15 @@ package com.yuen.jpdict;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
@@ -80,6 +86,11 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     }
 
     private final Object lifecycleLock = new Object();
+    private final Handler main = new Handler(Looper.getMainLooper());
+    // A retired model gets its own worker; one stuck SDK entry cannot occupy
+    // the replacement recognizer's lane. Never run rejected work on the UI.
+    private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(4), runnable -> new Thread(runnable, "jpdict-ocr"));
     private final TextRecognizer latin;
     private final TextRecognizer chinese;
     private final TextRecognizer japanese;
@@ -101,13 +112,14 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             TextRecognizer korean, OcrLanguageSettings settings) {
         this.latin = latin; this.chinese = chinese; this.japanese = japanese; this.korean = korean;
         languageSettings = settings;
+        worker.allowCoreThreadTimeOut(true);
     }
     void initialize(Context context) {
         languageSettings = OcrLanguageSettings.get(context);
     }
 
     void recognize(Bitmap bitmap, Callback callback) {
-        process(bitmap, language(), false, callback, null);
+        process(bitmap, language(), false, onMain(callback), null);
     }
     void recognizeRegions(Bitmap bitmap, RegionsCallback callback) {
         recognizeRegions(bitmap, language(), callback);
@@ -116,7 +128,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         recognizeRegions(bitmap, language, false, callback);
     }
     void recognizeRegions(Bitmap bitmap, OcrLanguageSettings.Language language, boolean sentences, RegionsCallback callback) {
-        process(bitmap, language, sentences, null, callback);
+        process(bitmap, language, sentences, null, onMain(callback));
     }
     void recognizeSelection(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance, Callback callback) {
         recognizeSelection(screen, target, seed, x, y, tolerance, language(), callback);
@@ -129,9 +141,14 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             OcrLanguageSettings.Language language, boolean sentences, Callback callback) {
         List<Region> found = new ArrayList<>();
         if (seed != null) found.add(seed);
-        refineVariant(screen, target, seed, x, y, tolerance, language, sentences, false, found, callback);
+        refineVariant(screen, target, seed, x, y, tolerance, language, sentences, false, found, onMain(callback));
     }
     private void refineVariant(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
+            OcrLanguageSettings.Language language, boolean sentences, boolean enhanced, List<Region> found, Callback callback) {
+        execute(() -> prepareVariant(screen, target, seed, x, y, tolerance, language, sentences,
+                enhanced, found, callback), error -> completeSelection(found, seed, x, y, tolerance, callback, error));
+    }
+    private void prepareVariant(Bitmap screen, Rect target, Region seed, float x, float y, float tolerance,
             OcrLanguageSettings.Language language, boolean sentences, boolean enhanced, List<Region> found, Callback callback) {
         final OcrImagePreparation prepared;
         try { prepared = OcrImagePreparation.prepare(screen, target, enhanced, seed == null ? 12 : seed.bounds.height()); }
@@ -149,12 +166,8 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                 // may span several model elements, none of which alone covers
                 // enough of the seed to qualify as a refinement.
                 if (language == OcrLanguageSettings.Language.ENGLISH && !sentences) {
-                    List<Region> words = new ArrayList<>();
-                    for (Region region : mappedRegions) {
-                        Region word = OcrSweepSelection.englishWordAt(region, x, y);
-                        if (word != null) words.add(word);
-                    }
-                    mappedRegions = words;
+                    Region word = OcrSweepSelection.englishWordAt(mappedRegions, x, y, tolerance);
+                    mappedRegions = word == null ? Collections.emptyList() : Collections.singletonList(word);
                 }
                 Region candidate = selectionResult(mappedRegions, seed, x, y, tolerance);
                 if (candidate != null && candidate != seed) merge(found, candidate);
@@ -237,14 +250,17 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                 && refined.top <= original.top+vertical && refined.bottom >= original.bottom-vertical;
     }
     static Region regionAt(List<Region> regions, float x, float y, float tolerance) {
-        Region selected = null; double best = Double.MAX_VALUE;
+        Region selected = null; double best = Double.MAX_VALUE; boolean bestInside = false;
         for (Region region : regions) {
             Rect b = region.bounds;
+            boolean inside = x >= b.left && x < b.right && y >= b.top && y < b.bottom;
             double dx = Math.max(Math.max(b.left-x, x-b.right), 0), dy = Math.max(Math.max(b.top-y, y-b.bottom), 0);
             double distance = dx*dx+dy*dy;
-            if (distance > tolerance*tolerance) continue;
+            if (!inside && (tolerance <= 0 || distance > tolerance*tolerance)) continue;
             double rank = distance+(double)b.width()*b.height()*0.0001;
-            if (rank < best) { best = rank; selected = region; }
+            if ((inside && !bestInside) || (inside == bestInside && rank < best)) {
+                best = rank; selected = region; bestInside = inside;
+            }
         }
         return selected;
     }
@@ -279,6 +295,12 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             inFlight++;
         }
 
+        execute(() -> startProcess(bitmap, language, sentences, callback, regionsCallback), error -> {
+            finishRequest(); fail(callback, regionsCallback, error);
+        });
+    }
+    private void startProcess(Bitmap bitmap, OcrLanguageSettings.Language language, boolean sentences,
+            Callback callback, RegionsCallback regionsCallback) {
         try {
             InputImage image = InputImage.fromBitmap(bitmap, 0);
 
@@ -292,7 +314,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             }
 
             Tasks.whenAllComplete(tasks)
-                    .addOnCompleteListener(ignored -> {
+                    .addOnCompleteListener(Runnable::run, ignored -> execute(() -> {
                         try {
                             if (regionsCallback != null) {
                                 List<Region> found = new ArrayList<>();
@@ -330,11 +352,32 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                         } finally {
                             finishRequest();
                         }
-                    });
+                    }, error -> {
+                        finishRequest(); fail(callback, regionsCallback, error);
+                    }));
         } catch (Exception e) {
             finishRequest();
             fail(callback, regionsCallback, e);
         }
+    }
+    private interface Rejected { void fail(Exception error); }
+    private void execute(Runnable work, Rejected rejected) {
+        try { worker.execute(work); }
+        catch (RejectedExecutionException error) {
+            rejected.fail(new IllegalStateException("OCR 识别器正忙或已关闭，请重试", error));
+        }
+    }
+    private Callback onMain(Callback callback) {
+        return new Callback() {
+            public void onSuccess(String text) { main.post(() -> callback.onSuccess(text)); }
+            public void onFailure(Exception error) { main.post(() -> callback.onFailure(error)); }
+        };
+    }
+    private RegionsCallback onMain(RegionsCallback callback) {
+        return new RegionsCallback() {
+            public void onSuccess(List<Region> regions) { main.post(() -> callback.onSuccess(regions)); }
+            public void onFailure(Exception error) { main.post(() -> callback.onFailure(error)); }
+        };
     }
     private static void fail(Callback text, RegionsCallback regions, Exception error) {
         if (regions != null) regions.onFailure(error); else text.onFailure(error);
@@ -427,6 +470,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
             if (closed) return;
             closed = true;
         }
+        worker.shutdown();
         latin.close();
         chinese.close();
         japanese.close();

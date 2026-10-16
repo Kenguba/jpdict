@@ -66,6 +66,24 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 finish(android.app.Activity.RESULT_OK, result); return;
             }
             if (ocrMode != null) {
+                if ("models".equals(ocrMode)) {
+                    result.putString("stream", OcrSelectionRegressionValidation.models(this));
+                    finish(android.app.Activity.RESULT_OK, result); return;
+                }
+                if ("selection".equals(ocrMode)) {
+                    result.putString("stream", OcrSelectionRegressionValidation.run(this));
+                    finish(android.app.Activity.RESULT_OK, result); return;
+                }
+                if ("live".equals(ocrMode)) {
+                    result.putString("stream", OcrLivePipelineValidation.run(this));
+                    finish(android.app.Activity.RESULT_OK, result); return;
+                }
+                if ("p0".equals(ocrMode)) {
+                    result.putString("stream", OcrInteractionRegressionValidation.run(this)
+                            + CaptureThreadRegressionValidation.run(this)
+                            + OcrSelectionRegressionValidation.run(this));
+                    finish(android.app.Activity.RESULT_OK, result); return;
+                }
                 result.putString("stream", OcrValidation.run(this, "fonts".equals(ocrMode)));
                 finish(android.app.Activity.RESULT_OK, result); return;
             }

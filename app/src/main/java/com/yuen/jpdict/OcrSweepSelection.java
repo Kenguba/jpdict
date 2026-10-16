@@ -36,11 +36,14 @@ final class OcrSweepSelection {
 
     void move(List<MultilingualOcrRecognizer.Region> regions, float x, float y, float tolerance, boolean singleEnglishWord) {
         if (singleEnglishWord) {
-            // In English word mode the pointer is a hit-test, not a sweep rectangle.
-            // Ignore proximity hits in adjacent lines and never cross whitespace.
-            MultilingualOcrRecognizer.Region touched = MultilingualOcrRecognizer.regionAt(regions, x, y, 0);
-            MultilingualOcrRecognizer.Region word = englishWordAt(touched, x, y);
-            if (word != null) { picked.clear(); picked.add(word); }
+            // Hit-test individual tokens, never the union of a swept line.
+            MultilingualOcrRecognizer.Region word = englishWordAt(regions, x, y, tolerance);
+            MultilingualOcrRecognizer.Region previous = picked.isEmpty() ? null : picked.get(0);
+            if (previous != null && withinWordTolerance(previous.bounds, x, y, tolerance)
+                    && (word == null || (!contains(word.bounds, x, y)
+                    && distance(previous.bounds, x, y) <= distance(word.bounds, x, y)))) word = previous;
+            picked.clear();
+            if (word != null) picked.add(word);
             return;
         }
         MultilingualOcrRecognizer.Region touched = MultilingualOcrRecognizer.regionAt(regions, x, y, tolerance);
@@ -87,29 +90,66 @@ final class OcrSweepSelection {
         lastX = x; lastY = y; hasPoint = true; rebuild();
     }
 
+    static MultilingualOcrRecognizer.Region englishWordAt(List<MultilingualOcrRecognizer.Region> regions,
+            float x, float y, float tolerance) {
+        List<MultilingualOcrRecognizer.Region> words = new ArrayList<>();
+        for (MultilingualOcrRecognizer.Region region : regions) {
+            MultilingualOcrRecognizer.Region word = englishWordAt(region, x, y, tolerance);
+            if (word != null) words.add(word);
+        }
+        return MultilingualOcrRecognizer.regionAt(words, x, y, tolerance);
+    }
+
     static MultilingualOcrRecognizer.Region englishWordAt(MultilingualOcrRecognizer.Region region, float x, float y) {
-        if (region == null || !region.bounds.contains((int)x, (int)y)) return null;
+        return englishWordAt(region, x, y, 0);
+    }
+
+    private static MultilingualOcrRecognizer.Region englishWordAt(MultilingualOcrRecognizer.Region region,
+            float x, float y, float tolerance) {
+        if (region == null || !withinWordTolerance(region.bounds, x, y, tolerance)) return null;
+        List<MultilingualOcrRecognizer.Region> words = new ArrayList<>();
         Matcher match = LATIN_WORD.matcher(region.text);
         while (match.find()) {
             Rect wordBounds = new Rect();
-            if (region.symbols.isEmpty()) {
-                // No glyph boxes: accept a model element only when it is already one word.
-                // Guessing an offset within an unsplit line can select the wrong word.
+            int covered = match.start();
+            for (MultilingualOcrRecognizer.Symbol symbol : region.symbols) {
+                if (symbol.start < match.start() || symbol.end > match.end()) continue;
+                wordBounds.union(symbol.bounds);
+                if (symbol.start <= covered) covered = Math.max(covered, symbol.end);
+            }
+            if (covered < match.end()) {
+                // Missing/partial glyph geometry is safe only for an element
+                // that already represents one complete word. Never guess a
+                // word's horizontal offset within a geometry-less whole line.
                 if (!OcrPickupMode.ENGLISH.clean(region.text).equals(match.group())) continue;
                 wordBounds.set(region.bounds);
-            } else {
-                for (MultilingualOcrRecognizer.Symbol symbol : region.symbols) {
-                    if (symbol.end > match.start() && symbol.start < match.end()) wordBounds.union(symbol.bounds);
-                }
             }
-            if (wordBounds.isEmpty() || !wordBounds.contains((int)x, (int)y)) continue;
+            if (wordBounds.isEmpty() || !withinWordTolerance(wordBounds, x, y, tolerance)) continue;
             MultilingualOcrRecognizer.Region word = new MultilingualOcrRecognizer.Region(match.group(), wordBounds);
             word.quality = region.quality;
             word.boundedRange = true;
             word.selectedBounds.add(new Rect(wordBounds));
-            return word;
+            words.add(word);
         }
-        return null;
+        return MultilingualOcrRecognizer.regionAt(words, x, y, tolerance);
+    }
+
+    private static boolean withinWordTolerance(Rect bounds, float x, float y, float tolerance) {
+        if (contains(bounds, x, y)) return true;
+        // Limit snapping by text height, so a large screen-density tolerance
+        // cannot reach a distant row or an unrelated word.
+        float limit = Math.min(Math.max(0, tolerance), Math.max(2, bounds.height()/3f));
+        return limit > 0 && distance(bounds, x, y) <= limit*limit;
+    }
+
+    private static boolean contains(Rect bounds, float x, float y) {
+        return x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom;
+    }
+
+    private static double distance(Rect bounds, float x, float y) {
+        double dx = Math.max(Math.max(bounds.left-x, x-bounds.right), 0);
+        double dy = Math.max(Math.max(bounds.top-y, y-bounds.bottom), 0);
+        return dx*dx+dy*dy;
     }
 
     private boolean distant(MultilingualOcrRecognizer.Region region) {
