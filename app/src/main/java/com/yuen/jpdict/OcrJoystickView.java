@@ -4,28 +4,25 @@ import android.content.Context;
 import android.graphics.*;
 import android.view.View;
 
-/** A light four-sector ring; the existing floating bubble is the actual knob. */
+/** A fixed four-sector ring centred on the existing floating bubble. */
 final class OcrJoystickView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path ring = new Path();
     private final int[] location = new int[2];
-    private final String[] labels = {"句子 OCR", "日语 OCR", "英语 OCR", ""};
+    private final String[] labels = {"句子 OCR", "日语 OCR", "中文 OCR", ""};
     private final float density, x, y, hole;
     private final LookupDestinationSettings destination;
     private final LookupDestinationSettings.Listener destinationChanged = this::invalidate;
     private int direction = -1;
-    private float knobX, knobY;
     OcrJoystickView(Context context, Rect bubble) {
         super(context); density = getResources().getDisplayMetrics().density;
         destination = LookupDestinationSettings.get(context);
         x = bubble.exactCenterX(); y = bubble.exactCenterY(); hole = bubble.width()/2f + 5*density;
-        knobX=x;knobY=y;
         setAlpha(0);
     }
-    void select(int next, Rect knob) {
-        float nextX = knob.exactCenterX(), nextY = knob.exactCenterY();
-        if (direction == next && knobX == nextX && knobY == nextY) return;
-        direction = next; knobX = nextX; knobY = nextY; invalidate();
+    void select(int next) {
+        if (direction == next) return;
+        direction = next; invalidate();
     }
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow(); destination.observe(destinationChanged);
@@ -40,7 +37,7 @@ final class OcrJoystickView extends View {
         canvas.save(); canvas.translate(-location[0], -location[1]);
         float radius = Math.max(92*density, hole+62*density);
         ring.rewind(); ring.setFillType(Path.FillType.EVEN_ODD);
-        ring.addCircle(x, y, radius, Path.Direction.CW); ring.addCircle(knobX, knobY, hole, Path.Direction.CW);
+        ring.addCircle(x, y, radius, Path.Direction.CW); ring.addCircle(x, y, hole, Path.Direction.CW);
         paint.setColor(0xedffffff); canvas.drawPath(ring, paint);
         canvas.save(); canvas.clipPath(ring);
         if (direction >= 0) {

@@ -207,7 +207,6 @@ jobs:
               "Latn_ctc_cpu.binarypb",
               "Hani_ctc_cpu.binarypb",
               "Jpan_ctc_cpu.binarypb",
-              "Kore_ctc_cpu.binarypb",
           )
           apks = sorted(glob.glob("dist/*.apk"))
           if not apks:
@@ -221,7 +220,7 @@ jobs:
                   print(f"::error file={apk}::Missing bundled OCR script models: {', '.join(missing)}")
                   failed = True
               else:
-                  print(f"{apk}: Latin, Chinese, Japanese, and Korean models are bundled.")
+                  print(f"{apk}: Latin, Chinese, and Japanese models are bundled.")
           if failed:
               sys.exit(1)
           PY

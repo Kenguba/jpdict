@@ -40,8 +40,8 @@ public final class OcrGestureRulesTest {
         check(pointer.update(1792,1880,2000,2) == 1904 && pointer.below(), "Geometry thresholds use dp across display densities");
         check(OcrPickupMode.direction(0, -50, 28) == 0, "Up selects sentence");
         check(OcrPickupMode.direction(50, 0, 28) == 1, "Right selects Japanese");
-        check(OcrPickupMode.direction(0, 50, 28) == 2, "Down selects English");
-        check(OcrPickupMode.direction(-50, 0, 28) == 3, "Left cancels");
+        check(OcrPickupMode.direction(0, 50, 28) == 2 && OcrPickupMode.forDirection(2) == OcrPickupMode.CHINESE, "Down selects Chinese");
+        check(OcrPickupMode.direction(-50, 0, 28) == 3, "Left selects the lookup destination toggle");
         check(OcrPickupMode.direction(18, 18, 28) == -1, "Diagonal finger jitter stays in the dead zone");
         check(OcrPickupMode.direction(25, -50, 28) == 0, "Sector chooses the dominant vertical direction");
         check(OcrPickupMode.forDirection(0) == OcrPickupMode.SENTENCE && OcrPickupMode.forDirection(3) == null, "Direction dispatch does not submit cancellation");

@@ -313,13 +313,13 @@ public class MainActivity extends Activity {
         static final String ACTION_FINISHED="com.yuen.jpdict.OCR_PERMISSION_FINISHED";
         static final int REQ_CAPTURE=7001, REQ_NOTIFY=7002;
         private boolean granted;
-        @Override public void onCreate(Bundle b){ super.onCreate(b); ask(); }
-        void ask(){
+        @Override public void onCreate(Bundle b){ super.onCreate(b); ask(true); }
+        void ask(boolean requestNotification){
             try{
                 getSharedPreferences("crash_log",MODE_PRIVATE)
                         .edit().putString("last_action","OCR_PERMISSION_ASK").commit();
 
-                if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
+                if(requestNotification && Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
                     requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},REQ_NOTIFY);
                     return;
                 }
@@ -345,8 +345,7 @@ public class MainActivity extends Activity {
         @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){
             super.onRequestPermissionsResult(r,p,g);
             if(r==REQ_NOTIFY){
-                if(g.length>0 && g[0]==PackageManager.PERMISSION_GRANTED) ask();
-                else { Toast.makeText(this,"需要通知权限，才能在通知栏显示“识别当前屏幕”按钮",Toast.LENGTH_LONG).show(); finish(); }
+                ask(false);
             }
         }
         @Override protected void onActivityResult(int r,int c,Intent data){
@@ -355,7 +354,7 @@ public class MainActivity extends Activity {
                 granted=true;
                 Intent s=new Intent(this,ScreenCaptureService.class).putExtra("code",c).putExtra("data",data);
                 if(Build.VERSION.SDK_INT>=26) startForegroundService(s); else startService(s);
-                Toast.makeText(this,"录屏 OCR 已启动；可从通知栏点“识别当前屏幕”",Toast.LENGTH_LONG).show();
+                Toast.makeText(this,"录屏 OCR 已启动",Toast.LENGTH_LONG).show();
             }
             finish();
         }
@@ -530,6 +529,7 @@ public class MainActivity extends Activity {
                 previewMode=OcrPickupMode.fromValue(request.getStringExtra("pickup_mode"));
                 previewLanguage=previewMode==OcrPickupMode.ENGLISH?OcrLanguageSettings.Language.ENGLISH
                         :previewMode==OcrPickupMode.JAPANESE?OcrLanguageSettings.Language.JAPANESE
+                        :previewMode==OcrPickupMode.CHINESE?OcrLanguageSettings.Language.CHINESE
                         :previewMode==OcrPickupMode.SENTENCE?OcrLanguageSettings.Language.MIXED:OcrLanguageSettings.get(this).language();
             }
             captureMain.postDelayed(new Runnable(){

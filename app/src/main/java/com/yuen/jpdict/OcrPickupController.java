@@ -143,7 +143,6 @@ final class OcrPickupController implements AutoCloseable {
         return new View.OnTouchListener() {
             float downX, downY;
             Rect start;
-            final Rect knob = new Rect();
             int lastX, lastY, direction;
             View pressed;
             boolean moved, held, ocrRequested;
@@ -181,13 +180,7 @@ final class OcrPickupController implements AutoCloseable {
                         direction = next;
                         if (pressed != null && next >= 0) pressed.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
                     }
-                    float distance = (float)Math.hypot(dx, dy), travel = 26*density;
-                    float scale = distance > travel ? travel/distance : 1;
-                    int x = start.left+Math.round(dx*scale), y = start.top+Math.round(dy*scale);
-                    if (x != lastX || y != lastY) {
-                        knob.set(host.move(x, y)); lastX = x; lastY = y;
-                    }
-                    if (joystick != null) joystick.select(direction, knob);
+                    if (joystick != null) joystick.select(direction);
                     return;
                 }
                 if (Math.abs(dx) > slop || Math.abs(dy) > slop) {
@@ -227,7 +220,7 @@ final class OcrPickupController implements AutoCloseable {
                         mode = OcrPickupMode.WORD;
                         pointer.reset();
                         downX = event.getRawX(); downY = event.getRawY(); start = host.position();
-                        knob.set(start); stopTouch = stop;
+                        stopTouch = stop;
                         updateAim(start, event.getRawX()); lastX = start.left; lastY = start.top; direction = -1;
                         moved = held = ocrRequested = false; pressed = view; dwell.reset();
                         generation = gestureGeneration;
@@ -242,8 +235,7 @@ final class OcrPickupController implements AutoCloseable {
                         pressed = null; main.removeCallbacks(activate);
                         dragging = false;
                         if (held) {
-                            updateAim(host.move(start.left, start.top), event.getRawX());
-                            if (joystick != null) joystick.select(direction, aimBubble);
+                            updateAim(start, downX);
                             hideJoystick();
                             OcrPickupMode chosen = OcrPickupMode.forDirection(direction);
                             if (direction == 3) {
@@ -252,8 +244,8 @@ final class OcrPickupController implements AutoCloseable {
                             }
                             else if (chosen != null) {
                                 mode = chosen;
-                                OcrLanguageSettings.get(context).setLanguage(chosen == OcrPickupMode.ENGLISH
-                                        ? OcrLanguageSettings.Language.ENGLISH : chosen == OcrPickupMode.JAPANESE
+                                OcrLanguageSettings.get(context).setLanguage(chosen == OcrPickupMode.CHINESE
+                                        ? OcrLanguageSettings.Language.CHINESE : chosen == OcrPickupMode.JAPANESE
                                         ? OcrLanguageSettings.Language.JAPANESE : OcrLanguageSettings.Language.MIXED);
                                 startPickup(true);
                             }
@@ -265,8 +257,7 @@ final class OcrPickupController implements AutoCloseable {
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         main.removeCallbacks(hold); main.removeCallbacks(activate); pressed = null;
-                        if (moved || held) knob.set(host.move(start.left, start.top));
-                        if (joystick != null) joystick.select(direction, knob);
+                        if (moved) host.move(start.left, start.top);
                         cancel(); return true;
                     default: return true;
                 }

@@ -3,7 +3,7 @@ package com.yuen.jpdict;
 /** Explicit pickup intent; the joystick also commits its language to shared settings. */
 enum OcrPickupMode {
     WORD("word", "取词"), SENTENCE("sentence", "句子 OCR"),
-    JAPANESE("japanese", "日语 OCR"), ENGLISH("english", "英语 OCR");
+    JAPANESE("japanese", "日语 OCR"), CHINESE("chinese", "中文 OCR"), ENGLISH("english", "英语 OCR");
 
     final String value, label;
     OcrPickupMode(String value, String label) { this.value = value; this.label = label; }
@@ -18,7 +18,7 @@ enum OcrPickupMode {
         return (int)Math.floor((degrees + 135 + 360) % 360 / 90);
     }
     static OcrPickupMode forDirection(int direction) {
-        return direction == 0 ? SENTENCE : direction == 1 ? JAPANESE : direction == 2 ? ENGLISH : null;
+        return direction == 0 ? SENTENCE : direction == 1 ? JAPANESE : direction == 2 ? CHINESE : null;
     }
     String clean(String text) {
         if (text == null) return "";

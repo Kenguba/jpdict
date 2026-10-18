@@ -75,17 +75,23 @@ final class OcrLanguageValidation {
             }
             preferences.edit().putString("language", "future-mode").commit();
             test.check(new OcrLanguageSettings(preferences).language() == OcrLanguageSettings.Language.MIXED, "Unknown cached values safely fall back to mixed");
+            preferences.edit().putString("language", "korean").putString("retained", "user setting").commit();
+            test.check(new OcrLanguageSettings(preferences).language() == OcrLanguageSettings.Language.MIXED,
+                    "A legacy Korean preference safely falls back to the remaining mixed models");
+            test.check("user setting".equals(preferences.getString("retained", null)), "Language fallback preserves unrelated preferences");
             preferences.edit().putInt("language", 1).commit();
             test.check(new OcrLanguageSettings(preferences).language() == OcrLanguageSettings.Language.MIXED, "Wrong cached value types safely fall back to mixed");
             test.check(OcrLanguageSettings.get(context) == OcrLanguageSettings.get(new ContextWrapper(context)), "Activity and Service contexts share one preference source");
             test.route(OcrLanguageSettings.Language.ENGLISH, MultilingualOcrRecognizer.Script.LATIN);
             test.route(OcrLanguageSettings.Language.JAPANESE, MultilingualOcrRecognizer.Script.JAPANESE);
-            test.route(OcrLanguageSettings.Language.KOREAN, MultilingualOcrRecognizer.Script.KOREAN);
+            test.route(OcrLanguageSettings.Language.CHINESE, MultilingualOcrRecognizer.Script.CHINESE);
             test.check(Arrays.equals(MultilingualOcrRecognizer.scriptsFor(OcrLanguageSettings.Language.MIXED),
-                    MultilingualOcrRecognizer.Script.values()), "Mixed recognition retains all four script models");
+                    new MultilingualOcrRecognizer.Script[]{MultilingualOcrRecognizer.Script.LATIN,
+                            MultilingualOcrRecognizer.Script.CHINESE, MultilingualOcrRecognizer.Script.JAPANESE}),
+                    "Mixed recognition uses only the three supported script models");
             test.check(Arrays.equals(OcrLanguageSettings.Language.values(), new OcrLanguageSettings.Language[] {
-                    OcrLanguageSettings.Language.MIXED, OcrLanguageSettings.Language.KOREAN,
-                    OcrLanguageSettings.Language.JAPANESE, OcrLanguageSettings.Language.ENGLISH }), "Menu order is mixed, Korean, Japanese, English");
+                    OcrLanguageSettings.Language.MIXED, OcrLanguageSettings.Language.CHINESE,
+                    OcrLanguageSettings.Language.JAPANESE, OcrLanguageSettings.Language.ENGLISH }), "Menu order is mixed, Chinese, Japanese, English");
             test.dispatch(instrumentation, settings);
             test.clipboardInputs();
             test.menuGesture(instrumentation);
@@ -99,9 +105,9 @@ final class OcrLanguageValidation {
     }
 
     private void dispatch(Instrumentation test, OcrLanguageSettings settings) throws Exception {
-        int[] calls = new int[4], closes = new int[4];
-        String[] fullText = {"Latin complete original text", "中文词典原文", "日本語の原文", "한국어 원문"};
-        TextRecognizer[] clients = new TextRecognizer[4];
+        int[] calls = new int[3], closes = new int[3];
+        String[] fullText = {"Latin complete original text", "中文词典原文", "日本語の原文"};
+        TextRecognizer[] clients = new TextRecognizer[3];
         for (int i = 0; i < clients.length; i++) {
             final int index = i;
             clients[i] = (TextRecognizer)Proxy.newProxyInstance(TextRecognizer.class.getClassLoader(),
@@ -114,7 +120,7 @@ final class OcrLanguageValidation {
                         return null;
                     });
         }
-        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(clients[0], clients[1], clients[2], clients[3], settings);
+        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(clients[0], clients[1], clients[2], settings);
         Bitmap image = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888);
         try {
             for (OcrLanguageSettings.Language language : OcrLanguageSettings.Language.values()) {
@@ -149,7 +155,7 @@ final class OcrLanguageValidation {
                 checkCalls(language, calls, 2);
                 check("complete seed text".equals(result.get()), "Empty refinement retains the full seed text");
             }
-            settings.setLanguage(OcrLanguageSettings.Language.KOREAN);
+            settings.setLanguage(OcrLanguageSettings.Language.CHINESE);
             Arrays.fill(calls, 0); CountDownLatch lockedPreview = new CountDownLatch(1);
             test.runOnMainSync(() -> recognizer.recognizeRegions(image, OcrLanguageSettings.Language.ENGLISH, new MultilingualOcrRecognizer.RegionsCallback() {
                 public void onSuccess(java.util.List<MultilingualOcrRecognizer.Region> value) { lockedPreview.countDown(); }
@@ -169,12 +175,12 @@ final class OcrLanguageValidation {
         } finally {
             test.runOnMainSync(recognizer::close); image.recycle();
         }
-        check(Arrays.equals(closes, new int[] {1, 1, 1, 1}), "Lifecycle teardown releases each reused model exactly once");
+        check(Arrays.equals(closes, new int[] {1, 1, 1}), "Lifecycle teardown releases each reused model exactly once");
     }
 
     private static int selectedScript(OcrLanguageSettings.Language language) {
         return language == OcrLanguageSettings.Language.ENGLISH ? 0
-                : language == OcrLanguageSettings.Language.JAPANESE ? 2 : 3;
+                : language == OcrLanguageSettings.Language.JAPANESE ? 2 : 1;
     }
 
     private void checkCalls(OcrLanguageSettings.Language language, int[] calls, int count) {
@@ -277,12 +283,12 @@ final class OcrLanguageValidation {
                 check(state.getMenu() == FloatingSearchState.Menu.NONE, "Selection closes the language menu");
                 button.performLongClick();
                 rows = (LinearLayout[])field(surface, "languageRows");
-                rows[OcrLanguageSettings.Language.KOREAN.ordinal()].performClick();
-                check(settings.language() == OcrLanguageSettings.Language.KOREAN, "Language rows also accept ordinary clicks");
+                rows[OcrLanguageSettings.Language.CHINESE.ordinal()].performClick();
+                check(settings.language() == OcrLanguageSettings.Language.CHINESE, "Language rows also accept ordinary clicks");
                 send(surface, MotionEvent.ACTION_DOWN, x, y);
                 button.performLongClick();
                 send(surface, MotionEvent.ACTION_CANCEL, x, y);
-                check(settings.language() == OcrLanguageSettings.Language.KOREAN && state.getMenu() == FloatingSearchState.Menu.NONE,
+                check(settings.language() == OcrLanguageSettings.Language.CHINESE && state.getMenu() == FloatingSearchState.Menu.NONE,
                         "Canceled language gestures close without changing the preference");
                 check(queries.isEmpty(), "Language selection does not submit a query");
                 check(pages.isEmpty(), "Language selection does not navigate");
