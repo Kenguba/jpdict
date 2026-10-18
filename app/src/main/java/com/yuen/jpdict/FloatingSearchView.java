@@ -193,11 +193,11 @@ final class FloatingSearchView extends FrameLayout {
         LinearLayout pills = new LinearLayout(context);
         pills.setGravity(Gravity.CENTER_VERTICAL);
         recommendations.addView(pills, new HorizontalScrollView.LayoutParams(-2, -1));
-        addPill(pills, "搜索词库", SearchIconView.Kind.SEARCH, AppTheme.SOFT, AppTheme.BLUE,
+        addPill(pills, "搜索词库", SearchIconView.Kind.SEARCH, AppTheme.SEARCH_PILL, AppTheme.BLUE,
                 this::submitFromButton);
-        addPill(pills, "词库管理", SearchIconView.Kind.BOOK, AppTheme.SOFT, AppTheme.GREEN,
+        addPill(pills, "词库管理", SearchIconView.Kind.BOOK, AppTheme.DICT_PILL, AppTheme.GREEN,
                 () -> openPage(FloatingSearchRoutes.PAGE_DICTIONARIES));
-        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, AppTheme.SOFT, AppTheme.BLUE,
+        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, AppTheme.BUBBLE_PILL, AppTheme.BLUE,
                 () -> openPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS));
         addPill(pills, "设置", SearchIconView.Kind.SETTINGS, SOFT, INK,
                 () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
