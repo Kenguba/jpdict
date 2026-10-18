@@ -61,7 +61,9 @@ final class OcrPickupController implements AutoCloseable {
                 return;
             }
             if (MainActivity.ScreenCaptureService.ACTION_STOPPED.equals(action)) {
-                if (armed) cancel();
+                // A stopped projection's broadcast can outlive its replacement.
+                if (armed && !MainActivity.ScreenCaptureService.READY)
+                    fail("屏幕共享已结束，请重新取词并授权");
                 return;
             }
             if (!armed || intent.getLongExtra("session", -1) != session) return;
@@ -207,8 +209,8 @@ final class OcrPickupController implements AutoCloseable {
                 showOverlay();
                 if (!armed || (waiting && regions.isEmpty())) recordPoint();
                 if (!ocrRequested) {
-                    long remaining = dwell.move(aimX, aimY, SystemClock.uptimeMillis());
-                    main.removeCallbacks(activate); main.postDelayed(activate, remaining);
+                    long remaining = dwell.move(aimX, aimY, event.getEventTime());
+                    main.removeCallbacks(activate); main.postAtTime(activate, event.getEventTime()+remaining);
                 }
                 if (armed) {
                     if (!waiting || !regions.isEmpty()) select();
@@ -235,7 +237,9 @@ final class OcrPickupController implements AutoCloseable {
                     case MotionEvent.ACTION_UP:
                         main.removeCallbacks(hold); main.removeCallbacks(activate);
                         if (generation != gestureGeneration) { pressed = null; return true; }
-                        drag(event); pressed = null; main.removeCallbacks(activate);
+                        drag(event);
+                        if (moved && !held && dwell.move(aimX, aimY, event.getEventTime()) == 0) activate.run();
+                        pressed = null; main.removeCallbacks(activate);
                         dragging = false;
                         if (held) {
                             hideJoystick(); updateAim(host.move(start.left, start.top), event.getRawX());

@@ -619,6 +619,13 @@ final class OcrValidation {
                         "Only a full 150ms at the replacement pointer area permits capture; the old deadline cannot fire");
             });
             long session = request.get().getLongExtra("session", -1);
+            onMain(instrumentation, () -> {
+                BroadcastReceiver receiver = (BroadcastReceiver)field(owner.get(), "receiver");
+                receiver.onReceive(app, new Intent(MainActivity.ScreenCaptureService.ACTION_STOPPED));
+                check((Boolean)field(owner.get(), "armed")
+                                && (Long)field(owner.get(), "session") == session,
+                        "A delayed stop from the old projection cannot silently cancel a fresh pickup");
+            });
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, finalX, 720);
             int finalLeft = Math.round(finalX)-20;
             onMain(instrumentation, () -> check(saves[0] == 2 && position.left == finalLeft, "OCR drag saves the moved bubble once on release"));
@@ -627,7 +634,7 @@ final class OcrValidation {
                     .putExtra("words",new String[]{"日本語"}).putExtra("boxes",new int[]{finalLeft,(int)y-10,finalLeft+44,(int)y+10}));
             awaitAction(request,MainActivity.ScreenCaptureService.ACT_OCR_REFINE);
             check(MainActivity.ScreenCaptureService.ACT_OCR_REFINE.equals(request.get().getAction()), "Release requests localized refinement on the same captured frame");
-            check("日本語".equals(request.get().getStringExtra("seed")) && request.get().getFloatExtra("aim_x",0) == finalLeft+22,
+            check("日本語".equals(request.get().getStringExtra("seed")) && request.get().getFloatExtra("aim_x",0) == finalX,
                     "Aim uses the requested position before WindowManager renders the move");
             app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",session)
                     .putExtra("refined",true).putExtra("text","日本語"));
@@ -734,6 +741,39 @@ final class OcrValidation {
                                 && "complete".equals(request.get().getStringExtra("seed")),
                         "Every subsequent placement automatically refines a complete word after earlier precise selections");
             }
+            onMain(instrumentation, () -> {
+                MainActivity.ScreenCaptureService.READY = false;
+                ((BroadcastReceiver)field(owner.get(), "receiver")).onReceive(app,
+                        new Intent(MainActivity.ScreenCaptureService.ACTION_STOPPED));
+                check(!(Boolean)field(owner.get(), "armed") && !(Boolean)field(owner.get(), "waiting")
+                                && field(owner.get(), "selected") == null,
+                        "A genuinely stopped projection clears the active pickup and its selection");
+                request.set(null);
+            });
+            int grantsBeforeStopRetry = activities[0];
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
+            awaitMain(instrumentation, () -> activities[0] == grantsBeforeStopRetry+1,
+                    "The next pickup after a real projection stop must request authorization");
+            onMain(instrumentation, () -> MainActivity.ScreenCaptureService.READY = true);
+            app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_READY).setPackage(app.getPackageName()));
+            awaitRequest(request);
+            check(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW.equals(request.get().getAction()),
+                    "Renewed authorization restarts capture through the existing pickup entry");
+            onMain(instrumentation, () -> {
+                for (int dwell : new int[]{300, 150, 149, 40}) {
+                    owner.get().cancel(); request.set(null); position.set(rendered);
+                    long now = SystemClock.uptimeMillis();
+                    int[] actions = {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP};
+                    long[] times = {now-600, now-100-dwell, now-100};
+                    for (int i=0; i<actions.length; i++) {
+                        MotionEvent event = MotionEvent.obtain(times[0], times[i], actions[i], i==0?420:520, 720, 0);
+                        try { listener.get().onTouch(view.get(), event); } finally { event.recycle(); }
+                    }
+                    check((request.get()!=null) == (dwell>=OcrDwellGate.DELAY_MS),
+                            "Batched touch events preserve the real "+dwell+"ms dwell when the UI cannot run its timer before UP");
+                }
+            });
             onMain(instrumentation, () -> {
                 MainActivity.ScreenCaptureService detached = new MainActivity.ScreenCaptureService();
                 check(!detached.captureAlive(), "A stale READY flag without actual projection, reader and virtual display cannot authorize capture");
