@@ -89,8 +89,13 @@ final class OcrInteractionRegressionValidation {
             });
             // Repeated hide must preserve the original 140ms deadline.
             touch(test, listener.get(), view, MotionEvent.ACTION_DOWN, 440, 740);
-            touch(test, listener.get(), view, MotionEvent.ACTION_MOVE, 540, 740);
-            main(test, owner.get()::cancel);
+            touch(test, listener.get(), view, MotionEvent.ACTION_MOVE, 540, 840);
+            main(test, () -> {
+                float aimY = (Float)field(owner.get(), "aimY");
+                touch(test, listener.get(), view, MotionEvent.ACTION_CANCEL, 540, 840);
+                check((Float)field(owner.get(), "aimY") == aimY,
+                        "Canceling an ordinary drag freezes its pointer without moving the fading frame");
+            });
             Thread.sleep(90);
             main(test, owner.get()::cancel);
             Thread.sleep(90);
@@ -140,6 +145,7 @@ final class OcrInteractionRegressionValidation {
                 main(test, () -> {
                     touch(test, listener.get(), view, MotionEvent.ACTION_UP, 440+dx, 740+dy);
                     check((Boolean)field(owner.get(), "armed"), "Every mode release arms one pickup");
+                    checkRingCenter(owner.get(), position, "Released");
                     touch(test, listener.get(), view, MotionEvent.ACTION_DOWN, 440, 740);
                 });
                 waitFor(test, () -> field(owner.get(), "dismissingJoystick")==null,
@@ -158,6 +164,27 @@ final class OcrInteractionRegressionValidation {
             touch(test, listener.get(), view, MotionEvent.ACTION_UP, 440, 740);
             main(test, () -> check(requests.size()==beforeCancel && !(Boolean)field(owner.get(), "armed"),
                     "Releasing in the centre cancels without starting a task"));
+            // Cancellation returns the same physical knob before its ring fades.
+            android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
+            realWindows.getDefaultDisplay().getRealMetrics(screen);
+            for (int sample=0; sample<12; sample++) {
+                final int next = sample%4, size = Math.round(new int[]{24,44,100}[sample/4]*density);
+                main(test, () -> {
+                    int left = next%2==0 ? 0 : screen.widthPixels-size;
+                    int top = next<2 ? 0 : screen.heightPixels-size;
+                    position.set(left, top, left+size, top+size);
+                    float x = position.exactCenterX(), y = position.exactCenterY();
+                    touch(test, listener.get(), view, MotionEvent.ACTION_DOWN, x, y);
+                    ((Runnable)field(listener.get(), "hold")).run();
+                    float dx = next==1 ? 90*density : next==3 ? -90*density : 0;
+                    float dy = next==0 ? -90*density : next==2 ? 90*density : 0;
+                    touch(test, listener.get(), view, MotionEvent.ACTION_MOVE, x+dx, y+dy);
+                    touch(test, listener.get(), view, MotionEvent.ACTION_CANCEL, x+dx, y+dy);
+                    checkRingCenter(owner.get(), position, "Canceled");
+                    check(!(Boolean)field(owner.get(), "armed"), "Canceled directions never start OCR");
+                });
+            }
+            main(test, () -> position.set(400, 700, 488, 788));
             // Duplicate preview messages and stale sessions cannot enqueue refinement twice.
             touch(test, listener.get(), view, MotionEvent.ACTION_DOWN, 440, 740);
             touch(test, listener.get(), view, MotionEvent.ACTION_MOVE, 540, 740);
@@ -217,6 +244,12 @@ final class OcrInteractionRegressionValidation {
     }
     private static long percentile(List<Long> values, double fraction) {
         return values.isEmpty() ? -1 : values.get(Math.min(values.size()-1, (int)Math.ceil(values.size()*fraction)-1));
+    }
+    private void checkRingCenter(OcrPickupController owner, Rect bubble, String phase) {
+        Object ring = field(owner, "dismissingJoystick");
+        check(ring != null && (Float)field(ring, "knobX") == bubble.exactCenterX()
+                        && (Float)field(ring, "knobY") == bubble.exactCenterY(),
+                phase + " ring hole follows the restored bubble throughout its fade");
     }
     private static Object field(Object target, String name) {
         try { Field field=target.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(target); }
