@@ -242,7 +242,9 @@ final class OcrPickupController implements AutoCloseable {
                         pressed = null; main.removeCallbacks(activate);
                         dragging = false;
                         if (held) {
-                            hideJoystick(); updateAim(host.move(start.left, start.top), event.getRawX());
+                            updateAim(host.move(start.left, start.top), event.getRawX());
+                            if (joystick != null) joystick.select(direction, aimBubble);
+                            hideJoystick();
                             OcrPickupMode chosen = OcrPickupMode.forDirection(direction);
                             if (direction == 3) {
                                 LookupDestinationSettings.get(context).toggleSystem();
@@ -263,7 +265,8 @@ final class OcrPickupController implements AutoCloseable {
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         main.removeCallbacks(hold); main.removeCallbacks(activate); pressed = null;
-                        if (moved || held) host.move(start.left, start.top);
+                        if (moved || held) knob.set(host.move(start.left, start.top));
+                        if (joystick != null) joystick.select(direction, knob);
                         cancel(); return true;
                     default: return true;
                 }
