@@ -406,7 +406,7 @@ public final class BubbleEditorValidation {
         addSymbol.draw(new Canvas(plus));
         int minX=plus.getWidth(),minY=plus.getHeight(),maxX=-1,maxY=-1;
         for(int y=0;y<plus.getHeight();y++)for(int x=0;x<plus.getWidth();x++)
-            if((plus.getPixel(x,y)&0xffffff)==0x5f7289 && Color.alpha(plus.getPixel(x,y))>200) {
+            if((plus.getPixel(x,y)&0xffffff)==(AppTheme.ink(AppTheme.MUTED)&0xffffff) && Color.alpha(plus.getPixel(x,y))>200) {
                 minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y);
             }
         check(maxX>=minX && maxY>=minY,"native plus has a visible Canvas symbol");

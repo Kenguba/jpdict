@@ -85,12 +85,16 @@ public final class LookupLinkActivity extends Activity {
                         intent.getBooleanExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, false),
                         false,
                         privateMode,
-                        true)
-                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST,
+                        true);
+                if (page == null) { pageInFront = false; forwardSearch(getIntent()); return; }
+                page.putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST,
                                 intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST))
                         .putExtra(FloatingService.EXTRA_HOST_SESSION, hostSession);
-                startActivity(page);
-                overridePendingTransition(0, 0);
+                try { startActivity(page); overridePendingTransition(0, 0); }
+                catch (RuntimeException error) {
+                    pageInFront = false; forwardSearch(getIntent());
+                    Toast.makeText(LookupLinkActivity.this, "无法打开指定页面", Toast.LENGTH_SHORT).show();
+                }
             }
         }
     };
@@ -291,18 +295,18 @@ public final class LookupLinkActivity extends Activity {
                         : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
                 w.setAttributes(attributes);
             }
-            w.getDecorView().setSystemUiVisibility(
-                    (showingSearch ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR |
+            AppTheme.observe(w.getDecorView(), () -> w.getDecorView().setSystemUiVisibility(
+                    (showingSearch && !AppTheme.isDark() ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR |
                             (Build.VERSION.SDK_INT >= 26 ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0) : 0) |
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
                     View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION));
 
             // TYPE_APPLICATION_OVERLAY is below critical system windows and
             // can be cropped by OEM policy. The Activity owns one edge-to-edge
             // mask; the overlay owns the dictionary card and mask hit target.
             View mask = new View(this);
-            mask.setBackgroundColor(showingSearch ? 0xfffcfcfc : 0x6b000000);
+            AppTheme.background(mask, showingSearch ? AppTheme.PAPER : 0x6b000000);
             mask.setContentDescription(showingSearch ? "点击关闭搜索浮窗" : "点击关闭查词小窗");
             mask.setOnClickListener(v -> sendLookupAction(FloatingService.ACTION_LOOKUP_DISMISS));
             setContentView(mask);
@@ -472,6 +476,10 @@ public final class LookupLinkActivity extends Activity {
                         source.getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false))
                 .putExtra(FloatingService.EXTRA_SEARCH_QUERY,
                         source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY));
+        if (source.hasExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE)) {
+            show.putExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE, source.getStringExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE));
+            source.removeExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE);
+        }
         try {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(show);
             else startService(show);

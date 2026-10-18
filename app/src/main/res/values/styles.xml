@@ -42,4 +42,37 @@
         <item name="android:windowBackground">@drawable/dialog_rounded</item>
         <item name="android:colorAccent">#006BFF</item>
     </style>
+    <style name="Theme.Jpdict.Page.Dark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">#171E2B</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:statusBarColor">#171E2B</item>
+        <item name="android:navigationBarColor">#171E2B</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#75ADFF</item>
+        <item name="android:textColorPrimary">#EDF2FA</item>
+        <item name="android:textColorSecondary">#ACB9CD</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:alertDialogTheme">@style/Theme.Jpdict.Dialog.Dark</item>
+    </style>
+    <style name="Theme.Jpdict.Dialog.Dark" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">#252E3D</item>
+        <item name="android:colorBackground">#252E3D</item>
+        <item name="android:colorAccent">#75ADFF</item>
+        <item name="android:textColorPrimary">#EDF2FA</item>
+        <item name="android:textColorSecondary">#ACB9CD</item>
+        <item name="android:timePickerStyle">@style/Widget.Jpdict.TimePicker</item>
+    </style>
+    <style name="Widget.Jpdict.TimePicker" parent="@android:style/Widget.Material.TimePicker">
+        <item name="android:headerBackground">#303C4E</item>
+        <item name="android:numbersBackgroundColor">#303C4E</item>
+    </style>
+    <style name="Theme.JpQuickLookup.Popup.Dark" parent="@android:style/Theme.Material.Dialog.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:colorAccent">#75ADFF</item>
+    </style>
 </resources>

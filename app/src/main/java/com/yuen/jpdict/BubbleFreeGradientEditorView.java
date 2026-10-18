@@ -48,20 +48,20 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
         super(context);
         this.chooser = chooser;
         setOrientation(VERTICAL);
-        TextView caption = text("自由渐变编辑器 · 拖动颜色点", 11, 0xff40516b, true);
+        TextView caption = text("自由渐变编辑器 · 拖动颜色点", 11, AppTheme.MUTED, true);
         addView(caption, spaced(-1, -2, 10, 7));
         board = new FieldBoard(context);
         int height = getResources().getConfiguration().screenWidthDp <= 355 ? 167 : 186;
         addView(board, new LayoutParams(-1, dp(height)));
-        TextView help = text("轻触色点可选中，拖动可改变位置。颜色自由融合，不受固定方向限制。", 10, 0xff718098, false);
+        TextView help = text("轻触色点可选中，拖动可改变位置。颜色自由融合，不受固定方向限制。", 10, AppTheme.MUTED, false);
         help.setLineSpacing(dp(2), 1);
         addView(help, spaced(-1, -2, 7, 0));
         LinearLayout toolbar = row();
-        count = text("", 11, 0xff526179, true);
+        count = text("", 11, AppTheme.MUTED, true);
         toolbar.addView(count, new LayoutParams(0, -2, 1));
-        add = action("＋ 添加", 0xffe6f3ff, 0xff0789f5);
+        add = action("＋ 添加", AppTheme.SOFT, AppTheme.BLUE);
         toolbar.addView(add, new LayoutParams(-2, dp(34)));
-        TextView reset = action("重置", 0xfff4f6f9, 0xff637188);
+        TextView reset = action("重置", AppTheme.SOFT, AppTheme.MUTED);
         LayoutParams resetParams = new LayoutParams(-2, dp(34));
         resetParams.leftMargin = dp(4);
         toolbar.addView(reset, resetParams);
@@ -70,8 +70,8 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
         LinearLayout details = new LinearLayout(context);
         details.setOrientation(VERTICAL);
         details.setPadding(dp(8), dp(10), dp(8), dp(10));
-        details.setBackground(background(0xfff4f5f6, 12));
-        title = text("", 11, 0xff46566e, true);
+        details.setBackground(background(AppTheme.SOFT, 12));
+        title = text("", 11, AppTheme.MUTED, true);
         details.addView(title);
         LinearLayout colorRow = row();
         swatch = new View(context);
@@ -90,17 +90,17 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
         addCoordinate(coordinates, "Y", y, true);
         details.addView(coordinates, spaced(-1, -2, 10, 0));
         LinearLayout rangeRow = row();
-        rangeRow.addView(text("影响范围", 10, 0xff617087, false));
+        rangeRow.addView(text("影响范围", 10, AppTheme.MUTED, false));
         radius = new SeekBar(context);
         radius.setMax(90);
         radius.setContentDescription("颜色点影响范围，10 至 100 百分比");
         BubbleSliderStyle.apply(radius);
         rangeRow.addView(radius, new LayoutParams(0, dp(36), 1));
-        radiusValue = text("", 10, 0xff35475e, false);
+        radiusValue = text("", 10, AppTheme.MUTED, false);
         radiusValue.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         rangeRow.addView(radiusValue, new LayoutParams(dp(30), -2));
         details.addView(rangeRow, spaced(-1, -2, 6, 0));
-        remove = action("删除当前色点", 0xfffff1f3, 0xffc44656);
+        remove = action("删除当前色点", AppTheme.ROSE, AppTheme.RED);
         details.addView(remove, spaced(-1, 34, 8, 0));
         addView(details, new LayoutParams(-1, -2));
 
@@ -185,7 +185,7 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
         bindInput(hex, "hex", BubblePaintEditorView.formatHex(p.color));
         bindInput(x, "x", String.valueOf(Math.round(p.x * 100)));
         bindInput(y, "y", String.valueOf(Math.round(p.y * 100)));
-        swatch.setBackground(background(p.color, 100));
+        swatch.setBackground(swatch(p.color));
         radius.setProgress(Math.round(p.radius) - 10);
         radiusValue.setText(Math.round(p.radius) + "%");
         add.setEnabled(field.freePoints.size() < 8);
@@ -305,7 +305,7 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
                 float radius = dp(active ? 12.5f : 10.5f);
                 brush.setStyle(Paint.Style.FILL);
                 if (active) { brush.setColor(0x8affffff); canvas.drawCircle(cx, cy, radius + dp(5), brush); }
-                brush.setColor(active ? 0xff178af2 : 0xff60728d);
+                brush.setColor(AppTheme.ink(active ? AppTheme.BLUE : AppTheme.MUTED));
                 canvas.drawCircle(cx, cy, radius + dp(active ? 2 : 1), brush);
                 brush.setColor(0xffffffff); canvas.drawCircle(cx, cy, radius, brush);
                 brush.setColor(p.color); canvas.drawCircle(cx, cy, radius - dp(2), brush);
@@ -367,7 +367,7 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
 
     private void addCoordinate(LinearLayout parent, String label, EditText editor, boolean margin) {
         LinearLayout cell = row();
-        cell.addView(text(label, 11, 0xff68768c, false), new LayoutParams(dp(15), -2));
+        cell.addView(text(label, 11, AppTheme.MUTED, false), new LayoutParams(dp(15), -2));
         cell.addView(editor, new LayoutParams(0, dp(36), 1));
         LayoutParams params = new LayoutParams(0, -2, 1);
         if (margin) params.leftMargin = dp(8);
@@ -375,9 +375,9 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
     }
     private EditText input(String description, boolean numeric) {
         EditText input = new EditText(getContext());
-        input.setTextSize(11); input.setTextColor(0xff253348); input.setSingleLine(true);
+        input.setTextSize(11); AppTheme.text(input, AppTheme.INK); input.setSingleLine(true);
         input.setIncludeFontPadding(false); input.setGravity(Gravity.CENTER);
-        input.setPadding(dp(3), 0, dp(3), 0); input.setBackground(background(0xffffffff, numeric ? 7 : 10));
+        input.setPadding(dp(3), 0, dp(3), 0); input.setBackground(background(AppTheme.CARD, numeric ? 7 : 10));
         input.setContentDescription(description);
         input.setInputType(numeric ? InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
                 : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
@@ -393,10 +393,11 @@ final class BubbleFreeGradientEditorView extends LinearLayout {
     }
     private LinearLayout row() { LinearLayout row = new LinearLayout(getContext()); row.setOrientation(HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); return row; }
     private TextView text(String label, int size, int color, boolean bold) {
-        TextView view = new TextView(getContext()); view.setText(label); view.setTextSize(size); view.setTextColor(color);
+        TextView view = new TextView(getContext()); view.setText(label); view.setTextSize(size); AppTheme.text(view, color);
         view.setIncludeFontPadding(false); if (bold) view.setTypeface(Typeface.DEFAULT_BOLD); return view;
     }
-    private GradientDrawable background(int color, int radius) { GradientDrawable result = new GradientDrawable(); result.setColor(color); result.setCornerRadius(dp(radius)); return result; }
+    private GradientDrawable swatch(int color) { GradientDrawable shape = new GradientDrawable(); shape.setColor(color); shape.setCornerRadius(dp(100)); return shape; }
+    private GradientDrawable background(int color, int radius) { GradientDrawable result = new AppTheme.Shape(); result.setColor(color); result.setCornerRadius(dp(radius)); return result; }
     private LayoutParams spaced(int width, int height, int top, int bottom) { LayoutParams params = new LayoutParams(width < 0 ? width : dp(width), height < 0 ? height : dp(height)); params.topMargin = dp(top); params.bottomMargin = dp(bottom); return params; }
     private TextWatcher watcher(Runnable action) { return new TextWatcher() { public void beforeTextChanged(CharSequence s, int start, int count, int after) { } public void onTextChanged(CharSequence s, int start, int before, int count) { action.run(); } public void afterTextChanged(Editable e) { } }; }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }

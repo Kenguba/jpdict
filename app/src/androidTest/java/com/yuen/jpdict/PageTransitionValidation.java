@@ -235,14 +235,20 @@ final class PageTransitionValidation {
             dispatch(test, service, ready(first, "older-host"));
             check(search.isAttachedToWindow(), "A frame from a former host cannot finish the current handoff");
             dispatch(test, service, ready(first, "page-host-1"));
-            check(!search.isAttachedToWindow() && field("searchPanel").get(service) == null,
-                    "The matching page frame releases the covered search window");
-            check("".equals(field("pendingSearchPageRequest").get(service))
-                    && "".equals(field("pendingSearchPageHostSession").get(service))
+            check(search.isAttachedToWindow() && field("searchPanel").get(service) == search
+                            && search.getVisibility() == View.INVISIBLE,
+                    "The matching page frame hides and retains the original search window");
+            check(first.equals(field("pendingSearchPageRequest").get(service))
+                    && "page-host-1".equals(field("pendingSearchPageHostSession").get(service))
                     && FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE.equals(service.broadcast.getAction()),
-                    "Completing a handoff consumes its identity while preserving the transparent return host");
+                    "The retained window keeps its return credential until consumed by the current page");
 
-            search = attachSearch(test, context, service, windows, true);
+            dispatch(test, service, new Intent(FloatingService.ACTION_SHOW_SEARCH)
+                    .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, first)
+                    .putExtra(FloatingService.EXTRA_HOST_SESSION, "page-host-1")
+                    .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, true));
+            check(search.getVisibility() == View.VISIBLE && field("searchPanel").get(service) == search,
+                    "Returning restores the exact retained view");
             dispatch(test, service, open);
             String second = (String)field("pendingSearchPageRequest").get(service);
             check(!second.equals(first), "Consecutive page requests use different first-frame identities");
@@ -270,15 +276,19 @@ final class PageTransitionValidation {
             dispatch(test, service, ready(canceled, "page-host-1"));
             check(search.isAttachedToWindow(), "A canceled hosted frame cannot affect a later independent page");
             dispatch(test, service, ready(independent, null));
-            check(!search.isAttachedToWindow(), "An independent page completes its matching first-frame handoff");
+            check(search.isAttachedToWindow() && search.getVisibility() == View.INVISIBLE,
+                    "An independent page also preserves its hidden search view");
 
             for (String page : new String[]{FloatingSearchRoutes.PAGE_SETTINGS,
                     FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS, FloatingSearchRoutes.PAGE_FILES,
-                    FloatingSearchRoutes.PAGE_DICTIONARIES}) {
+                    FloatingSearchRoutes.PAGE_DICTIONARIES, FloatingSearchRoutes.PAGE_DRAWER_STYLE}) {
                 Intent route = FloatingSearchRoutes.pageIntent(context, page, "draft", true, false, false, true);
                 check((route.getFlags() & Intent.FLAG_ACTIVITY_NO_ANIMATION) != 0,
                         "Every native page avoids a cross-window fade or translation: " + page);
             }
+            check(FloatingSearchRoutes.pageIntent(context, "missing", "", false, false, false, false) == null
+                            && FloatingSearchRoutes.pageIntent(context, null, "", false, false, false, false) == null,
+                    "Unknown and null routes fail explicitly instead of silently opening settings");
             ContextThemeWrapper theme = new ContextThemeWrapper(context, R.style.Theme_Jpdict_Page);
             TypedArray attributes = theme.obtainStyledAttributes(new int[]{android.R.attr.windowBackground,
                     android.R.attr.statusBarColor, android.R.attr.navigationBarColor,

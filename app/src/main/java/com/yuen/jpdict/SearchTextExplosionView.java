@@ -32,7 +32,7 @@ final class SearchTextExplosionView extends LinearLayout {
     SearchTextExplosionView(Context context, Actions actions) {
         super(context); this.actions = actions;
         setOrientation(VERTICAL); setPadding(dp(18), dp(12), dp(18), dp(10));
-        TextView title = label("文字大爆炸", 13, 0xff625271); title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        TextView title = label("文字大爆炸", 13, AppTheme.PURPLE); title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setGravity(Gravity.CENTER_VERTICAL);
         addView(title, new LinearLayout.LayoutParams(-1, dp(28)));
         tokens = new Flow(context);
@@ -100,12 +100,12 @@ final class SearchTextExplosionView extends LinearLayout {
         }
     }
     private final class Chip {
-        final TextView view = label("", 15, 0xff66616c);
+        final TextView view = label("", 15, AppTheme.MUTED);
         final GradientDrawable shape = new GradientDrawable();
         SearchTextSegments.Part part;
         ValueAnimator colors;
-        int ink = 0xff66616c, fill = 0xfff3f1f5, stroke = 0xffebe7ef;
-        Chip() { shape.setCornerRadius(dp(11)); }
+        int ink = AppTheme.MUTED, fill = AppTheme.SOFT, stroke = AppTheme.LINE;
+        Chip() { shape.setCornerRadius(dp(11)); AppTheme.observe(view, this::cancel); }
         void update(SearchTextSegments.Part next) {
             if (part != null && part.text.equals(next.text) && part.word == next.word && part.matched == next.matched) {
                 part = next; return;
@@ -122,9 +122,9 @@ final class SearchTextExplosionView extends LinearLayout {
             view.setContentDescription(next.matched ? "查询本地词条 " + next.text : next.text);
             view.setOnClickListener(next.matched ? v -> actions.lookup(part.text) : null);
             view.setClickable(next.matched);
-            int targetInk = next.matched ? 0xff246bc6 : 0xff66616c;
-            int targetFill = next.matched ? 0xffedf5ff : 0xfff3f1f5;
-            int targetStroke = next.matched ? 0xffd5e7ff : 0xffebe7ef;
+            int targetInk = AppTheme.ink(next.matched ? AppTheme.BLUE : AppTheme.MUTED);
+            int targetFill = AppTheme.color(next.matched ? AppTheme.PALE : AppTheme.SOFT);
+            int targetStroke = AppTheme.color(AppTheme.LINE);
             if (colors != null) { colors.cancel(); colors = null; }
             if (changed && view.isLaidOut() && view.isShown()) {
                 int fromInk = ink, fromFill = fill, fromStroke = stroke;
@@ -146,9 +146,8 @@ final class SearchTextExplosionView extends LinearLayout {
         void cancel() {
             if (colors != null) { colors.cancel(); colors = null; }
             view.animate().cancel();
-            if (part != null) color(part.matched ? 0xff246bc6 : 0xff66616c,
-                    part.matched ? 0xffedf5ff : 0xfff3f1f5,
-                    part.matched ? 0xffd5e7ff : 0xffebe7ef);
+            if (part != null) color(AppTheme.ink(part.matched ? AppTheme.BLUE : AppTheme.MUTED),
+                    AppTheme.color(part.matched ? AppTheme.PALE : AppTheme.SOFT), AppTheme.color(AppTheme.LINE));
         }
     }
     @Override protected void onDetachedFromWindow() {
@@ -157,7 +156,7 @@ final class SearchTextExplosionView extends LinearLayout {
     }
     private TextView label(String value, int size, int color) {
         TextView label = new TextView(getContext()); label.setText(value); label.setTextSize(size);
-        label.setTextColor(color); label.setIncludeFontPadding(false); return label;
+        AppTheme.text(label, color); label.setIncludeFontPadding(false); return label;
     }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 

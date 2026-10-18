@@ -15,7 +15,7 @@ final class OcrJoystickView extends View {
     private final LookupDestinationSettings.Listener destinationChanged = this::invalidate;
     private int direction = -1;
     OcrJoystickView(Context context, Rect bubble) {
-        super(context); density = getResources().getDisplayMetrics().density;
+        super(context); AppTheme.observe(this, this::invalidate); density = getResources().getDisplayMetrics().density;
         destination = LookupDestinationSettings.get(context);
         x = bubble.exactCenterX(); y = bubble.exactCenterY(); hole = bubble.width()/2f + 5*density;
         setAlpha(0);
@@ -38,7 +38,7 @@ final class OcrJoystickView extends View {
         float radius = Math.max(92*density, hole+62*density);
         ring.rewind(); ring.setFillType(Path.FillType.EVEN_ODD);
         ring.addCircle(x, y, radius, Path.Direction.CW); ring.addCircle(x, y, hole, Path.Direction.CW);
-        paint.setColor(0xedffffff); canvas.drawPath(ring, paint);
+        paint.setColor((AppTheme.color(AppTheme.CARD) & 0xffffff) | 0xed000000); canvas.drawPath(ring, paint);
         canvas.save(); canvas.clipPath(ring);
         if (direction >= 0) {
             paint.setColor(0x29168af2);
@@ -55,7 +55,7 @@ final class OcrJoystickView extends View {
             float half = paint.measureText(labels[index])/2;
             tx = Math.max(location[0]+half+8*density, Math.min(tx, location[0]+getWidth()-half-8*density));
             ty = Math.max(location[1]+24*density, Math.min(ty, location[1]+getHeight()-24*density));
-            paint.setColor(direction == index ? 0xff0878d3 : 0xff566273);
+            paint.setColor(AppTheme.ink(direction == index ? AppTheme.BLUE : AppTheme.MUTED));
             paint.setTypeface(direction == index ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
             canvas.drawText(labels[index], tx, ty-(paint.ascent()+paint.descent())/2, paint);
         }

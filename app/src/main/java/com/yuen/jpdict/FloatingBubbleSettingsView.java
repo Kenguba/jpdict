@@ -29,8 +29,8 @@ import android.widget.Toast;
 /** Native v18 layout, with JPDict cards and one immutable draft as the appearance source. */
 public final class FloatingBubbleSettingsView extends LinearLayout {
     public interface PreviewListener { void onPreview(FloatingBubbleAppearance.Config config); }
-    private static final int INK=0xff171819, MUTED=0xff6d747b, SOFT=0xfff4f5f6,
-            BLUE=0xff008fd1, PALE_BLUE=0xffdef7ff, PAGE=0xfff2f2f2;
+    private static final int INK=AppTheme.INK, MUTED=AppTheme.MUTED, SOFT=AppTheme.SOFT,
+            BLUE=AppTheme.BLUE, PALE_BLUE=AppTheme.PALE, PAGE=AppTheme.PAGE;
     private final PreviewListener onPreview;
     private final Runnable onChooseImage, onChooseSvg;
     private final LinearLayout header, savedHeader, appearance, gesture, editor, shapeSidebar;
@@ -64,18 +64,18 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         super(context);
         config=initial;
         this.onPreview=onPreview; this.onChooseImage=onChooseImage; this.onChooseSvg=onChooseSvg;
-        setOrientation(VERTICAL); setBackgroundColor(PAGE);
+        setOrientation(VERTICAL); AppTheme.background(this, PAGE);
         boolean narrow=getResources().getConfiguration().screenWidthDp<=355;
         int edge=narrow?8:16;
         setPadding(dp(edge), dp(8), dp(edge), dp(16));
-        header=column(); header.setBackgroundColor(PAGE);
+        header=column(); AppTheme.background(header, PAGE);
         header.setPadding(dp(edge),0,dp(edge),0);
         LinearLayout tabs=row();
         appearanceTab=tab("外观"); gestureTab=tab("手势控制");
         tabs.addView(appearanceTab,new LayoutParams(0,dp(36),1));
         tabs.addView(gestureTab,new LayoutParams(0,dp(36),1));
         header.addView(tabs);
-        View tabLine=new View(context); tabLine.setBackgroundColor(0x66e6e8eb);
+        View tabLine=new View(context); AppTheme.background(tabLine, 0x66e6e8eb);
         header.addView(tabLine,new LayoutParams(-1,dp(1)));
         appearanceTab.setOnClickListener(v->setGesturePage(false));
         gestureTab.setOnClickListener(v->setGesturePage(true));
@@ -83,8 +83,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         LinearLayout savedLabel=row(); savedLabel.setPadding(dp(6),dp(6),dp(6),dp(6));
         savedLabel.addView(text("已保存样式 · 最新在左",12,MUTED,false),new LayoutParams(0,-2,1));
         styleCount=text("",12,MUTED,false); savedLabel.addView(styleCount);
-        TextView save=button("保存",12); save.setTextColor(0xffffffff);
-        save.setBackground(background(0xff007aff,14)); save.setPadding(dp(12),0,dp(12),0);
+        TextView save=button("保存",12); AppTheme.text(save, AppTheme.CARD);
+        save.setBackground(background(AppTheme.BLUE,14)); save.setPadding(dp(12),0,dp(12),0);
         LayoutParams saveParams=new LayoutParams(-2,dp(32)); saveParams.leftMargin=dp(9);
         savedLabel.addView(save,saveParams); save.setOnClickListener(v->saveSelected());
         savedHeader.addView(savedLabel);
@@ -98,14 +98,14 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         savedHeader.addView(savedStyles,new LayoutParams(-1,-2)); header.addView(savedHeader);
         appearance=column(); addView(appearance,new LayoutParams(-1,-2));
         LinearLayout sliders=column(); sliders.setPadding(dp(14),dp(6),dp(14),dp(6));
-        sliders.setBackground(background(0xffffffff,18));
+        sliders.setBackground(background(AppTheme.CARD,18));
         sizeValue=text("",13,MUTED,false); opacityValue=text("",13,MUTED,false);
         size=settingSlider(sliders,"大小",sizeValue,76,47,43,44);
         opacity=settingSlider(sliders,"透明度",opacityValue,100,47,43,44);
         appearance.addView(sliders,new LayoutParams(-1,-2));
         editor=row(); editor.setGravity(Gravity.TOP); editor.setClipChildren(false);
         editor.setPadding(dp(9),dp(11),dp(9),dp(14));
-        editor.setBackground(background(0xffffffff,18));
+        editor.setBackground(background(AppTheme.CARD,18));
         LayoutParams editorParams=new LayoutParams(-1,-2); editorParams.topMargin=dp(8);
         appearance.addView(editor,editorParams);
         shapeSidebar=column(); shapeSidebar.setPadding(dp(3),dp(3),dp(3),dp(3));
@@ -134,7 +134,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
                 change(b.build());
             });
         }
-        View divider=new View(context); divider.setBackgroundColor(0xffe6e8eb);
+        View divider=new View(context); AppTheme.background(divider, AppTheme.LINE);
         LayoutParams dividerParams=new LayoutParams(dp(1),-1);
         dividerParams.leftMargin=dp(narrow?5:8); dividerParams.rightMargin=dp(narrow?5:8);
         editor.addView(divider,dividerParams);
@@ -188,7 +188,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         svgTools.addView(svgActions); settings.addView(svgTools);
         textFields=column();
         customText=new EditText(context); customText.setSingleLine(true); customText.setTextSize(13);
-        customText.setTextColor(INK); customText.setHintTextColor(MUTED); customText.setHint("输入文字");
+        AppTheme.text(customText, INK); AppTheme.hint(customText, MUTED); customText.setHint("输入文字");
         customText.setContentDescription("按钮显示文字");
         customText.setPadding(dp(10),0,dp(10),0); customText.setBackground(background(SOFT,14));
         customText.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE
@@ -218,10 +218,10 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         LinearLayout imageDrop=column(); imageDrop.setGravity(Gravity.CENTER);
         imageDrop.setPadding(dp(8),dp(13),dp(8),dp(13));
         SearchIconView imageSymbol=new SearchIconView(context,SearchIconView.Kind.IMAGE);
-        imageSymbol.setColor(0xff8394a8); imageDrop.addView(imageSymbol,new LayoutParams(dp(24),dp(24)));
-        imageLabel=button("点此上传按钮图片",12); imageLabel.setBackgroundColor(0x00000000);
-        GradientDrawable drop=background(0xfff7fbff,14); drop.setStroke(dp(1),0xffcbd8e6,dp(4),dp(3));
-        imageDrop.setBackground(drop); imageLabel.setTextColor(0xff71809a);
+        imageSymbol.setColor(AppTheme.MUTED); imageDrop.addView(imageSymbol,new LayoutParams(dp(24),dp(24)));
+        imageLabel=button("点此上传按钮图片",12); AppTheme.background(imageLabel, 0x00000000);
+        GradientDrawable drop=background(AppTheme.SOFT,14); drop.setStroke(dp(1),AppTheme.LINE,dp(4),dp(3));
+        imageDrop.setBackground(drop); AppTheme.text(imageLabel, AppTheme.MUTED);
         LayoutParams imageTextParams=new LayoutParams(-1,-2); imageTextParams.topMargin=dp(5);
         imageDrop.addView(imageLabel,imageTextParams); imageDrop.setFocusable(true);
         imageDrop.setContentDescription("上传按钮图片");
@@ -231,7 +231,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         LayoutParams imageEditorParams=new LayoutParams(-1,-2);
         imageEditorParams.topMargin=dp(8);
         imageFields.addView(imageEditor,imageEditorParams);
-        colorSeparator=new View(context); colorSeparator.setBackgroundColor(0xffe9edf3);
+        colorSeparator=new View(context); AppTheme.background(colorSeparator, AppTheme.LINE);
         LayoutParams separator=new LayoutParams(-1,dp(1)); separator.topMargin=dp(16); separator.bottomMargin=dp(16);
         settings.addView(colorSeparator,separator);
         paintEditor=new BubblePaintEditorView(context); paintEditor.setListener(this::change);
@@ -244,7 +244,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         LayoutParams resetParams=new LayoutParams(-1,dp(44)); resetParams.topMargin=dp(12);
         appearance.addView(reset,resetParams);
         gesture=column(); gesture.setPadding(dp(16),dp(16),dp(16),dp(16));
-        gesture.setBackground(background(0xffffffff,18));
+        gesture.setBackground(background(AppTheme.CARD,18));
         gesture.addView(text("悬浮按钮手势",16,INK,true),new LayoutParams(-1,dp(36)));
         addGesture("轻点","打开桌面全局搜索");
         addGesture("拖动停留 150ms","移动按钮，指针持续显示；停留识别、折返划选，屏幕底部自动切到按钮下方，松手查词");
@@ -325,7 +325,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
             boolean active=config.shape==shapeValueForIndex(i)
                     || (i==1 && config.shape==FloatingBubbleAppearance.SHAPE_LEGACY);
             shapeButtons[i].setSelected(active); shapeButtons[i].setBackground(new ShapeBackground(active));
-            ((TextView)shapeButtons[i].getChildAt(1)).setTextColor(active?BLUE:0xff667185);
+            AppTheme.text((TextView)shapeButtons[i].getChildAt(1), active?BLUE:AppTheme.MUTED);
             ((TextView)shapeButtons[i].getChildAt(1)).setTypeface(active?Typeface.DEFAULT_BOLD:Typeface.DEFAULT);
             shapeButtons[i].getChildAt(0).invalidate();
         }
@@ -380,8 +380,8 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         if(deleteDialog!=null && deleteDialog.isShowing())return;
         finishEditing();
         LinearLayout content=column(); content.setPadding(dp(22),dp(16),dp(22),dp(16));
-        FrameLayout symbol=new FrameLayout(getContext()); symbol.setBackground(background(0xfffff0f3,18));
-        SearchIconView trash=new SearchIconView(getContext(),SearchIconView.Kind.TRASH); trash.setColor(0xffdf5366);
+        FrameLayout symbol=new FrameLayout(getContext()); symbol.setBackground(background(AppTheme.SOFT,18));
+        SearchIconView trash=new SearchIconView(getContext(),SearchIconView.Kind.TRASH); trash.setColor(AppTheme.RED);
         symbol.addView(trash,new FrameLayout.LayoutParams(dp(23),dp(23),Gravity.CENTER));
         LayoutParams symbolParams=new LayoutParams(dp(48),dp(48)); symbolParams.gravity=Gravity.CENTER_HORIZONTAL;
         symbolParams.bottomMargin=dp(8); content.addView(symbol,symbolParams);
@@ -391,9 +391,9 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         detail.setGravity(Gravity.CENTER); detail.setLineSpacing(dp(2),1); content.addView(detail,new LayoutParams(-1,-2));
         LinearLayout actions=row(); LayoutParams actionsParams=new LayoutParams(-1,dp(44)); actionsParams.topMargin=dp(16);
         TextView cancel=button("取消",14), remove=button("删除样式",14);
-        cancel.setTextColor(0xff55657a); remove.setTextColor(0xffcb4355); remove.setBackground(background(0xfffce8ec,14));
+        AppTheme.text(cancel, AppTheme.MUTED); AppTheme.text(remove, AppTheme.RED); remove.setBackground(background(AppTheme.SOFT,14));
         addWeighted(actions,cancel,44,0); addWeighted(actions,remove,44,10); content.addView(actions,actionsParams);
-        deleteDialog=new AlertDialog.Builder(getContext()).setView(content).create();
+        deleteDialog=new AppTheme.DialogBuilder(getContext()).setView(content).create();
         cancel.setOnClickListener(v->deleteDialog.dismiss());
         remove.setOnClickListener(v->{
             if(!FloatingBubbleAppearance.deleteSavedStyle(getContext(),id)) { toast("删除失败，请重试"); return; }
@@ -402,7 +402,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         });
         deleteDialog.show();
         if(deleteDialog.getWindow()!=null) {
-            deleteDialog.getWindow().setBackgroundDrawable(background(0xffffffff,18));
+            deleteDialog.getWindow().setBackgroundDrawable(background(AppTheme.CARD,18));
             deleteDialog.getWindow().setLayout(standardDialogWidth(),WindowManager.LayoutParams.WRAP_CONTENT);
         }
         cancel.requestFocus();
@@ -436,7 +436,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private SeekBar settingSlider(LinearLayout parent,String label,TextView output,int maximum,
             int labelWidth,int outputWidth,int height) {
         LinearLayout line=row();
-        line.addView(text(label,labelWidth==47?14:11,labelWidth==47?INK:0xff60718a,true),new LayoutParams(dp(labelWidth),-1));
+        line.addView(text(label,labelWidth==47?14:11,labelWidth==47?INK:AppTheme.MUTED,true),new LayoutParams(dp(labelWidth),-1));
         SeekBar slider=new SeekBar(getContext()); slider.setMax(maximum); slider.setContentDescription(label);
         BubbleSliderStyle.apply(slider);
         LayoutParams sliderParams=new LayoutParams(0,dp(height),1); sliderParams.leftMargin=dp(6);
@@ -447,7 +447,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private SeekBar settingLabeledSlider(LinearLayout parent,String label,int maximum,
             int labelWidth,int height) {
         LinearLayout line=row();
-        line.addView(text(label,11,0xff60718a,true),new LayoutParams(dp(labelWidth),-1));
+        line.addView(text(label,11,AppTheme.MUTED,true),new LayoutParams(dp(labelWidth),-1));
         SeekBar slider=new SeekBar(getContext()); slider.setMax(maximum); slider.setContentDescription(label);
         BubbleSliderStyle.applyLabeled(slider,"100%",0);
         LayoutParams sliderParams=new LayoutParams(0,dp(height),1); sliderParams.leftMargin=dp(6);
@@ -484,17 +484,17 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private LinearLayout column() { LinearLayout v=new LinearLayout(getContext()); v.setOrientation(VERTICAL); return v; }
     private LinearLayout row() { LinearLayout v=new LinearLayout(getContext()); v.setOrientation(HORIZONTAL); v.setGravity(Gravity.CENTER_VERTICAL); return v; }
     private TextView text(String value,float size,int color,boolean bold) {
-        TextView v=new TextView(getContext()); v.setText(value); v.setTextSize(size); v.setTextColor(color);
+        TextView v=new TextView(getContext()); v.setText(value); v.setTextSize(size); AppTheme.text(v, color);
         v.setIncludeFontPadding(false); v.setGravity(Gravity.CENTER_VERTICAL); if(bold)v.setTypeface(Typeface.DEFAULT_BOLD); return v;
     }
     private TextView button(String value,float size) {
         TextView v=text(value,size,INK,true); v.setGravity(Gravity.CENTER); v.setBackground(background(SOFT,14)); v.setFocusable(true); return v;
     }
-    private TextView tab(String value) { TextView v=button(value,16); v.setBackgroundColor(PAGE); return v; }
-    private void selected(TextView v,boolean active) { v.setSelected(active); v.setTextColor(active?BLUE:INK); v.setBackground(background(active?PALE_BLUE:0x00000000,14)); }
-    private void selectedTab(TextView v,boolean active) { v.setSelected(active); v.setTextColor(active?0xff007aff:0xff5c687d); v.setBackground(new TabBackground(active)); }
+    private TextView tab(String value) { TextView v=button(value,16); AppTheme.background(v, PAGE); return v; }
+    private void selected(TextView v,boolean active) { v.setSelected(active); AppTheme.text(v, active?BLUE:INK); v.setBackground(background(active?PALE_BLUE:0x00000000,14)); }
+    private void selectedTab(TextView v,boolean active) { v.setSelected(active); AppTheme.text(v, active?AppTheme.BLUE:AppTheme.MUTED); v.setBackground(new TabBackground(active)); }
     private void addWeighted(LinearLayout parent,View child,int height,int gap) { LayoutParams p=new LayoutParams(0,dp(height),1); p.leftMargin=dp(gap); parent.addView(child,p); }
-    private GradientDrawable background(int color,int radius) { GradientDrawable d=new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
+    private GradientDrawable background(int color,int radius) { GradientDrawable d=new AppTheme.Shape(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
     private void toast(String value) { Toast.makeText(getContext(),value,Toast.LENGTH_SHORT).show(); }
     private int dp(float value) { return Math.round(value*getResources().getDisplayMetrics().density); }
     @Override protected void onDetachedFromWindow() { if(deleteDialog!=null)deleteDialog.dismiss(); super.onDetachedFromWindow(); }
@@ -502,12 +502,12 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
     private final class TabBackground extends android.graphics.drawable.Drawable {
         private final boolean active; private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
         TabBackground(boolean active) { this.active=active; }
-        @Override public void draw(Canvas c) { if(active) { paint.setColor(0xff007aff); float center=getBounds().exactCenterX(); c.drawRoundRect(center-dp(29),getBounds().bottom-dp(4),center+dp(29),getBounds().bottom,dp(3),dp(3),paint); } }
+        @Override public void draw(Canvas c) { if(active) { paint.setColor(AppTheme.ink(AppTheme.BLUE)); float center=getBounds().exactCenterX(); c.drawRoundRect(center-dp(29),getBounds().bottom-dp(4),center+dp(29),getBounds().bottom,dp(3),dp(3),paint); } }
         @Override public void setAlpha(int alpha) { }
         @Override public void setColorFilter(android.graphics.ColorFilter filter) { }
         @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
-    private final class ShapeBackground extends GradientDrawable {
+    private final class ShapeBackground extends AppTheme.Shape {
         ShapeBackground(boolean active) { setColor(active?PALE_BLUE:0x00000000); setCornerRadius(dp(14)); }
     }
     private final class IconStrip extends HorizontalScrollView {
@@ -524,26 +524,26 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         private final int kind; private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
         private FloatingBubbleAppearance.Config glyphConfig;
         private String glyphSvg;
-        private boolean glyphSelected;
+        private boolean glyphSelected, glyphDark;
         IconChoice(Context context,int kind) { super(context); this.kind=kind; }
         @Override protected void onDraw(Canvas canvas) {
-            int color=isSelected()?0xff0b8af7:0xff8994a5;
+            int color=AppTheme.ink(isSelected()?AppTheme.BLUE:AppTheme.MUTED);
             float x=getWidth()/2f,y=dp(17);
             if(kind==6 && config.customSvg.isEmpty()) {
                 paint.setColor(color); paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(dp(1.7f));
                 canvas.drawLine(x-dp(9),y,x+dp(9),y,paint); canvas.drawLine(x,y-dp(9),x,y+dp(9),paint);
                 paint.setStyle(Paint.Style.FILL); paint.setTextSize(dp(8)); paint.setTextAlign(Paint.Align.CENTER); canvas.drawText("SVG",x,dp(34),paint);
             } else {
-                if(glyphConfig==null || glyphSelected!=isSelected() || !config.customSvg.equals(glyphSvg)) {
+                if(glyphConfig==null || glyphDark!=AppTheme.isDark() || glyphSelected!=isSelected() || !config.customSvg.equals(glyphSvg)) {
                     FloatingBubbleAppearance.Builder b=new FloatingBubbleAppearance.Builder(config);
                     b.icon=kind; b.iconPaint=FloatingBubbleAppearance.defaultPaint(color); b.iconSizePercent=100;
                     b.style=FloatingBubbleAppearance.STYLE_SEARCH; b.legacyVisual=false;
-                    glyphConfig=b.build(); glyphSvg=config.customSvg; glyphSelected=isSelected();
+                    glyphConfig=b.build(); glyphSvg=config.customSvg; glyphSelected=isSelected(); glyphDark=AppTheme.isDark();
                 }
                 float side=dp(kind==5?18:23);
                 BubbleAppearanceRenderer.drawIcon(canvas,glyphConfig,new RectF(x-side/2,y-side/2,x+side/2,y+side/2),this);
             }
-            if(isSelected()) { paint.setStyle(Paint.Style.FILL); paint.setColor(0xff007aff); canvas.drawRoundRect(x-dp(7),dp(37),x+dp(7),dp(39),dp(2),dp(2),paint); }
+            if(isSelected()) { paint.setStyle(Paint.Style.FILL); paint.setColor(AppTheme.ink(AppTheme.BLUE)); canvas.drawRoundRect(x-dp(7),dp(37),x+dp(7),dp(39),dp(2),dp(2),paint); }
         }
     }
     private final class ShapeSymbol extends View {
@@ -552,7 +552,7 @@ public final class FloatingBubbleSettingsView extends LinearLayout {
         @Override protected void onDraw(Canvas c) {
             c.save(); float scale=Math.min(getWidth(),getHeight())/24f;
             c.translate((getWidth()-24*scale)/2,(getHeight()-24*scale)/2); c.scale(scale,scale);
-            paint.setColor(((View)getParent()).isSelected()?BLUE:0xff667185); paint.setStyle(Paint.Style.FILL);
+            paint.setColor(AppTheme.ink(((View)getParent()).isSelected()?BLUE:AppTheme.MUTED)); paint.setStyle(Paint.Style.FILL);
             switch(kind) {
                 case 0: c.drawCircle(12,12,9,paint); break;
                 case 1: c.drawRoundRect(3,3,21,21,5,5,paint); break;

@@ -66,13 +66,13 @@ final class SearchDraftChips extends HorizontalScrollView {
         row.removeAllViews();
         for (SearchDraftState.Draft draft : state.list()) {
             TextView chip = new TextView(getContext());
-            chip.setText(draft.text.replace('\n', ' ')); chip.setTextColor(0xff7945a1);
+            chip.setText(draft.text.replace('\n', ' ')); AppTheme.text(chip, AppTheme.PURPLE);
             chip.setTextSize(12); chip.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             chip.setIncludeFontPadding(false); chip.setGravity(Gravity.CENTER_VERTICAL);
             chip.setSingleLine(true); chip.setEllipsize(TextUtils.TruncateAt.END);
             chip.setMaxWidth(dp(164)); chip.setMinWidth(dp(44));
             chip.setPadding(dp(10), 0, dp(10), 0);
-            chip.setBackground(background(0xfff2e9fa, 0xffdbbee9));
+            chip.setBackground(background(AppTheme.LAVENDER, AppTheme.LINE));
             chip.setContentDescription("暂存文字 " + draft.text + "，长按拖动");
             chip.setOnClickListener(v -> { ui.editing(); editor.requestFocus();
                 int caret = Math.max(0, editor.getSelectionEnd()); insert(draft, caret); });
@@ -119,14 +119,14 @@ final class SearchDraftChips extends HorizontalScrollView {
         switch (event.getAction()) {
             case DragEvent.ACTION_DRAG_ENTERED:
                 trash.animate().scaleX(1.04f).scaleY(1.04f).setDuration(100).start();
-                trash.setBackground(background(0xffffd9dd, 0xffed8c99)); break;
+                trash.setBackground(background(AppTheme.SOFT, AppTheme.RED)); break;
             case DragEvent.ACTION_DROP:
                 state.remove(draft); render();
                 trash.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); break;
             case DragEvent.ACTION_DRAG_EXITED:
             case DragEvent.ACTION_DRAG_ENDED:
                 trash.animate().scaleX(1).scaleY(1).setDuration(100).start();
-                trash.setBackground(background(0xfffff0f2, 0xffffd4db)); break;
+                trash.setBackground(background(AppTheme.ROSE, AppTheme.SOFT)); break;
         }
         return true;
     }
@@ -148,7 +148,7 @@ final class SearchDraftChips extends HorizontalScrollView {
         dragging = false; ui.caret(-1); ui.dragging(false);
     }
     private RippleDrawable background(int color, int stroke) {
-        GradientDrawable shape = new GradientDrawable(); shape.setColor(color); shape.setCornerRadius(dp(14)); shape.setStroke(dp(1), stroke);
+        GradientDrawable shape = new AppTheme.Shape(); shape.setColor(color); shape.setCornerRadius(dp(14)); shape.setStroke(dp(1), stroke);
         return new RippleDrawable(ColorStateList.valueOf(0x147945a1), shape, null);
     }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }

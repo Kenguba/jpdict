@@ -23,6 +23,9 @@ public final class DictionaryInstrumentation extends Instrumentation {
     private boolean remoteMode;
     private boolean destinationMode;
     private boolean pagesMode;
+    private boolean drawerMode;
+    private boolean themeMode;
+    private String themeRestart;
     private void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
     private static void write(File file, byte[] bytes) throws IOException {
         try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
@@ -36,11 +39,26 @@ public final class DictionaryInstrumentation extends Instrumentation {
         remoteMode = arguments != null && arguments.containsKey("dictionary_remote");
         destinationMode = arguments != null && arguments.containsKey("destination");
         pagesMode = arguments != null && arguments.containsKey("pages");
+        drawerMode = arguments != null && arguments.containsKey("drawer");
+        themeMode = arguments != null && arguments.containsKey("theme");
+        themeRestart = arguments == null ? null : arguments.getString("theme_restart");
         start();
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (themeRestart != null) {
+                result.putString("stream", AppThemeValidation.restart(this, "save".equals(themeRestart)));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
+            if (themeMode) {
+                result.putString("stream", AppThemeValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
+            if (drawerMode) {
+                result.putString("stream", DrawerStyleValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
             if (destinationMode) {
                 result.putString("stream", LookupDestinationValidation.run(this));
                 finish(android.app.Activity.RESULT_OK, result); return;

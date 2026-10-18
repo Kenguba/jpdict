@@ -32,9 +32,9 @@ public final class DrawerFilesActivity extends FloatingSearchPageActivity {
         content.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView add = label("添加文本文件", 15, 0xff008fd1);
+        TextView add = label("添加文本文件", 15, AppTheme.BLUE);
         add.setGravity(android.view.Gravity.CENTER);
-        add.setBackground(shape(0xffdef7ff));
+        add.setBackground(shape(AppTheme.SOFT));
         add.setOnClickListener(v -> chooseFile());
         LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, dp(44));
         addParams.setMargins(dp(16), 0, dp(16), dp(8));
@@ -55,27 +55,27 @@ public final class DrawerFilesActivity extends FloatingSearchPageActivity {
                     if (file.id.equals(selected)) document = file;
                 }
                 if (document != null) {
-                    TextView title = label(document.name, 17, 0xff171819);
+                    TextView title = label(document.name, 17, AppTheme.INK);
                     title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
                     content.addView(title);
                     TextView body = label(document.content.isEmpty() ? "（空文件）" : document.content,
-                            14, 0xff171819);
+                            14, AppTheme.INK);
                     body.setTextIsSelectable(true);
                     body.setLineSpacing(dp(4), 1f);
                     body.setPadding(0, dp(12), 0, dp(12));
                     content.addView(body);
                     return;
                 }
-                TextView note = label("文件会保存在本机，抽屉搜索可检索文件名和正文。", 13, 0xff737a80);
+                TextView note = label("文件会保存在本机，抽屉搜索可检索文件名和正文。", 13, AppTheme.MUTED);
                 note.setPadding(dp(4), 0, dp(4), dp(12));
                 content.addView(note);
-                if (files.isEmpty()) content.addView(label("尚未添加文本文件", 14, 0xff737a80));
+                if (files.isEmpty()) content.addView(label("尚未添加文本文件", 14, AppTheme.MUTED));
                 for (DrawerSearchFileRepository.Document file : files) {
                     LinearLayout row = new LinearLayout(this);
                     row.setGravity(android.view.Gravity.CENTER_VERTICAL);
                     row.setPadding(dp(14), dp(12), dp(10), dp(12));
-                    row.setBackground(shape(0xffffffff));
-                    TextView name = label(file.name, 15, 0xff171819);
+                    row.setBackground(shape(AppTheme.CARD));
+                    TextView name = label(file.name, 15, AppTheme.INK);
                     name.setMaxLines(2);
                     row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
                     row.setContentDescription("文本文件：" + file.name);
@@ -86,7 +86,7 @@ public final class DrawerFilesActivity extends FloatingSearchPageActivity {
                     SearchIconView delete = new SearchIconView(this, SearchIconView.Kind.CLOSE);
                     delete.setPadding(dp(11), dp(11), dp(11), dp(11));
                     delete.setContentDescription("删除文件：" + file.name);
-                    delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+                    delete.setOnClickListener(v -> new AppTheme.DialogBuilder(this)
                             .setMessage("删除本机文件“" + file.name + "”？")
                             .setNegativeButton("取消", null)
                             .setPositiveButton("删除", (dialog, which) -> worker.execute(() -> {
@@ -151,13 +151,13 @@ public final class DrawerFilesActivity extends FloatingSearchPageActivity {
 
     private TextView label(String text, int size, int color) {
         TextView view = new TextView(this);
-        view.setText(text); view.setTextSize(size); view.setTextColor(color);
+        view.setText(text); view.setTextSize(size); AppTheme.text(view, color);
         view.setIncludeFontPadding(false);
         return view;
     }
 
     private GradientDrawable shape(int color) {
-        GradientDrawable background = new GradientDrawable();
+        GradientDrawable background = new AppTheme.Shape();
         background.setColor(color); background.setCornerRadius(dp(18));
         return background;
     }

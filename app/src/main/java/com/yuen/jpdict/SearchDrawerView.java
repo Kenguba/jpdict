@@ -39,9 +39,9 @@ public final class SearchDrawerView extends LinearLayout {
         void onUnavailable(String feature);
     }
 
-    private static final int INK = 0xff18191b;
-    private static final int MUTED = 0xff757a7f;
-    private static final int SURFACE = 0xfff2f2f2;
+    private static final int INK = AppTheme.INK;
+    private static final int MUTED = AppTheme.MUTED;
+    private static final int SURFACE = AppTheme.PAGE;
     private final Callback callback;
     private final LinearLayout history;
     private final SearchIconView historyChevron;
@@ -64,7 +64,7 @@ public final class SearchDrawerView extends LinearLayout {
         this.callback = callback;
         searchController = new DrawerSearchController(context, this::showResults);
         setOrientation(VERTICAL);
-        setBackgroundColor(SURFACE);
+        AppTheme.background(this, SURFACE);
         setPadding(dp(16), dp(6), dp(16), dp(12));
         setClickable(true);
         setFocusable(false);
@@ -72,10 +72,10 @@ public final class SearchDrawerView extends LinearLayout {
 
         LinearLayout account = horizontal();
         account.setPadding(dp(2), dp(6), 0, dp(6));
-        TextView avatar = text("JP", 17, 0xffffffff);
+        TextView avatar = text("JP", 17, AppTheme.CARD);
         avatar.setGravity(Gravity.CENTER);
         avatar.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        avatar.setBackground(shape(0xff008d80, 24));
+        avatar.setBackground(shape(AppTheme.BLUE, 24));
         avatar.setContentDescription("设置");
         avatar.setOnClickListener(v -> callback.onSettings());
         account.addView(avatar, new LayoutParams(dp(44), dp(44)));
@@ -106,7 +106,7 @@ public final class SearchDrawerView extends LinearLayout {
 
         utilities = new LinearLayout(context);
         utilities.setOrientation(VERTICAL);
-        utilities.setBackground(shape(0xffffffff, 22));
+        utilities.setBackground(shape(AppTheme.CARD, 22));
         utilities.setClipToOutline(true);
         // 暂时隐藏，待功能接入后恢复。
         // addUtility(utilities, SearchIconView.Kind.TASK, "自动化任务", true);
@@ -120,27 +120,29 @@ public final class SearchDrawerView extends LinearLayout {
 
         banner = horizontal();
         banner.setPadding(dp(15), dp(13), dp(12), dp(13));
-        banner.setBackground(ripple(0xff1748e9, 30));
+        banner.setBackground(ripple(AppTheme.BLUE, 30));
         banner.setContentDescription("悬浮按钮设置，调整大小、样式和透明度");
-        banner.addView(icon(SearchIconView.Kind.LIGHTNING, 0xffffffff),
+        banner.addView(icon(SearchIconView.Kind.LIGHTNING, AppTheme.CARD),
                 new LayoutParams(dp(25), dp(25)));
         LinearLayout bannerText = new LinearLayout(context);
         bannerText.setOrientation(VERTICAL);
         bannerText.setPadding(dp(11), 0, dp(4), 0);
-        TextView backendName = text("悬浮按钮", 17, 0xffffffff);
+        TextView backendName = text("悬浮按钮", 17, AppTheme.CARD);
         backendName.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         backendName.setSingleLine();
         backendName.setEllipsize(android.text.TextUtils.TruncateAt.END);
         bannerText.addView(backendName);
-        backendStatus = text("", 11, 0xffdce5ff);
+        backendStatus = text("", 11, AppTheme.CARD);
         backendStatus.setSingleLine();
         backendStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
         backendStatus.setPadding(0, dp(2), 0, 0);
         bannerText.addView(backendStatus);
         banner.addView(bannerText, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView manage = text("调整", 12, 0xffffffff);
+        TextView manage = text("调整", 12, AppTheme.CARD);
         manage.setGravity(Gravity.CENTER);
-        GradientDrawable manageShape = shape(0x142fffff, 18);
+        GradientDrawable manageShape = new GradientDrawable();
+        manageShape.setColor(0x142fffff);
+        manageShape.setCornerRadius(dp(18));
         manageShape.setStroke(dp(1), 0x55ffffff);
         manage.setBackground(manageShape);
         banner.addView(manage, new LayoutParams(dp(48), dp(31)));
@@ -173,16 +175,16 @@ public final class SearchDrawerView extends LinearLayout {
         tools.setPadding(0, dp(10), 0, 0);
         LinearLayout search = horizontal();
         search.setPadding(dp(15), 0, dp(12), 0);
-        search.setBackground(ripple(0xffffffff, 25));
+        search.setBackground(ripple(AppTheme.CARD, 25));
         search.addView(icon(SearchIconView.Kind.SEARCH, MUTED),
                 new LayoutParams(dp(23), dp(23)));
         searchInput = new DrawerEditor(context);
         searchInput.setTextSize(15);
-        searchInput.setTextColor(INK);
-        searchInput.setHintTextColor(MUTED);
+        AppTheme.text(searchInput, INK);
+        AppTheme.hint(searchInput, MUTED);
         searchInput.setSingleLine(true);
         searchInput.setHint("搜索");
-        searchInput.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        AppTheme.background(searchInput, android.graphics.Color.TRANSPARENT);
         searchInput.setPadding(dp(10), 0, 0, 0);
         searchInput.setFocusableInTouchMode(false);
         searchInput.setFocusable(false);
@@ -354,7 +356,7 @@ public final class SearchDrawerView extends LinearLayout {
             history.addView(empty);
         }
         if (filtered) {
-            TextView add = text("添加或管理本地文件", 13, 0xff008fd1);
+            TextView add = text("添加或管理本地文件", 13, AppTheme.BLUE);
             add.setPadding(dp(2), dp(16), dp(2), dp(16));
             add.setOnClickListener(v -> callback.onFiles(null));
             history.addView(add);
@@ -368,6 +370,14 @@ public final class SearchDrawerView extends LinearLayout {
     }
 
     void dispose() { searchController.dispose(); }
+
+    void applyOpeningFraction(float fraction) {
+        float remaining = 1 - fraction;
+        utilities.setTranslationX(-dp(3) * remaining);
+        banner.setTranslationX(-dp(5.4f) * remaining);
+        historyHeading.setTranslationX(-dp(7.8f) * remaining);
+        history.setTranslationX(-dp(10.2f) * remaining);
+    }
 
     // Platform widgets match the rest of this native overlay without AppCompat theming.
     @android.annotation.SuppressLint("AppCompatCustomView")
@@ -441,7 +451,7 @@ public final class SearchDrawerView extends LinearLayout {
             String label, boolean divider) {
         LinearLayout row = horizontal();
         row.setPadding(dp(15), 0, dp(13), 0);
-        row.setBackground(ripple(0xffffffff, 0));
+        row.setBackground(ripple(AppTheme.CARD, 0));
         row.addView(icon(kind, INK), new LayoutParams(dp(25), dp(25)));
         TextView title = text(label, 17, INK);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -459,7 +469,7 @@ public final class SearchDrawerView extends LinearLayout {
         group.addView(row, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(55)));
         if (divider) {
             View line = new View(getContext());
-            line.setBackgroundColor(SURFACE);
+            AppTheme.background(line, SURFACE);
             group.addView(line, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
         }
     }
@@ -468,7 +478,7 @@ public final class SearchDrawerView extends LinearLayout {
             String description, Runnable action) {
         LinearLayout button = horizontal();
         button.setGravity(Gravity.CENTER);
-        button.setBackground(ripple(0xffffffff, 24));
+        button.setBackground(ripple(AppTheme.CARD, 24));
         button.addView(icon(kind, INK), new LayoutParams(dp(24), dp(24)));
         button.setContentDescription(description);
         button.setOnClickListener(v -> action.run());
@@ -491,18 +501,18 @@ public final class SearchDrawerView extends LinearLayout {
     }
     private TextView text(String value, float size, int color) {
         TextView label = new TextView(getContext());
-        label.setText(value); label.setTextSize(size); label.setTextColor(color);
+        label.setText(value); label.setTextSize(size); AppTheme.text(label, color);
         label.setIncludeFontPadding(false);
         return label;
     }
     private GradientDrawable shape(int color, int radius) {
-        GradientDrawable background = new GradientDrawable();
+        GradientDrawable background = new AppTheme.Shape();
         background.setColor(color); background.setCornerRadius(dp(radius));
         return background;
     }
     private RippleDrawable ripple(int color, int radius) {
         return new RippleDrawable(ColorStateList.valueOf(0x18000000),
-                shape(color, radius), shape(0xffffffff, radius));
+                shape(color, radius), shape(AppTheme.CARD, radius));
     }
     private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);

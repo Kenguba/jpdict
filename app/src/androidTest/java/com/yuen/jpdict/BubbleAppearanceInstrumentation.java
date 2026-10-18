@@ -35,6 +35,7 @@ public final class BubbleAppearanceInstrumentation extends Instrumentation {
     private String mode;
     private String label;
     private String pickerKind;
+    private boolean dark;
     private void check(boolean value, String message) {
         assertions++;
         if (!value) throw new AssertionError(message);
@@ -42,12 +43,14 @@ public final class BubbleAppearanceInstrumentation extends Instrumentation {
     @Override public void onCreate(Bundle args) {
         super.onCreate(args); mode = args == null ? null : args.getString("mode");
         pickerKind = args == null ? null : args.getString("kind");
+        dark = args != null && args.containsKey("dark");
         label = args == null ? "default" : args.getString("label", "default"); start();
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
             check(getTargetContext().getPackageName().endsWith(".v18qa"), "Use a disposable .v18qa build");
+            onMain(() -> AppTheme.mode(dark ? 1 : 0));
             if ("capture".equals(mode)) capture();
             else if ("ocr".equals(mode)) {
                 result.putString("stream", OcrValidation.run(this, false));
