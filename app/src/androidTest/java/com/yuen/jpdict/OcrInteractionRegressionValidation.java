@@ -126,10 +126,13 @@ final class OcrInteractionRegressionValidation {
                 Thread.sleep(650);
                 main(test, () -> check(field(owner.get(), "joystick") == null, "The original long-press threshold is retained"));
                 waitFor(test, () -> field(owner.get(), "joystick") != null, "Long press never displayed the ring");
+                Rect anchor = new Rect(position);
+                float targetX = (Float)field(owner.get(), "aimX"), targetY = (Float)field(owner.get(), "aimY");
                 for (int step=0; step<4; step++) {
                     float dx = step==1 ? 90*density : step==3 ? -90*density : 0;
                     float dy = step==0 ? -90*density : step==2 ? 90*density : 0;
                     touch(test, listener.get(), view, MotionEvent.ACTION_MOVE, 440+dx, 740+dy);
+                    main(test, () -> check(position.equals(anchor), "Choosing a direction keeps the bubble and ring concentric"));
                     int before = moves[0];
                     for (int repeat=0; repeat<8; repeat++) touch(test, listener.get(), view, MotionEvent.ACTION_MOVE, 440+dx, 740+dy);
                     main(test, () -> check(moves[0]==before, "Stationary knob events do not update the window"));
@@ -145,6 +148,8 @@ final class OcrInteractionRegressionValidation {
                 main(test, () -> {
                     touch(test, listener.get(), view, MotionEvent.ACTION_UP, 440+dx, 740+dy);
                     check((Boolean)field(owner.get(), "armed"), "Every mode release arms one pickup");
+                    check((Float)field(owner.get(), "aimX") == targetX && (Float)field(owner.get(), "aimY") == targetY,
+                            "Choosing a mode preserves the original target, including an off-centre touch");
                     checkRingCenter(owner.get(), position, "Released");
                     touch(test, listener.get(), view, MotionEvent.ACTION_DOWN, 440, 740);
                 });
@@ -164,7 +169,7 @@ final class OcrInteractionRegressionValidation {
             touch(test, listener.get(), view, MotionEvent.ACTION_UP, 440, 740);
             main(test, () -> check(requests.size()==beforeCancel && !(Boolean)field(owner.get(), "armed"),
                     "Releasing in the centre cancels without starting a task"));
-            // Cancellation returns the same physical knob before its ring fades.
+            // Cancellation preserves the fixed bubble and ring at every edge and size.
             android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
             realWindows.getDefaultDisplay().getRealMetrics(screen);
             for (int sample=0; sample<12; sample++) {
@@ -247,9 +252,9 @@ final class OcrInteractionRegressionValidation {
     }
     private void checkRingCenter(OcrPickupController owner, Rect bubble, String phase) {
         Object ring = field(owner, "dismissingJoystick");
-        check(ring != null && (Float)field(ring, "knobX") == bubble.exactCenterX()
-                        && (Float)field(ring, "knobY") == bubble.exactCenterY(),
-                phase + " ring hole follows the restored bubble throughout its fade");
+        check(ring != null && (Float)field(ring, "x") == bubble.exactCenterX()
+                        && (Float)field(ring, "y") == bubble.exactCenterY(),
+                phase + " ring stays centred on the anchored bubble throughout its fade");
     }
     private static Object field(Object target, String name) {
         try { Field field=target.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(target); }

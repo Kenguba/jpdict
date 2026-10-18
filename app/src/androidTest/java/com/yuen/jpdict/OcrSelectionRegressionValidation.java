@@ -107,7 +107,7 @@ final class OcrSelectionRegressionValidation {
     }
     private void refinementFallback(Instrumentation test) throws Exception {
         TextRecognizer model = fakeModel(() -> Tasks.forResult(new Text("",Collections.emptyList())));
-        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(model,model,model,model,null);
+        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(model,model,model,null);
         Bitmap image = Bitmap.createBitmap(320,160,Bitmap.Config.ARGB_8888);
         try {
             for (String text : new String[]{"first", "girst", "中文", "日本語", "한국어", "中文 father 日本語 한국어"}) {
@@ -141,7 +141,7 @@ final class OcrSelectionRegressionValidation {
                     if ("close".equals(method.getName())) closes.incrementAndGet();
                     return null;
                 });
-        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(model,model,model,model,null);
+        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(model,model,model,null);
         Bitmap image = Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);
         try {
             long start = SystemClock.uptimeMillis();
@@ -158,7 +158,7 @@ final class OcrSelectionRegressionValidation {
             check(responsive.get() && closes.get()==0, "Main-thread gestures remain responsive and active model clients stay alive until completion");
             // A replacement recognizer must not queue behind the retired worker.
             TextRecognizer quickModel = fakeModel(() -> Tasks.forResult(new Text("first",Collections.emptyList())));
-            MultilingualOcrRecognizer replacement = new MultilingualOcrRecognizer(quickModel,quickModel,quickModel,quickModel,null);
+            MultilingualOcrRecognizer replacement = new MultilingualOcrRecognizer(quickModel,quickModel,quickModel,null);
             CountDownLatch replaced = new CountDownLatch(1);
             try {
                 test.runOnMainSync(() -> replacement.recognize(image,new MultilingualOcrRecognizer.Callback() {
@@ -169,8 +169,8 @@ final class OcrSelectionRegressionValidation {
             } finally { test.runOnMainSync(replacement::close); }
             release.countDown();
             check(completed.await(3,TimeUnit.SECONDS) && callbackOnMain.get(), "OCR completion returns to the main thread");
-            for (int attempt=0;attempt<100 && closes.get()<4;attempt++) Thread.sleep(5);
-            check(closes.get()==4, "All reused model clients close once the retired physical operation returns");
+            for (int attempt=0;attempt<100 && closes.get()<3;attempt++) Thread.sleep(5);
+            check(closes.get()==3, "All reused model clients close once the retired physical operation returns");
         } finally {
             release.countDown(); completed.await(3,TimeUnit.SECONDS);
             test.runOnMainSync(recognizer::close); image.recycle();
@@ -216,9 +216,9 @@ final class OcrSelectionRegressionValidation {
                 measured.append("English seedless local refine=").append(recoveredText.get()).append('\n');
             } finally { english.recycle(); }
             pointerRendering(test, recognizer, measured);
-            String[] texts={"中文识别", "日本語の辞書", "한국어 단어", "中文 father 日本語 한국어"};
-            OcrLanguageSettings.Language[] languages={OcrLanguageSettings.Language.MIXED,OcrLanguageSettings.Language.JAPANESE,
-                    OcrLanguageSettings.Language.KOREAN,OcrLanguageSettings.Language.MIXED};
+            String[] texts={"中文识别", "日本語の辞書", "中文 father 日本語"};
+            OcrLanguageSettings.Language[] languages={OcrLanguageSettings.Language.CHINESE,
+                    OcrLanguageSettings.Language.JAPANESE,OcrLanguageSettings.Language.MIXED};
             for (int i=0;i<texts.length;i++) {
                 Bitmap image=render(texts[i],null);
                 try {
@@ -226,14 +226,14 @@ final class OcrSelectionRegressionValidation {
                     List<MultilingualOcrRecognizer.Region> regions=recognize(test,recognizer,image,languages[i],true);
                     String raw=text(regions);
                     measured.append(languages[i].label).append(" raw=").append(raw).append("; ms=").append(SystemClock.uptimeMillis()-start).append('\n');
-                    if (i<3) check(texts[i].equals(raw), "Bundled language model preserves the complete original sample: " + texts[i]);
-                    if (i==3) {
+                    if (i<2) check(texts[i].equals(raw), "Bundled language model preserves the complete original sample: " + texts[i]);
+                    if (i==2) {
                         List<MultilingualOcrRecognizer.Region> elementRegions = recognize(test,recognizer,image,languages[i],false);
                         String elementText = text(elementRegions);
                         measured.append("Mixed word elements raw=").append(elementText).append('\n');
                         check(elementText.contains("中文") && elementText.contains("father")
-                                        && elementText.contains("日本語") && elementText.contains("한국어"),
-                                "Mixed word elements retain Chinese, Latin, Japanese and Korean text fragments");
+                                        && elementText.contains("日本語"),
+                                "Mixed word elements retain Chinese, Latin and Japanese text fragments");
                         measured.append("Mixed sentence exact sample match=").append(texts[i].equals(raw))
                                 .append(" (quality probe; known baseline limitation, not an accuracy pass)\n");
                     }

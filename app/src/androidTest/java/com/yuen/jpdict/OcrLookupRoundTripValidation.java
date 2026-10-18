@@ -6,6 +6,7 @@ import android.graphics.*;
 import android.os.*;
 import android.view.*;
 import androidx.core.content.ContextCompat;
+import java.io.FileOutputStream;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,6 +23,7 @@ final class OcrLookupRoundTripValidation {
         Paint ink = new Paint(Paint.ANTI_ALIAS_FLAG);
         ink.setColor(Color.BLACK); ink.setTextSize(48);
         List<String> events = new ArrayList<>();
+        List<String> mismatches = new ArrayList<>();
         List<Long> elapsed = new ArrayList<>();
         boolean[] permissionClosed = {false};
         BroadcastReceiver trace = new BroadcastReceiver() {
@@ -29,6 +31,18 @@ final class OcrLookupRoundTripValidation {
                 if (MainActivity.OcrActivity.ACTION_FINISHED.equals(intent.getAction()))
                     permissionClosed[0] = intent.getBooleanExtra("granted", false);
                 String[] words = intent.getStringArrayExtra("words");
+                if (words != null) {
+                    MainActivity.ScreenCaptureService capture = service(MainActivity.ScreenCaptureService.class);
+                    OcrPreviewFrame frame = capture == null ? null : capture.previewFrame;
+                    long session = intent.getLongExtra("session", -1);
+                    Bitmap bitmap = frame == null ? null : frame.borrow(session);
+                    if (bitmap != null) {
+                        try (FileOutputStream output = new FileOutputStream(new java.io.File(app.getCacheDir(), "ocr-roundtrip-preview.png"))) {
+                            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw new AssertionError("Capture evidence failed");
+                        } catch (java.io.IOException error) { throw new AssertionError(error); }
+                        finally { frame.release(); }
+                    }
+                }
                 events.add(intent.getAction() + " session=" + intent.getLongExtra("session", -1)
                         + " words=" + Arrays.toString(words) + " refined=" + intent.getBooleanExtra("refined", false)
                         + " text=" + intent.getStringExtra("text") + " error=" + intent.getStringExtra("error"));
@@ -91,8 +105,12 @@ final class OcrLookupRoundTripValidation {
             });
             waitFor(test, () -> paper.getWidth() > 0, 5000, "Test page was not laid out");
             Object projection = capture.get().projection;
+            String[] samples = {"first", "second", "中文", "日本語", "first second"};
+            OcrPickupMode[] modes = {OcrPickupMode.WORD, OcrPickupMode.WORD, OcrPickupMode.CHINESE,
+                    OcrPickupMode.JAPANESE, OcrPickupMode.SENTENCE};
             for (int round = 0; round < 20; round++) {
-                String expected = round % 2 == 0 ? "first" : "second";
+                String expected = samples[round % samples.length];
+                OcrPickupMode mode = modes[round % modes.length];
                 word.set(expected);
                 int[] origin = new int[2];
                 main(test, () -> paper.getLocationOnScreen(origin));
@@ -102,11 +120,12 @@ final class OcrLookupRoundTripValidation {
                 AtomicReference<Rect> position = new AtomicReference<>();
                 main(test, () -> {
                     paper.invalidate();
+                    if (mode == OcrPickupMode.WORD) OcrLanguageSettings.get(app).setLanguage(OcrLanguageSettings.Language.ENGLISH);
                     OcrPickupController owner = (OcrPickupController)field(floating.get(), "pickup");
                     OcrPickupController.Host host = (OcrPickupController.Host)field(owner, "host");
                     host.position();
                     Rect before = host.position();
-                    host.move(Math.round(aimX - 120 - before.width()/2f), Math.round(aimY + gap));
+                    host.move(Math.round(aimX - (mode == OcrPickupMode.WORD ? 120 : 0) - before.width()/2f), Math.round(aimY + gap));
                 });
                 Thread.sleep(250);
                 main(test, () -> {
@@ -117,25 +136,41 @@ final class OcrLookupRoundTripValidation {
                 Rect start = position.get();
                 long started = SystemClock.uptimeMillis();
                 inject(test, started, MotionEvent.ACTION_DOWN, start.exactCenterX(), start.exactCenterY());
-                Thread.sleep(40);
-                inject(test, started, MotionEvent.ACTION_MOVE, aimX, start.exactCenterY());
-                Thread.sleep(350);
+                float releaseX = aimX, releaseY = start.exactCenterY();
+                if (mode == OcrPickupMode.WORD) {
+                    Thread.sleep(40);
+                    inject(test, started, MotionEvent.ACTION_MOVE, releaseX, releaseY);
+                    Thread.sleep(350);
+                } else {
+                    waitFor(test, () -> field(field(floating.get(), "pickup"), "joystick") != null,
+                            5000, "Long press did not open the real direction ring");
+                    float travel = 90 * app.getResources().getDisplayMetrics().density;
+                    if (mode == OcrPickupMode.JAPANESE) releaseX = start.exactCenterX() + travel;
+                    else releaseY += mode == OcrPickupMode.CHINESE ? travel : -travel;
+                    inject(test, started, MotionEvent.ACTION_MOVE, releaseX, releaseY);
+                }
                 if (round == 1) {
                     app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_STOPPED).setPackage(app.getPackageName()));
                     waitFor(test, () -> events.stream().anyMatch(event -> event.startsWith(MainActivity.ScreenCaptureService.ACTION_STOPPED)),
                             5000, "Delayed stop was not delivered");
                     test.waitForIdleSync();
                 }
-                inject(test, started, MotionEvent.ACTION_UP, aimX, start.exactCenterY());
+                inject(test, started, MotionEvent.ACTION_UP, releaseX, releaseY);
                 waitFor(test, () -> {
                     View lookup = (View)field(floating.get(), "lookupOverlay");
-                    return lookup != null && lookup.isAttachedToWindow()
-                            && expected.equals(field(floating.get(), "lookupOverlayQuery"));
+                    return lookup != null && lookup.isAttachedToWindow();
                 }, 25_000, "No real lookup for round " + (round+1) + " expected=" + expected);
                 elapsed.add(SystemClock.uptimeMillis()-started);
+                String actual = (String)field(floating.get(), "lookupOverlayQuery");
+                if (!expected.equals(actual)) mismatches.add("round=" + (round+1) + " expected=" + expected + " actual=" + actual);
                 main(test, () -> {
                     if (field(floating.get(), "bubbleTopProxy") == null)
                         throw new AssertionError("Real lookup must transfer the bubble to its proxy");
+                    OcrLanguageSettings.Language selected = mode == OcrPickupMode.WORD ? OcrLanguageSettings.Language.ENGLISH
+                            : mode == OcrPickupMode.CHINESE ? OcrLanguageSettings.Language.CHINESE
+                            : mode == OcrPickupMode.JAPANESE ? OcrLanguageSettings.Language.JAPANESE : OcrLanguageSettings.Language.MIXED;
+                    if (capture.get().previewLanguage != selected || OcrLanguageSettings.get(app).language() != selected)
+                        throw new AssertionError("The selected mode must reach capture and persist for the next gesture");
                 });
                 test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
                 waitFor(test, () -> field(floating.get(), "lookupOverlay") == null
@@ -149,7 +184,9 @@ final class OcrLookupRoundTripValidation {
                         throw new AssertionError("Round trip did not preserve the idle services and projection");
                 });
             }
-            return "Real input + MediaProjection + ML Kit + lookup/Back: 20/20; alternating first/second; delayed old stop in round 2; same services/projection; ms=" + elapsed + "\n";
+            String result = "Real input + MediaProjection + ML Kit + lookup/Back: 20/20; 8 English + 4 Chinese + 4 Japanese + 4 sentences; real ring selections; delayed old stop in round 2; same services/projection; ms=" + elapsed + "\n";
+            if (!mismatches.isEmpty()) throw new AssertionError(result + "Exact text mismatches: " + mismatches);
+            return result;
         } catch (Throwable failure) {
             int[] origin = new int[2];
             AtomicReference<String> recent = new AtomicReference<>();

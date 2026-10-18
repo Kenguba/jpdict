@@ -229,7 +229,7 @@ final class OcrValidation {
                     if ("process".equals(method.getName())) return calls[0]++==0 ? first.getTask() : second.getTask();
                     return null;
                 });
-        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(model,model,model,model,null);
+        MultilingualOcrRecognizer recognizer = new MultilingualOcrRecognizer(model,model,model,null);
         Bitmap old = Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888), current = Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888);
         onMain(instrumentation, () -> {
             capture.ocrRecognizer=recognizer;capture.previewLanguage=OcrLanguageSettings.Language.ENGLISH;
@@ -333,7 +333,7 @@ final class OcrValidation {
                     if("process".equals(method.getName()))return Tasks.forResult(new Text("",Collections.emptyList()));
                     return null;
                 });
-        return new MultilingualOcrRecognizer(model,model,model,model,null);
+        return new MultilingualOcrRecognizer(model,model,model,null);
     }
     private void captureStopRecovery(Instrumentation instrumentation) throws Exception {
         MultilingualOcrRecognizer replacement=fakeRecognizer();
@@ -568,7 +568,7 @@ final class OcrValidation {
             });
             awaitRequest(request);
             onMain(instrumentation, () -> {
-                check(position.equals(rendered) && saves[0] == 1, "Joystick springs back without changing the saved bubble position");
+                check(position.equals(rendered) && saves[0] == 1, "Joystick selection preserves the saved bubble position");
                 check(request.get()!=null && MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW.equals(request.get().getAction())
                                 && "word".equals(request.get().getStringExtra("pickup_mode")) && activities[0]==0,
                         "Left sector starts OCR with the shared language and the changed lookup destination");
@@ -643,7 +643,7 @@ final class OcrValidation {
             app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",session)
                     .putExtra("refined",true).putExtra("text","stale"));
             Thread.sleep(100); check("日本語".equals(query.get()), "Canceled sessions reject old OCR updates");
-            String[] modes={"sentence","japanese","english"};
+            String[] modes={"sentence","japanese","chinese"};
             float[][] directions={{0,-100},{100,0},{0,100}};
             for(int index=0;index<directions.length;index++){
                 request.set(null);
@@ -653,7 +653,7 @@ final class OcrValidation {
                 touch(instrumentation,listener.get(),view.get(),MotionEvent.ACTION_UP,420+directions[index][0],720+directions[index][1]);
                 awaitRequest(request);
                 check(request.get()!=null && modes[index].equals(request.get().getStringExtra("pickup_mode")),"Joystick release dispatches "+modes[index]+" as a single-session mode");
-                OcrLanguageSettings.Language[] expected={OcrLanguageSettings.Language.MIXED,OcrLanguageSettings.Language.JAPANESE,OcrLanguageSettings.Language.ENGLISH};
+                OcrLanguageSettings.Language[] expected={OcrLanguageSettings.Language.MIXED,OcrLanguageSettings.Language.JAPANESE,OcrLanguageSettings.Language.CHINESE};
                 check(OcrLanguageSettings.get(app).language()==expected[index],"Joystick selection also commits the shared cached language");
                 onMain(instrumentation, owner.get()::cancel);
             }

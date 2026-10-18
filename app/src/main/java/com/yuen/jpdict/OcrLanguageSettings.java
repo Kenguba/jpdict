@@ -10,7 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 final class OcrLanguageSettings {
     interface Listener { void onLanguageChanged(); }
     enum Language {
-        MIXED("mixed", "混合"), KOREAN("korean", "韩语"),
+        MIXED("mixed", "混合"), CHINESE("chinese", "中文"),
         JAPANESE("japanese", "日语"), ENGLISH("english", "英语");
 
         final String value;

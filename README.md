@@ -1,6 +1,6 @@
 # jpdict
 
-原生 Android Java 应用，提供中文、英文、日文、韩文离线 OCR、MDX/MDD 词典、悬浮查词和 Groq 多语种查询。
+原生 Android Java 应用，提供中文、英文、日文离线 OCR、MDX/MDD 词典、悬浮查词和 Groq 多语种查询。
 
 ## 文档与规则入口
 

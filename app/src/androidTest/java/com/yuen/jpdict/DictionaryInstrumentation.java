@@ -66,6 +66,10 @@ public final class DictionaryInstrumentation extends Instrumentation {
                 finish(android.app.Activity.RESULT_OK, result); return;
             }
             if (ocrMode != null) {
+                if ("permission".equals(ocrMode)) {
+                    result.putString("stream", OcrPermissionValidation.run(this));
+                    finish(android.app.Activity.RESULT_OK, result); return;
+                }
                 if ("roundtrip".equals(ocrMode)) {
                     result.putString("stream", OcrLookupRoundTripValidation.run(this));
                     finish(android.app.Activity.RESULT_OK, result); return;

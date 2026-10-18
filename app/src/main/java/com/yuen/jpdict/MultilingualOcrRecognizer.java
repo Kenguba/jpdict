@@ -21,11 +21,10 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
-import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 /**
- * Reusable OCR-only facade for Latin, Chinese, Japanese and Korean scripts.
+ * Reusable OCR-only facade for Latin, Chinese and Japanese scripts.
  * Recognition models are bundled in the APK so recognition works without Google Play services.
  */
 final class MultilingualOcrRecognizer implements AutoCloseable {
@@ -81,8 +80,7 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     enum Script {
         LATIN,
         CHINESE,
-        JAPANESE,
-        KOREAN
+        JAPANESE
     }
 
     private final Object lifecycleLock = new Object();
@@ -94,7 +92,6 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     private final TextRecognizer latin;
     private final TextRecognizer chinese;
     private final TextRecognizer japanese;
-    private final TextRecognizer korean;
     private OcrLanguageSettings languageSettings;
 
     private int inFlight;
@@ -104,13 +101,12 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     MultilingualOcrRecognizer() {
         this(TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS),
                 TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build()),
-                TextRecognition.getClient(new JapaneseTextRecognizerOptions.Builder().build()),
-                TextRecognition.getClient(new KoreanTextRecognizerOptions.Builder().build()), null);
+                TextRecognition.getClient(new JapaneseTextRecognizerOptions.Builder().build()), null);
     }
 
     MultilingualOcrRecognizer(TextRecognizer latin, TextRecognizer chinese, TextRecognizer japanese,
-            TextRecognizer korean, OcrLanguageSettings settings) {
-        this.latin = latin; this.chinese = chinese; this.japanese = japanese; this.korean = korean;
+            OcrLanguageSettings settings) {
+        this.latin = latin; this.chinese = chinese; this.japanese = japanese;
         languageSettings = settings;
         worker.allowCoreThreadTimeOut(true);
     }
@@ -271,8 +267,8 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
     static Script[] scriptsFor(OcrLanguageSettings.Language language) {
         switch (language) {
             case ENGLISH: return new Script[] { Script.LATIN };
+            case CHINESE: return new Script[] { Script.CHINESE };
             case JAPANESE: return new Script[] { Script.JAPANESE };
-            case KOREAN: return new Script[] { Script.KOREAN };
             default: return Script.values();
         }
     }
@@ -281,7 +277,6 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         switch (script) {
             case CHINESE: return chinese;
             case JAPANESE: return japanese;
-            case KOREAN: return korean;
             default: return latin;
         }
     }
@@ -474,7 +469,6 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         latin.close();
         chinese.close();
         japanese.close();
-        korean.close();
     }
 
     private static String textOf(Task<Text> task) {
@@ -502,8 +496,6 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
                 score += script == Script.LATIN ? 5 : 1;
             } else if (isKana(c)) {
                 score += script == Script.JAPANESE ? 6 : 1;
-            } else if (isHangul(c)) {
-                score += script == Script.KOREAN ? 6 : 1;
             } else if (isHan(c)) {
                 score += script == Script.CHINESE ? 5
                         : script == Script.JAPANESE ? 5
@@ -527,9 +519,4 @@ final class MultilingualOcrRecognizer implements AutoCloseable {
         return (c >= '\u3400' && c <= '\u9fff') || c == '々' || c == '〆';
     }
 
-    private static boolean isHangul(char c) {
-        return (c >= '\u1100' && c <= '\u11ff')
-                || (c >= '\u3130' && c <= '\u318f')
-                || (c >= '\uac00' && c <= '\ud7af');
-    }
 }
