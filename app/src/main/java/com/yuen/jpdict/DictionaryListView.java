@@ -49,8 +49,8 @@ final class DictionaryListView extends FrameLayout {
         getLocationOnScreen(location); pointerOffset = pointerY - location[1] - card.getTop();
         card.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
         ViewGroup.LayoutParams old = card.getLayoutParams();
-        slot = new TextView(getContext()); slot.setGravity(Gravity.CENTER); slot.setText("松手放置"); slot.setTextSize(12); slot.setTextColor(0xff8696ac);
-        GradientDrawable background = new GradientDrawable(); background.setColor(0xffeaf1fa); background.setCornerRadius(dp(16)); background.setStroke(dp(1), 0xffb1c8e3, dp(5), dp(4)); slot.setBackground(background);
+        slot = new TextView(getContext()); slot.setGravity(Gravity.CENTER); slot.setText("松手放置"); slot.setTextSize(12); AppTheme.text(slot, AppTheme.MUTED);
+        GradientDrawable background = new AppTheme.Shape(); background.setColor(AppTheme.SOFT); background.setCornerRadius(dp(16)); background.setStroke(dp(1), AppTheme.PALE, dp(5), dp(4)); slot.setBackground(background);
         slot.setContentDescription("排序占位，原位置已腾空");
         LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(-1, card.getHeight()); slotLp.bottomMargin = ((LinearLayout.LayoutParams)old).bottomMargin;
         int top = card.getTop(); rows.removeView(card); rows.addView(slot, originalIndex, slotLp);

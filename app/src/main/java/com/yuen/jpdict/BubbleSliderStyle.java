@@ -36,8 +36,8 @@ final class BubbleSliderStyle {
     }
 
     private static LayerDrawable standardTrack(SeekBar slider) {
-        GradientDrawable remaining = track(slider, new int[]{0xffe5e5ea, 0xffe5e5ea});
-        ClipDrawable filled = new ClipDrawable(track(slider, new int[]{0xff007aff, 0xff007aff}),
+        GradientDrawable remaining = solidTrack(slider, AppTheme.LINE);
+        ClipDrawable filled = new ClipDrawable(solidTrack(slider, AppTheme.BLUE),
                 Gravity.START, ClipDrawable.HORIZONTAL);
         LayerDrawable layers = new LayerDrawable(new Drawable[]{remaining, filled});
         layers.setId(0, android.R.id.background);
@@ -47,6 +47,11 @@ final class BubbleSliderStyle {
             layers.setLayerGravity(i, Gravity.CENTER_VERTICAL);
         }
         return layers;
+    }
+
+    private static GradientDrawable solidTrack(SeekBar slider, int color) {
+        GradientDrawable shape = new AppTheme.Shape(); shape.setColor(color);
+        shape.setCornerRadius(dp(slider, 2)); return shape;
     }
 
     static void applyHue(SeekBar slider) {
@@ -100,11 +105,11 @@ final class BubbleSliderStyle {
             float x = bounds.exactCenterX();
             float y = bounds.exactCenterY();
             canvas.drawCircle(x, y + density, 17 * density, shadow);
-            face.setColor(0xffffffff);
+            face.setColor(AppTheme.color(AppTheme.CARD));
             face.setAlpha(alpha);
             face.setStyle(Paint.Style.FILL);
             canvas.drawCircle(x, y, 14 * density, face);
-            face.setColor(0xffededed);
+            face.setColor(AppTheme.color(AppTheme.LINE));
             face.setAlpha(alpha);
             face.setStyle(Paint.Style.STROKE);
             face.setStrokeWidth(.5f * density);
@@ -156,11 +161,11 @@ final class BubbleSliderStyle {
             face.setAlpha(Math.round(alpha * .13f));
             canvas.drawRoundRect(bounds.left, bounds.top + density * .8f, bounds.right,
                     bounds.bottom + density * .8f, radius, radius, face);
-            face.setColor(0xffffffff);
+            face.setColor(AppTheme.color(AppTheme.CARD));
             face.setAlpha(alpha);
             canvas.drawRoundRect(bounds.left, bounds.top, bounds.right, bounds.bottom,
                     radius, radius, face);
-            face.setColor(0xffe3e7ec);
+            face.setColor(AppTheme.color(AppTheme.LINE));
             face.setAlpha(alpha);
             face.setStyle(Paint.Style.STROKE);
             face.setStrokeWidth(Math.max(.5f, density * .55f));
@@ -168,7 +173,7 @@ final class BubbleSliderStyle {
                     bounds.top + face.getStrokeWidth() / 2,
                     bounds.right - face.getStrokeWidth() / 2,
                     bounds.bottom - face.getStrokeWidth() / 2, radius, radius, face);
-            label.setAlpha(alpha);
+            label.setColor(AppTheme.ink(AppTheme.MUTED)); label.setAlpha(alpha);
             Paint.FontMetrics metrics = label.getFontMetrics();
             canvas.drawText(value, bounds.exactCenterX(),
                     bounds.exactCenterY() - (metrics.ascent + metrics.descent) / 2, label);

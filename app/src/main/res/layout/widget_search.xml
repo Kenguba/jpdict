@@ -7,11 +7,13 @@
     android:padding="12dp"
     android:background="#FFFFFFFF">
     <ImageView
+        android:id="@+id/widget_icon"
         android:layout_width="28dp"
         android:layout_height="28dp"
         android:src="@android:drawable/ic_menu_search"
         android:contentDescription="搜索"/>
     <TextView
+        android:id="@+id/widget_label"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"

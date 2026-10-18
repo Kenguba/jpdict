@@ -75,7 +75,7 @@ final class DictionaryEntryView extends WebView {
     private DictionaryEntryView(Context context, DictionaryRepository repository,
             DictionaryRepository.Dictionary dictionary, List<String> entries, DictionaryHtmlDocument document,
             Navigation navigation, Runnable onReady, DictionaryRemoteClient.Connections connections) {
-        super(context);
+        super(new android.view.ContextThemeWrapper(context, android.R.style.Theme_Material_Light_NoActionBar));
         this.document = document == null ? null : document.retain();
         this.repository = repository; this.dictionary = dictionary; this.navigation = navigation;
         this.onReady = onReady;
@@ -84,6 +84,9 @@ final class DictionaryEntryView extends WebView {
         remote = connections == null ? new DictionaryRemoteClient(origin.substring(0, origin.length() - 1))
                 : new DictionaryRemoteClient(origin.substring(0, origin.length() - 1), connections);
         WebSettings settings = getSettings();
+        // The native shell can change theme without changing the dictionary author's colors.
+        if (android.os.Build.VERSION.SDK_INT >= 33) settings.setAlgorithmicDarkeningAllowed(false);
+        if (android.os.Build.VERSION.SDK_INT >= 29) setForceDarkAllowed(false);
         settings.setJavaScriptEnabled(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setGeolocationEnabled(false);

@@ -20,6 +20,7 @@ abstract class FloatingSearchPageActivity extends Activity {
     private android.window.OnBackInvokedCallback pageBack;
 
     @Override protected void onCreate(Bundle state) {
+        AppTheme.prepare(this);
         super.onCreate(state);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
                 | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
@@ -38,13 +39,10 @@ abstract class FloatingSearchPageActivity extends Activity {
     }
 
     protected final LinearLayout createPage(String title, boolean close, int toolbarHeightDp) {
-        getWindow().setStatusBarColor(0xfff2f2f2);
-        getWindow().setNavigationBarColor(0xfff2f2f2);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                | (Build.VERSION.SDK_INT >= 26 ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
+        AppTheme.window(this, AppTheme.PAGE);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xfff2f2f2);
+        AppTheme.background(root, AppTheme.PAGE);
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
         toolbar.setPadding(pageDp(6), 0, pageDp(16), 0);
@@ -56,7 +54,7 @@ abstract class FloatingSearchPageActivity extends Activity {
         toolbar.addView(back, new LinearLayout.LayoutParams(pageDp(44), pageDp(44)));
         TextView label = new TextView(this);
         label.setText(title);
-        label.setTextColor(0xff171819);
+        AppTheme.text(label, AppTheme.INK);
         label.setTextSize(17);
         label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         label.setIncludeFontPadding(false);

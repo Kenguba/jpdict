@@ -52,14 +52,14 @@ final class BubbleAngleDialView extends View {
         float scale = side / dp(174);
         paint.setShader(null);
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xffe8edf4);
+        paint.setColor(AppTheme.color(AppTheme.LINE));
         canvas.drawCircle(cx, cy, radius, paint);
         ring.set(cx - radius, cy - radius, cx + radius, cy + radius);
-        paint.setColor(0xff0989f8);
+        paint.setColor(AppTheme.ink(AppTheme.BLUE));
         canvas.drawArc(ring, -90, angle, true, paint);
-        paint.setColor(0xfff7faff);
+        paint.setColor(AppTheme.color(AppTheme.SOFT));
         canvas.drawCircle(cx, cy, Math.max(1, radius - dp(9) * scale), paint);
-        paint.setColor(0xff9faabb);
+        paint.setColor(AppTheme.color(AppTheme.LINE));
         paint.setStrokeWidth(dp(2) * scale);
         paint.setStrokeCap(Paint.Cap.ROUND);
         float inner = radius - dp(26) * scale;
@@ -73,7 +73,7 @@ final class BubbleAngleDialView extends View {
         }
         double radians = Math.toRadians(angle);
         float sin = (float) Math.sin(radians), cos = (float) Math.cos(radians);
-        paint.setColor(0xff0989f8);
+        paint.setColor(AppTheme.ink(AppTheme.BLUE));
         paint.setStrokeWidth(dp(3) * scale);
         canvas.drawLine(cx + sin * (radius - dp(56) * scale),
                 cy - cos * (radius - dp(56) * scale),
@@ -81,18 +81,18 @@ final class BubbleAngleDialView extends View {
                 cy - cos * (radius - dp(32) * scale), paint);
         float orbit = radius - dp(8) * scale;
         float knobX = cx + sin * orbit, knobY = cy - cos * orbit;
-        paint.setColor(0xffffffff);
+        paint.setColor(AppTheme.color(AppTheme.CARD));
         canvas.drawCircle(knobX, knobY, dp(9) * scale, paint);
-        paint.setColor(0xff0989f8);
+        paint.setColor(AppTheme.ink(AppTheme.BLUE));
         canvas.drawCircle(knobX, knobY, dp(6) * scale, paint);
         paint.setTypeface(Typeface.DEFAULT_BOLD);
         paint.setTextSize(dp(23) * scale);
         paint.setTextAlign(Paint.Align.CENTER);
-        paint.setColor(0xff167de4);
+        paint.setColor(AppTheme.ink(AppTheme.BLUE));
         canvas.drawText(Math.round(angle) + "°", cx, cy + dp(1) * scale, paint);
         paint.setTypeface(Typeface.DEFAULT);
         paint.setTextSize(dp(11) * scale);
-        paint.setColor(0xff7a879b);
+        paint.setColor(AppTheme.ink(AppTheme.MUTED));
         canvas.drawText(DIRECTIONS[Math.round(angle / 45) % 8], cx, cy + dp(20) * scale, paint);
     }
 

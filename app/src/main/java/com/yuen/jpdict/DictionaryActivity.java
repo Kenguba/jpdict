@@ -31,17 +31,17 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private TextView text(String value, int size, int color) {
-        TextView t = new TextView(this); t.setText(value); t.setTextSize(size); t.setTextColor(color);
+        TextView t = new TextView(this); t.setText(value); t.setTextSize(size); AppTheme.text(t, color);
         t.setPadding(dp(14), dp(12), dp(14), dp(12)); return t;
     }
     private LinearLayout card() {
         LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable background = new GradientDrawable(); background.setColor(0xffffffff); background.setCornerRadius(dp(20));
+        GradientDrawable background = new AppTheme.Shape(); background.setColor(AppTheme.CARD); background.setCornerRadius(dp(20));
         card.setBackground(background); LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = dp(12);
         card.setLayoutParams(params); return card;
     }
     private void action(LinearLayout parent, String label, Runnable action) {
-        TextView row = text(label, 15, 0xff006bff); row.setMinimumHeight(dp(48));
+        TextView row = text(label, 15, AppTheme.BLUE); row.setMinimumHeight(dp(48));
         row.setOnClickListener(v -> action.run()); parent.addView(row);
     }
     @Override protected void onCreate(Bundle state) {
@@ -58,7 +58,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setPadding(dp(edge), 0, dp(edge), 0);
         for (String tab : new String[]{"已安装", "词库下载"}) {
-            TextView button = text(tab, 16, 0xff007aff); button.setGravity(Gravity.CENTER);
+            TextView button = text(tab, 16, AppTheme.BLUE); button.setGravity(Gravity.CENTER);
             button.setPadding(0, 0, 0, 0); button.setIncludeFontPadding(false);
             button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
             button.setBackgroundResource(R.drawable.dictionary_tab);
@@ -67,7 +67,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             button.setOnClickListener(v -> { downloads = tab.equals("词库下载"); refresh(); });
         }
         root.addView(tabs);
-        View tabLine = new View(this); tabLine.setBackgroundColor(0x66e6e8eb);
+        View tabLine = new View(this); AppTheme.background(tabLine, 0x66e6e8eb);
         LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(-1, dp(1));
         lineParams.leftMargin = dp(edge); lineParams.rightMargin = dp(edge);
         root.addView(tabLine, lineParams);
@@ -80,10 +80,10 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         for (int i = 0; i < tabButtons.length; i++) {
             boolean selected = downloads == (i == 1);
             tabButtons[i].setSelected(selected);
-            tabButtons[i].setTextColor(selected ? 0xff007aff : 0xff5c687d);
+            AppTheme.text(tabButtons[i], selected ? AppTheme.BLUE : AppTheme.MUTED);
         }
         int generation = ++pageGeneration;
-        content.removeAllViews(); status = text("正在读取词库…", 14, 0xff73777a); content.addView(status);
+        content.removeAllViews(); status = text("正在读取词库…", 14, AppTheme.MUTED); content.addView(status);
         if (downloads) {
             repository.execute(() -> {
                 List<DictionaryCatalog.Package> catalog = DictionaryCatalog.load(this);
@@ -91,8 +91,8 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
                     if (isFinishing() || isDestroyed() || !downloads || pageGeneration != generation) return;
                     status.setText("示例目录 · 当前不提供真实下载");
                     for (DictionaryCatalog.Package p : catalog) {
-                        LinearLayout c = card(); c.addView(text(p.name, 17, 0xff171819));
-                        c.addView(text(p.description + "\n" + p.publisher + " · " + p.version + "\n" + p.mode + " · " + p.license.optString("name"), 13, 0xff73777a));
+                        LinearLayout c = card(); c.addView(text(p.name, 17, AppTheme.INK));
+                        c.addView(text(p.description + "\n" + p.publisher + " · " + p.version + "\n" + p.mode + " · " + p.license.optString("name"), 13, AppTheme.MUTED));
                         action(c, p.mode == DictionaryCatalog.Mode.PREVIEW ? "演示词库 · 不可下载" : "下载器尚未接入", () -> info("词库下载", "当前仅预览目录元数据，不发出下载请求，也不会生成安装记录。"));
                         content.addView(c);
                     }
@@ -108,12 +108,12 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         int position = scroll.getScrollY();
         content.removeAllViews();
         LinearLayout search = new LinearLayout(this); search.setGravity(Gravity.CENTER_VERTICAL);
-        GradientDrawable bg = new GradientDrawable(); bg.setColor(0xffe8ebef); bg.setCornerRadius(dp(14)); search.setBackground(bg);
+        GradientDrawable bg = new AppTheme.Shape(); bg.setColor(AppTheme.LINE); bg.setCornerRadius(dp(14)); search.setBackground(bg);
         search.setPadding(dp(12), 0, dp(8), 0);
-        SearchIconView magnifier = new SearchIconView(this, SearchIconView.Kind.SEARCH); magnifier.setColor(0xff80858d);
+        SearchIconView magnifier = new SearchIconView(this, SearchIconView.Kind.SEARCH); magnifier.setColor(AppTheme.MUTED);
         search.addView(magnifier, new LinearLayout.LayoutParams(dp(21), dp(21)));
-        EditText field = new EditText(this); field.setSingleLine(); field.setTextSize(14); field.setHint("搜索已安装的词库"); field.setText(filter);
-        field.setBackgroundColor(android.graphics.Color.TRANSPARENT); field.setPadding(dp(9), 0, dp(4), 0); field.setContentDescription("搜索已安装的词库");
+        EditText field = new EditText(this); AppTheme.input(field); field.setSingleLine(); field.setTextSize(14); field.setHint("搜索已安装的词库"); field.setText(filter);
+        AppTheme.background(field, android.graphics.Color.TRANSPARENT); field.setPadding(dp(9), 0, dp(4), 0); field.setContentDescription("搜索已安装的词库");
         search.addView(field, new LinearLayout.LayoutParams(0, dp(40), 1));
         LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2); searchLp.bottomMargin = dp(8); content.addView(search, searchLp);
         LinearLayout actions = new LinearLayout(this);
@@ -122,9 +122,9 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         content.addView(actions);
         LinearLayout reorderHint = new LinearLayout(this); reorderHint.setGravity(Gravity.CENTER_VERTICAL);
         reorderHint.setPadding(dp(6), dp(12), dp(6), dp(12));
-        SearchIconView reorder = new SearchIconView(this, SearchIconView.Kind.REORDER); reorder.setColor(0xffa4a7ad);
+        SearchIconView reorder = new SearchIconView(this, SearchIconView.Kind.REORDER); reorder.setColor(AppTheme.MUTED);
         reorderHint.addView(reorder, new LinearLayout.LayoutParams(dp(18), dp(18)));
-        TextView hint = text("长按卡片或右侧手柄拖动排序", 11, 0xff90959d); hint.setPadding(dp(8), 0, 0, 0);
+        TextView hint = text("长按卡片或右侧手柄拖动排序", 11, AppTheme.MUTED); hint.setPadding(dp(8), 0, 0, 0);
         reorderHint.addView(hint); content.addView(reorderHint);
         renderLibraries();
         field.addTextChangedListener(new TextWatcher() {
@@ -136,10 +136,10 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
     }
     private void shortcut(LinearLayout parent, String title, String subtitle, SearchIconView.Kind kind, Runnable run) {
         LinearLayout tile = card(); tile.setOrientation(LinearLayout.HORIZONTAL); tile.setGravity(Gravity.CENTER_VERTICAL); tile.setPadding(dp(9), dp(12), dp(6), dp(12));
-        SearchIconView icon = new SearchIconView(this, kind); icon.setColor(0xff006bff); tile.addView(icon, new LinearLayout.LayoutParams(dp(25), dp(28)));
+        SearchIconView icon = new SearchIconView(this, kind); icon.setColor(AppTheme.BLUE); tile.addView(icon, new LinearLayout.LayoutParams(dp(25), dp(28)));
         LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(7), 0, 0, 0);
-        TextView heading = text(title, 13, 0xff171819); heading.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD); heading.setPadding(0, 0, 0, dp(4)); labels.addView(heading);
-        TextView note = text(subtitle, 9, 0xff73777a); note.setPadding(0, 0, 0, 0); labels.addView(note); tile.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView heading = text(title, 13, AppTheme.INK); heading.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD); heading.setPadding(0, 0, 0, dp(4)); labels.addView(heading);
+        TextView note = text(subtitle, 9, AppTheme.MUTED); note.setPadding(0, 0, 0, 0); labels.addView(note); tile.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1); if (parent.getChildCount() > 0) lp.leftMargin = dp(8); parent.addView(tile, lp); tile.setOnClickListener(v -> run.run());
     }
     private void renderLibraries() {
@@ -173,7 +173,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
             });
             card.setOpen(d.id.equals(expandedId)); libraries.add(card);
         }
-        if (count == 0) { status = text(repository.list().isEmpty() ? "尚未安装词库，可导入 MDX、MDD 及配套资源文件。" : "没有匹配的词库", 14, 0xff73777a); content.addView(status); }
+        if (count == 0) { status = text(repository.list().isEmpty() ? "尚未安装词库，可导入 MDX、MDD 及配套资源文件。" : "没有匹配的词库", 14, AppTheme.MUTED); content.addView(status); }
     }
     private void saveOrder(List<String> visibleOrder) {
         // Filtering keeps hidden libraries in place; only reorder the visible slots.
@@ -188,8 +188,8 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         if (target >= 0 && target < ids.size()) { Collections.swap(ids, index, target); repository.execute(() -> repository.reorder(ids), error -> { report(error); if (error == null) refresh(); }); }
     }
     private void renameDictionary(DictionaryRepository.Dictionary d) {
-        EditText name = new EditText(this); name.setText(d.name); name.setSingleLine(); name.setSelectAllOnFocus(true);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("重命名词库").setView(name).setPositiveButton("保存", null).create();
+        EditText name = new EditText(this); AppTheme.input(name); name.setText(d.name); name.setSingleLine(); name.setSelectAllOnFocus(true);
+        AlertDialog dialog = new AppTheme.DialogBuilder(this).setTitle("重命名词库").setView(name).setPositiveButton("保存", null).create();
         dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v ->
                 repository.execute(() -> repository.rename(d.id, name.getText().toString()), error -> { report(error); if (error == null) { dialog.dismiss(); refresh(); } })));
         dialog.show();
@@ -208,7 +208,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         });
     }
     private void uninstallDictionary(DictionaryRepository.Dictionary d) {
-        new AlertDialog.Builder(this).setTitle(d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "删除内部词库副本？" : "解除词库关联？")
+        new AppTheme.DialogBuilder(this).setTitle(d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "删除内部词库副本？" : "解除词库关联？")
                 .setMessage(d.storage == DictionaryRepository.StorageMode.APP_PRIVATE ? "将删除 JPDict 内部文件，原始外部文件保持不变。" : "仅删除安装记录，不删除原始外部文件。")
                 .setPositiveButton("确定", (x,y) -> runOperation(() -> repository.delete(d))).setNegativeButton("取消", null).show();
     }
@@ -236,12 +236,12 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
     }
     private void choices(String title, String[] labels, android.content.DialogInterface.OnClickListener select) {
         LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
-        TextView heading = text(title, 16, 0xff171819); heading.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
+        TextView heading = text(title, 16, AppTheme.INK); heading.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
         heading.setIncludeFontPadding(false); heading.setPadding(dp(8), dp(2), dp(8), dp(8)); panel.addView(heading);
-        AlertDialog dialog = new AlertDialog.Builder(this).create(); dialog.setView(panel, 0, 0, 0, 0);
+        AlertDialog dialog = new AppTheme.DialogBuilder(this).create(); dialog.setView(panel, 0, 0, 0, 0);
         for (int i = 0; i < labels.length; i++) {
             final int index = i;
-            TextView row = text(labels[i], 14, 0xff34373b); row.setIncludeFontPadding(false);
+            TextView row = text(labels[i], 14, AppTheme.INK); row.setIncludeFontPadding(false);
             row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(8), dp(10), dp(8), dp(10)); row.setMinimumHeight(dp(44));
             android.util.TypedValue feedback = new android.util.TypedValue(); getTheme().resolveAttribute(android.R.attr.selectableItemBackground, feedback, true);
             row.setBackgroundResource(feedback.resourceId); panel.addView(row);
@@ -283,7 +283,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         if (books.size() == 1) { runOperation(() -> repository.install(files, copyFiles, id, operations::progress)); return; }
         String[] names = new String[books.size()]; boolean[] checked = new boolean[books.size()];
         for (int i = 0; i < names.length; i++) names[i] = books.get(i).path;
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(id == null ? "选择要安装的词库" : "选择要替换的词库（一本）")
+        AlertDialog dialog = new AppTheme.DialogBuilder(this).setTitle(id == null ? "选择要安装的词库" : "选择要替换的词库（一本）")
                 .setMultiChoiceItems(names, checked, (d, which, value) -> checked[which] = value)
                 .setPositiveButton("导入及配套资源", null).setNegativeButton("取消", null).create();
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -317,7 +317,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
     private void report(Exception error) {
         if (error != null && !isDestroyed() && !isFinishing()) info("词库操作失败", error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
     }
-    private void info(String title, String message) { new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("关闭", null).show(); }
+    private void info(String title, String message) { new AppTheme.DialogBuilder(this).setTitle(title).setMessage(message).setPositiveButton("关闭", null).show(); }
     @Override protected void onUserLeaveHint() { if (!picking) super.onUserLeaveHint(); }
     @Override public void onBackPressed() { if (libraries != null && libraries.cancelDrag()) return; FloatingSearchRoutes.finishPage(this); }
     @Override protected void onSaveInstanceState(Bundle state) {

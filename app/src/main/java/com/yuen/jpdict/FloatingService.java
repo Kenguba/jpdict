@@ -74,6 +74,7 @@ public class FloatingService extends Service {
     private String activeHostSession = "";
     private String pendingSearchPageRequest = "";
     private String pendingSearchPageHostSession = "";
+    private String pendingDrawerExperience = "";
     private boolean searchPrivateMode;
     private boolean searchKeyboardRequested;
     private boolean lookupPrivateMode;
@@ -251,7 +252,7 @@ public class FloatingService extends Service {
     }
 
     private GradientDrawable bg(int color, int radiusDp) {
-        GradientDrawable g = new GradientDrawable();
+        GradientDrawable g = new AppTheme.Shape();
         g.setColor(color);
         g.setCornerRadius(dp(radiusDp));
         return g;
@@ -494,15 +495,17 @@ public class FloatingService extends Service {
     }
 
     private void openSearchHost() {
-        searchKeyboardRequested = true;
+        searchKeyboardRequested = pendingDrawerExperience.isEmpty();
         Intent host = new Intent(this, LookupLinkActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 .putExtra(EXTRA_HOST_SEARCH, true)
-                .putExtra(EXTRA_SEARCH_QUERY, currentSearchQuery);
+                .putExtra(EXTRA_SEARCH_QUERY, searchPrivateMode ? "" : currentSearchQuery)
+                .putExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE, pendingDrawerExperience);
         try {
             startActivity(host);
         } catch (Throwable error) {
             searchKeyboardRequested = false;
+            finishDrawerExperience(pendingDrawerExperience, false);
             recordHandledCrash("openSearchHost", error);
             safeToast("搜索浮层启动失败");
         }
@@ -556,6 +559,7 @@ public class FloatingService extends Service {
                 });
             }
             markAction("SHOW_SEARCH_PANEL_FINISH");
+            openDrawerWhenReady();
         } catch (Throwable error) {
             root.dispose();
             searchPanel = null;
@@ -564,7 +568,34 @@ public class FloatingService extends Service {
             recordHandledCrash("showSearchPanel", error);
             notifyLookupHostFinish();
             safeToast("搜索浮层打开失败");
+            finishDrawerExperience(pendingDrawerExperience, false);
         }
+    }
+
+    private void finishDrawerExperience(String request, boolean success) {
+        if (request == null || request.isEmpty()) return;
+        if (request.equals(pendingDrawerExperience)) pendingDrawerExperience = "";
+        sendBroadcast(new Intent(FloatingSearchRoutes.ACTION_EXPERIENCE_RESULT).setPackage(getPackageName())
+                .putExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE, request).putExtra("success", success));
+    }
+
+    private void openDrawerWhenReady() {
+        if (pendingDrawerExperience.isEmpty() || !(searchPanel instanceof FloatingSearchView)) return;
+        FloatingSearchView target = (FloatingSearchView) searchPanel;
+        String request = pendingDrawerExperience, session = activeHostSession;
+        Runnable open = () -> {
+            if (target != searchPanel || !request.equals(pendingDrawerExperience) || !session.equals(activeHostSession)) return;
+            if (!target.isAttachedToWindow() || target.getVisibility() != View.VISIBLE || target.getWidth() == 0) {
+                finishDrawerExperience(request, false); return;
+            }
+            target.experienceDrawer(); finishDrawerExperience(request, true);
+        };
+        if (target.isLaidOut()) target.postOnAnimation(open);
+        else target.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                target.getViewTreeObserver().removeOnPreDrawListener(this); target.postOnAnimation(open); return true;
+            }
+        });
     }
 
     private void setSearchFocusable(boolean editing) {
@@ -817,14 +848,14 @@ public class FloatingService extends Service {
         TextView t = new TextView(this);
         t.setText(value);
         t.setTextSize(size);
-        t.setTextColor(color);
+        AppTheme.text(t, color);
         return t;
     }
 
     private ImageView lookupIcon(int drawable, String description, int tint) {
         ImageView icon = new ImageView(this);
         icon.setImageResource(drawable);
-        icon.setColorFilter(tint);
+        AppTheme.tint(icon, tint);
         icon.setContentDescription(description);
         icon.setPadding(dp(10), dp(10), dp(10), dp(10));
         return icon;
@@ -959,12 +990,12 @@ public class FloatingService extends Service {
 
         LookupOverlayFrameLayout root = new LookupOverlayFrameLayout(this);
         boolean fullscreen = lookupOverlayHosted || LOOKUP_MODE_FULLSCREEN.equals(mode);
-        root.setBackgroundColor(Color.TRANSPARENT);
+        AppTheme.background(root, Color.TRANSPARENT);
 
         View fullscreenMask = null;
         if (fullscreen) {
             fullscreenMask = new View(this);
-            fullscreenMask.setBackgroundColor(Color.BLACK);
+            AppTheme.background(fullscreenMask, Color.BLACK);
             // The Activity supplies the pixels, including both system bars.
             // Keep one touch target here without doubling the mask opacity.
             fullscreenMask.setAlpha(lookupOverlayHosted && searchPanel == null ? 0f : 0.42f);
@@ -998,7 +1029,7 @@ public class FloatingService extends Service {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(14), 0, dp(4), 0);
 
-        TextView title = lookupText(q, 20, 0xff242629);
+        TextView title = lookupText(q, 20, AppTheme.INK);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -1008,16 +1039,16 @@ public class FloatingService extends Service {
         header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
 
         ImageView favorite = lookupIcon(
-                R.drawable.ic_lookup_star, "收藏", 0xff242629);
+                R.drawable.ic_lookup_star, "收藏", AppTheme.INK);
         ImageView replay = lookupIcon(
-                R.drawable.ic_lookup_replay, "重新查询", 0xff242629);
+                R.drawable.ic_lookup_replay, "重新查询", AppTheme.INK);
         ImageView list = lookupIcon(
-                R.drawable.ic_lookup_list, "词典列表", 0xff242629);
+                R.drawable.ic_lookup_list, "词典列表", AppTheme.INK);
         list.setOnClickListener(v -> {
             if (dictionaryLookup != null) dictionaryLookup.showList(list, this::openDictionaryPage);
         });
         ImageView more = lookupIcon(
-                R.drawable.ic_lookup_plus, "更多", 0xff242629);
+                R.drawable.ic_lookup_plus, "更多", AppTheme.INK);
 
         LinearLayout headerActions = new LinearLayout(this);
         headerActions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
@@ -1035,27 +1066,23 @@ public class FloatingService extends Service {
         editHeader.setOrientation(LinearLayout.HORIZONTAL);
         editHeader.setGravity(Gravity.CENTER_VERTICAL);
         editHeader.setPadding(dp(14), 0, dp(8), 0);
-        editHeader.setBackgroundColor(Color.WHITE);
+        AppTheme.background(editHeader, Color.WHITE);
         editHeader.setVisibility(View.GONE);
 
         EditText editor = new LookupEditor(this);
         editor.setSingleLine(true);
         editor.setText(q);
         editor.setTextSize(18);
-        editor.setTextColor(0xff242629);
+        AppTheme.input(editor);
         editor.setSelectAllOnFocus(false);
         editor.setImeOptions(EditorInfo.IME_ACTION_SEARCH |
                 (lookupPrivateMode && Build.VERSION.SDK_INT >= 26 ? EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING : 0));
         editor.setPadding(0, 0, dp(8), 0);
-        if (Build.VERSION.SDK_INT >= 21) {
-            editor.setBackgroundTintList(
-                    android.content.res.ColorStateList.valueOf(0xff129fe8));
-        }
 
         TextView confirm = lookupText("确认", 15, Color.WHITE);
         confirm.setGravity(Gravity.CENTER);
         confirm.setIncludeFontPadding(false);
-        confirm.setBackground(bg(0xff129fe8, 4));
+        confirm.setBackground(bg(AppTheme.BLUE, 4));
 
         editHeader.addView(editor, new LinearLayout.LayoutParams(0, dp(48), 1));
         LinearLayout.LayoutParams confirmLp =
@@ -1136,7 +1163,7 @@ public class FloatingService extends Service {
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
 
         View topDivider = new View(this);
-        topDivider.setBackgroundColor(0xffeeeeef);
+        AppTheme.background(topDivider, AppTheme.LINE);
         panel.addView(topDivider, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
 
@@ -1147,7 +1174,7 @@ public class FloatingService extends Service {
         pronunciation.setPadding(dp(14), 0, dp(14), 0);
 
         ImageView speaker = lookupIcon(
-                R.drawable.ic_lookup_speaker, "发音", 0xff00a7eb);
+                R.drawable.ic_lookup_speaker, "发音", AppTheme.BLUE);
         speaker.setPadding(dp(2), dp(10), dp(8), dp(10));
         pronunciation.addView(speaker, new LinearLayout.LayoutParams(dp(34), dp(46)));
         speaker.setClickable(true);
@@ -1156,7 +1183,7 @@ public class FloatingService extends Service {
         String pronunciationText = local == null
                 ? "发音"
                 : local[0] + "   /" + local[1] + "/   " + local[2];
-        TextView pronounceLabel = lookupText(pronunciationText, 16, 0xff777b80);
+        TextView pronounceLabel = lookupText(pronunciationText, 16, AppTheme.MUTED);
         pronounceLabel.setGravity(Gravity.CENTER_VERTICAL);
         pronounceLabel.setIncludeFontPadding(false);
         pronunciation.addView(pronounceLabel, new LinearLayout.LayoutParams(
@@ -1203,15 +1230,15 @@ public class FloatingService extends Service {
         LinearLayout aiBodyBox = new LinearLayout(this);
         aiBodyBox.setOrientation(LinearLayout.VERTICAL);
         aiBodyBox.setPadding(dp(14), dp(10), dp(14), dp(12));
-        aiBodyBox.setBackgroundColor(Color.WHITE);
+        AppTheme.background(aiBodyBox, Color.WHITE);
 
         ProgressBar progress = new ProgressBar(this);
         progress.setIndeterminate(true);
         aiBodyBox.addView(progress, new LinearLayout.LayoutParams(dp(24), dp(24)));
 
-        TextView aiBody = lookupText("正在查询 AI…", 15, 0xff25272a);
+        TextView aiBody = lookupText("正在查询 AI…", 15, AppTheme.INK);
         aiBody.setPadding(dp(11), dp(10), dp(11), dp(10));
-        aiBody.setBackground(bg(0xffe5f5fb, 8));
+        aiBody.setBackground(bg(AppTheme.SOFT, 8));
         aiBody.setLineSpacing(dp(3), 1f);
         aiBody.setTextIsSelectable(true);
         aiBody.setIncludeFontPadding(false);
@@ -1230,10 +1257,10 @@ public class FloatingService extends Service {
         footer.setOrientation(LinearLayout.HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         footer.setPadding(dp(10), 0, dp(8), 0);
-        footer.setBackgroundColor(Color.WHITE);
+        AppTheme.background(footer, Color.WHITE);
         footer.setContentDescription("拖动调整查词浮层大小");
 
-        TextView copyright = lookupText("© jpdict", 12, 0xff777b80);
+        TextView copyright = lookupText("© jpdict", 12, AppTheme.MUTED);
         copyright.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         copyright.setIncludeFontPadding(false);
         footer.addView(copyright, new LinearLayout.LayoutParams(0, dp(30), 1));
@@ -1241,7 +1268,7 @@ public class FloatingService extends Service {
         TextView badge = lookupText("あ", 12, Color.WHITE);
         badge.setGravity(Gravity.CENTER);
         badge.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        badge.setBackground(bg(0xff129fe8, 4));
+        badge.setBackground(bg(AppTheme.BLUE, 4));
         LinearLayout.LayoutParams badgeLp =
                 new LinearLayout.LayoutParams(dp(18), dp(18));
         badgeLp.leftMargin = dp(7);
@@ -1371,15 +1398,15 @@ public class FloatingService extends Service {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), 0, dp(8), 0);
-        row.setBackgroundColor(0xfff4f5f6);
+        AppTheme.background(row, AppTheme.SOFT);
 
-        TextView t = lookupText(label, 15, 0xff34373b);
+        TextView t = lookupText(label, 15, AppTheme.INK);
         t.setGravity(Gravity.CENTER_VERTICAL);
         t.setIncludeFontPadding(false);
         row.addView(t, new LinearLayout.LayoutParams(0, dp(40), 1));
 
         ImageView arrow = lookupIcon(
-                R.drawable.ic_lookup_arrow_up, "折叠", 0xffb4b7bb);
+                R.drawable.ic_lookup_arrow_up, "折叠", AppTheme.LINE);
         arrow.setPadding(dp(12), dp(12), dp(12), dp(12));
         row.addView(arrow, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
@@ -1631,21 +1658,54 @@ public class FloatingService extends Service {
         }
     }
 
+    private void openSearchPage(String page, boolean privateMode) {
+        if (FloatingSearchRoutes.pageIntent(this, page, "", false, false, false, false) == null) {
+            safeToast("无法打开指定页面"); return;
+        }
+        if (searchPanel != null && searchPanelHosted) {
+            String query = privateMode ? "" : currentSearchQuery;
+            searchKeyboardRequested = false;
+            pendingSearchPageRequest = java.util.UUID.randomUUID().toString();
+            pendingSearchPageHostSession = activeHostSession;
+            rootSearchForLookup();
+            Intent open = new Intent(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE)
+                    .setPackage(getPackageName())
+                    .putExtra(EXTRA_HOST_SESSION, activeHostSession)
+                    .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, pendingSearchPageRequest)
+                    .putExtra(FloatingSearchRoutes.EXTRA_PAGE, page)
+                    .putExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY, query)
+                    .putExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, true)
+                    .putExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE, privateMode);
+            sendBroadcast(open);
+        } else if (page != null) {
+            if (searchPanel != null) {
+                pendingSearchPageRequest = java.util.UUID.randomUUID().toString();
+                pendingSearchPageHostSession = "";
+                rootSearchForLookup();
+            }
+            Intent open = FloatingSearchRoutes.pageIntent(this, page,
+                    privateMode ? "" : currentSearchQuery,
+                    searchPanel != null, false, privateMode, false)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, pendingSearchPageRequest);
+            try { startActivity(open); }
+            catch (RuntimeException error) {
+                pendingSearchPageRequest = "";
+                pendingSearchPageHostSession = "";
+                if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).resumeAfterLookup();
+                safeToast("无法打开设置页面");
+            }
+        }
+    }
+
     private void openDictionaryPage() {
         boolean restore = lookupOverlayReturnToSearch;
-        boolean hosted = lookupOverlayHosted;
         boolean privacy = lookupPrivateMode;
-        if (restore && hosted) {
+        if (restore) {
             removeLookupOverlay(false);
             lookupOverlayHosted = false;
             lookupOverlayReturnToSearch = false;
-            sendBroadcast(new Intent(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE)
-                    .setPackage(getPackageName())
-                    .putExtra(EXTRA_HOST_SESSION, activeHostSession)
-                    .putExtra(FloatingSearchRoutes.EXTRA_PAGE, FloatingSearchRoutes.PAGE_DICTIONARIES)
-                    .putExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY, privacy ? "" : currentSearchQuery)
-                    .putExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, true)
-                    .putExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE, privacy));
+            openSearchPage(FloatingSearchRoutes.PAGE_DICTIONARIES, privacy);
         } else {
             lookupOverlayReturnToSearch = false;
             closeLookupOverlay();
@@ -1708,14 +1768,14 @@ public class FloatingService extends Service {
 
         TextView t = new TextView(this);
         t.setText(title);
-        t.setTextColor(Color.WHITE);
+        AppTheme.text(t, Color.WHITE);
         t.setTextSize(18);
         t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         card.addView(t);
 
         TextView b = new TextView(this);
         b.setText(body);
-        b.setTextColor(0xffeeeeee);
+        AppTheme.text(b, AppTheme.LINE);
         b.setTextSize(16);
         b.setPadding(0, dp(6), 0, 0);
         card.addView(b);
@@ -1793,6 +1853,7 @@ public class FloatingService extends Service {
     private void removeSearchPanel() { removeSearchPanel(true); }
 
     private void removeSearchPanel(boolean finishHost) {
+        pendingDrawerExperience = "";
         pendingSearchPageRequest = "";
         pendingSearchPageHostSession = "";
         boolean hosted = searchPanelHosted;
@@ -1843,18 +1904,38 @@ public class FloatingService extends Service {
             int visibility = searchPanel.getVisibility();
             String pageRequest = pendingSearchPageRequest;
             String pageHostSession = pendingSearchPageHostSession;
+            String experience = pendingDrawerExperience;
             removeSearchPanel(false);
             searchPanelHosted = hosted;
             showSearchPanel();
             pendingSearchPageRequest = pageRequest;
             pendingSearchPageHostSession = pageHostSession;
+            pendingDrawerExperience = experience;
             if (visibility != View.VISIBLE || !pageRequest.isEmpty()) rootSearchForLookup();
             if (searchPanel != null) searchPanel.setVisibility(visibility);
+            openDrawerWhenReady();
         }
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && intent.hasExtra(EXTRA_HOST_SESSION)) {
+        if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())
+                && intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)
+                && !intent.hasExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST)) {
+            String request = intent.getStringExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE);
+            if (request != null && !request.isEmpty() && !request.equals(pendingDrawerExperience)) {
+                finishDrawerExperience(request, false); return START_STICKY;
+            }
+        }
+        if (intent != null && (ACTION_SHOW_SEARCH.equals(intent.getAction()) || ACTION_LOOKUP_DISMISS.equals(intent.getAction()))
+                && intent.hasExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST)
+                && (searchPanel == null || pendingSearchPageRequest.isEmpty()
+                    || !pendingSearchPageRequest.equals(intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST))
+                    || (!pendingSearchPageHostSession.isEmpty()
+                        && !pendingSearchPageHostSession.equals(intent.getStringExtra(EXTRA_HOST_SESSION))))) {
+            finishDrawerExperience(intent.getStringExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE), false);
+            return START_STICKY;
+        }
+        if (intent != null && intent.getStringExtra(EXTRA_HOST_SESSION) != null) {
             String session = intent.getStringExtra(EXTRA_HOST_SESSION);
             boolean closing = ACTION_LOOKUP_DISMISS.equals(intent.getAction())
                     || ACTION_LOOKUP_BACK.equals(intent.getAction());
@@ -1869,43 +1950,8 @@ public class FloatingService extends Service {
         if (bubble == null && Settings.canDrawOverlays(this)) showBubble();
 
         if (intent != null && FloatingSearchRoutes.ACTION_OPEN_PAGE.equals(intent.getAction())) {
-            String page = intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE);
-            boolean privateMode = intent.getBooleanExtra(
-                    FloatingSearchRoutes.EXTRA_PRIVATE_MODE, searchPrivateMode);
-            if (searchPanel != null && searchPanelHosted) {
-                String query = privateMode ? "" : currentSearchQuery;
-                searchKeyboardRequested = false;
-                pendingSearchPageRequest = java.util.UUID.randomUUID().toString();
-                pendingSearchPageHostSession = activeHostSession;
-                rootSearchForLookup();
-                Intent open = new Intent(FloatingSearchRoutes.ACTION_HOST_OPEN_PAGE)
-                        .setPackage(getPackageName())
-                        .putExtra(EXTRA_HOST_SESSION, activeHostSession)
-                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, pendingSearchPageRequest)
-                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE, page)
-                        .putExtra(FloatingSearchRoutes.EXTRA_RETURN_QUERY, query)
-                        .putExtra(FloatingSearchRoutes.EXTRA_RESTORE_SEARCH, true)
-                        .putExtra(FloatingSearchRoutes.EXTRA_PRIVATE_MODE, privateMode);
-                sendBroadcast(open);
-            } else if (page != null) {
-                if (searchPanel != null) {
-                    pendingSearchPageRequest = java.util.UUID.randomUUID().toString();
-                    pendingSearchPageHostSession = "";
-                    rootSearchForLookup();
-                }
-                Intent open = FloatingSearchRoutes.pageIntent(this, page,
-                        privateMode ? "" : currentSearchQuery,
-                        searchPanel != null, false, privateMode, false)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        .putExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST, pendingSearchPageRequest);
-                try { startActivity(open); }
-                catch (RuntimeException error) {
-                    pendingSearchPageRequest = "";
-                    pendingSearchPageHostSession = "";
-                    if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).resumeAfterLookup();
-                    safeToast("无法打开设置页面");
-                }
-            }
+            openSearchPage(intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE), intent.getBooleanExtra(
+                    FloatingSearchRoutes.EXTRA_PRIVATE_MODE, searchPrivateMode));
         }
 
         if (intent != null && FloatingSearchRoutes.ACTION_PAGE_READY.equals(intent.getAction())
@@ -1913,10 +1959,21 @@ public class FloatingService extends Service {
                 && pendingSearchPageRequest.equals(intent.getStringExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST))
                 && (pendingSearchPageHostSession.isEmpty()
                     || pendingSearchPageHostSession.equals(intent.getStringExtra(EXTRA_HOST_SESSION)))) {
-            removeSearchPanel(false);
+            if (searchPanel != null) searchPanel.setVisibility(View.INVISIBLE);
         }
 
         if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())) {
+            String experience = intent.getStringExtra(FloatingSearchRoutes.EXTRA_EXPERIENCE);
+            if (experience != null && !experience.isEmpty()) {
+                if (!Settings.canDrawOverlays(this)) {
+                    finishDrawerExperience(experience, false); return START_STICKY;
+                }
+                pendingDrawerExperience = experience;
+                searchKeyboardRequested = false;
+                main.postDelayed(() -> {
+                    if (experience.equals(pendingDrawerExperience)) finishDrawerExperience(experience, false);
+                }, 5000);
+            }
             pendingSearchPageRequest = "";
             pendingSearchPageHostSession = "";
             // Search replaces the result surface, including its mask hit target
@@ -1941,6 +1998,7 @@ public class FloatingService extends Service {
                     openSearchHost();
                 }
             }
+            openDrawerWhenReady();
         }
 
         if (intent != null && ACTION_SHOW_LOOKUP_OVERLAY.equals(intent.getAction())) {

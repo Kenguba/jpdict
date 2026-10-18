@@ -23,7 +23,6 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
@@ -64,10 +63,10 @@ final class FloatingSearchView extends FrameLayout {
         void onClose();
     }
 
-    private static final int PAPER = 0xfffcfcfc;
-    private static final int INK = 0xff151416;
-    private static final int MUTED = 0xff949698;
-    private static final int SOFT = 0xfff2f2f2;
+    private static final int PAPER = AppTheme.PAPER;
+    private static final int INK = AppTheme.INK;
+    private static final int MUTED = AppTheme.MUTED;
+    private static final int SOFT = AppTheme.PAGE;
     private final Callback callback;
     private final Rect legacyVisibleFrame = new Rect();
     private final int[] legacyRootPosition = new int[2];
@@ -122,8 +121,13 @@ final class FloatingSearchView extends FrameLayout {
     private final View[] tabIndicators = new View[3];
     private MenuScroll menuSurface;
     private int drawerWidth;
-    private float drawerProgress;
-    private ValueAnimator drawerAnimator;
+    private final DrawerStyleSettings drawerSettings;
+    private DrawerStyleSettings.Mode drawerMode;
+    private final DrawerMotionController drawerMotion;
+    private final DrawerMotionController.Geometry drawerGeometry = new DrawerMotionController.Geometry();
+    private final GradientDrawable drawerPageBackground = new AppTheme.Shape();
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener drawerStyleChanged =
+            (preferences, key) -> refreshDrawerStyle();
     private boolean disposed;
     private boolean compactComposer;
     private int imeBottom;
@@ -135,9 +139,6 @@ final class FloatingSearchView extends FrameLayout {
     private int legacyViewportHeight;
     private ViewTreeObserver.OnGlobalLayoutListener legacyLayoutListener;
     private ViewTreeObserver.OnPreDrawListener legacyPreDrawListener;
-    private float downX, downY, startProgress;
-    private boolean swiping, swipeEligible;
-    private VelocityTracker velocity;
 
     FloatingSearchView(Context context, String query, boolean privateMode, Callback callback) {
         super(context);
@@ -146,14 +147,15 @@ final class FloatingSearchView extends FrameLayout {
         destination = LookupDestinationSettings.get(context);
         keyboardSpace = new SearchKeyboardSpace(context);
         state.setPrivateMode(privateMode);
-        setBackgroundColor(PAPER);
+        AppTheme.background(this, PAPER);
         // Own blank-area DOWN events so the drawer receives subsequent MOVE events.
         setClickable(true);
         setFocusableInTouchMode(true);
         setClipChildren(false);
         page = new LinearLayout(context);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setBackgroundColor(PAPER);
+        drawerPageBackground.setColor(PAPER);
+        page.setBackground(drawerPageBackground);
         page.setClipChildren(false);
         page.setClipToPadding(false);
         addView(page, new FrameLayout.LayoutParams(-1, -1));
@@ -191,11 +193,11 @@ final class FloatingSearchView extends FrameLayout {
         LinearLayout pills = new LinearLayout(context);
         pills.setGravity(Gravity.CENTER_VERTICAL);
         recommendations.addView(pills, new HorizontalScrollView.LayoutParams(-2, -1));
-        addPill(pills, "搜索词库", SearchIconView.Kind.SEARCH, 0xffe4f0ff, 0xff2673c5,
+        addPill(pills, "搜索词库", SearchIconView.Kind.SEARCH, AppTheme.SOFT, AppTheme.BLUE,
                 this::submitFromButton);
-        addPill(pills, "词库管理", SearchIconView.Kind.BOOK, 0xffe7f5ed, 0xff15996c,
+        addPill(pills, "词库管理", SearchIconView.Kind.BOOK, AppTheme.SOFT, AppTheme.GREEN,
                 () -> openPage(FloatingSearchRoutes.PAGE_DICTIONARIES));
-        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, 0xffdef7ff, 0xff009bdc,
+        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, AppTheme.SOFT, AppTheme.BLUE,
                 () -> openPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS));
         addPill(pills, "设置", SearchIconView.Kind.SETTINGS, SOFT, INK,
                 () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
@@ -214,10 +216,10 @@ final class FloatingSearchView extends FrameLayout {
         composer.setBackground(shape(Color.WHITE, 26));
         composer.setElevation(dp(4));
         input = new Editor(context);
-        input.setTextColor(INK);
-        input.setHintTextColor(MUTED);
+        AppTheme.text(input, INK);
+        AppTheme.hint(input, MUTED);
         input.setTextSize(17);
-        input.setBackgroundColor(Color.TRANSPARENT);
+        AppTheme.background(input, Color.TRANSPARENT);
         input.setPadding(dp(10), dp(5), dp(10), dp(6));
         input.setMinLines(2);
         input.setMaxLines(4);
@@ -247,7 +249,7 @@ final class FloatingSearchView extends FrameLayout {
         languageLabel.setPadding(dp(5), 0, dp(5), 0);
         modelButton.addView(languageLabel);
         updateLanguageButton();
-        modelButton.addView(icon(SearchIconView.Kind.CHEVRON, 0xff74777a), new LinearLayout.LayoutParams(dp(13), dp(18)));
+        modelButton.addView(icon(SearchIconView.Kind.CHEVRON, AppTheme.MUTED), new LinearLayout.LayoutParams(dp(13), dp(18)));
         LinearLayout.LayoutParams modelLp = new LinearLayout.LayoutParams(-2, dp(36));
         modelLp.leftMargin = dp(7);
         tools.addView(modelButton, modelLp);
@@ -255,20 +257,20 @@ final class FloatingSearchView extends FrameLayout {
         modelButton.setOnLongClickListener(v -> {
             toggleMenu(FloatingSearchState.Menu.LANGUAGE);
             languageDrag = state.getMenu() == FloatingSearchState.Menu.LANGUAGE;
-            swipeEligible = false;
+            excludeDrawerGesture();
             return true;
         });
         modelButton.setOnTouchListener(this::onLanguageTouch);
         draftTrash = new LinearLayout(context);
         draftTrash.setGravity(Gravity.CENTER);
-        draftTrash.setBackground(ripple(0xfffff0f2, 18));
+        draftTrash.setBackground(ripple(AppTheme.ROSE, 18));
         draftTrash.setContentDescription("删除暂存文字，拖到此处松手删除");
-        draftTrash.addView(icon(SearchIconView.Kind.TRASH, 0xffd5465d), new LinearLayout.LayoutParams(dp(21), dp(24)));
-        TextView trashLabel = text("拖到这里删除", 13, 0xffd5465d, true);
+        draftTrash.addView(icon(SearchIconView.Kind.TRASH, AppTheme.RED), new LinearLayout.LayoutParams(dp(21), dp(24)));
+        TextView trashLabel = text("拖到这里删除", 13, AppTheme.RED, true);
         trashLabel.setPadding(dp(8), 0, 0, 0); draftTrash.addView(trashLabel);
         draftTrash.setVisibility(GONE);
         draftChips = new SearchDraftChips(context, input, this, draftTrash, new SearchDraftChips.DragUi() {
-            public void editing() { swipeEligible = false; closeMenu(); callback.onEditingChanged(true); }
+            public void editing() { excludeDrawerGesture(); closeMenu(); callback.onEditingChanged(true); }
             public void caret(int offset) { input.setDragCaret(offset); }
             public void dragging(boolean active) {
                 draftDragging = active;
@@ -352,6 +354,17 @@ final class FloatingSearchView extends FrameLayout {
         });
         drawer.setVisibility(INVISIBLE);
         addView(drawer, new FrameLayout.LayoutParams(dp(340), -1));
+        drawerSettings = new DrawerStyleSettings(context);
+        drawerMode = drawerSettings.mode();
+        drawerMotion = new DrawerMotionController(this, new DrawerMotionController.Listener() {
+            public void onProgress(float progress) { applyDrawerProgress(progress); }
+            public void onDragStart() { closeMenu(); hideKeyboard(); drawer.refreshHistory(); }
+            public void onRelease(boolean open) {
+                state.setDrawerOpen(open);
+                if (!open) drawer.endSearch();
+            }
+        });
+        drawerSettings.observe(drawerStyleChanged);
         input.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             public void onTextChanged(CharSequence s, int start, int before, int count) {
@@ -459,11 +472,11 @@ final class FloatingSearchView extends FrameLayout {
             existing.setContentDescription("查询候选词 " + word);
             return existing;
         }
-        TextView candidate = text(word, 13, 0xff006bff, false);
+        TextView candidate = text(word, 13, AppTheme.BLUE, false);
         candidate.setSingleLine(true);
         candidate.setEllipsize(TextUtils.TruncateAt.END);
         candidate.setPadding(dp(8), dp(5), dp(8), dp(5));
-        candidate.setBackground(ripple(0xfff0f6ff, 14));
+        candidate.setBackground(ripple(AppTheme.SOFT, 14));
         candidate.setContentDescription("查询候选词 " + word);
         candidate.setOnClickListener(v -> {
             if (disposed) return;
@@ -781,8 +794,7 @@ final class FloatingSearchView extends FrameLayout {
         suggestions.pause();
         explosionController.pause();
         closeMenu();
-        if (drawerAnimator != null) drawerAnimator.cancel();
-        applyDrawerProgress(state.isDrawerOpen() ? 1 : 0);
+        drawerMotion.snap(state.isDrawerOpen() ? drawerMotion.limit() : 0);
         hideKeyboard();
     }
     void resumeAfterLookup() {
@@ -801,7 +813,7 @@ final class FloatingSearchView extends FrameLayout {
 
     private void applyPrivateMode(boolean animate) {
         boolean privacy = state.isPrivateMode();
-        privateButton.setBackground(ripple(privacy ? 0xffdedede : SOFT, 24));
+        privateButton.setBackground(ripple(privacy ? AppTheme.LINE : SOFT, 24));
         privateButton.setContentDescription(privacy ? "退出私密查询" : "进入私密查询");
         input.setHint(privacy ? "临时对话" : "随便问点什么");
         input.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI |
@@ -817,14 +829,14 @@ final class FloatingSearchView extends FrameLayout {
         empty.setOrientation(LinearLayout.VERTICAL);
         empty.setGravity(Gravity.CENTER);
         empty.setPadding(dp(24), 0, dp(24), 0);
-        SearchIconView mark = icon(privacy ? SearchIconView.Kind.PRIVATE : SearchIconView.Kind.BOOK, 0xffe7e7e7);
+        SearchIconView mark = icon(privacy ? SearchIconView.Kind.PRIVATE : SearchIconView.Kind.BOOK, AppTheme.LINE);
         empty.addView(mark, new LinearLayout.LayoutParams(dp(84), dp(84)));
         if (privacy) {
             TextView title = text("私密聊天", 20, INK, true);
             title.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
             lp.topMargin = dp(25); empty.addView(title, lp);
-            TextView note = text("本次查询不写入本机历史。\n使用 AI 时，内容仍会发送至 Groq。", 14, 0xff68737a, false);
+            TextView note = text("本次查询不写入本机历史。\n使用 AI 时，内容仍会发送至 Groq。", 14, AppTheme.MUTED, false);
             note.setGravity(Gravity.CENTER); note.setLineSpacing(dp(4), 1);
             LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
             noteLp.topMargin = dp(18); empty.addView(note, noteLp);
@@ -842,7 +854,7 @@ final class FloatingSearchView extends FrameLayout {
         boolean hasText = !input.getText().toString().trim().isEmpty();
         boolean send = hasText || state.isPrivateMode();
         actionButton.removeAllViews();
-        int ink = send && !hasText ? 0xffa1a4a5 : Color.WHITE;
+        int ink = send && !hasText ? AppTheme.MUTED : Color.WHITE;
         actionButton.setBackground(ripple(send && !hasText ? SOFT : INK, 24));
         actionButton.addView(icon(send ? SearchIconView.Kind.SEND : SearchIconView.Kind.VOICE, ink), new LinearLayout.LayoutParams(dp(20), dp(24)));
         if (!send && getResources().getDisplayMetrics().widthPixels / getResources().getDisplayMetrics().density >= 350 && getResources().getConfiguration().fontScale <= 1.2f) {
@@ -854,6 +866,11 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     void handleBack() {
+        if (state.getMenu() == FloatingSearchState.Menu.NONE && !state.isKeyboardVisible()
+                && !state.isDrawerOpen() && drawerMotion.progress() > 0) {
+            setDrawerOpen(false);
+            return;
+        }
         if (state.isDrawerOpen() && drawer.isSearching() && !state.isKeyboardVisible()) {
             drawer.endSearch();
             return;
@@ -994,7 +1011,7 @@ final class FloatingSearchView extends FrameLayout {
             View row = languageRows[language.ordinal()];
             if (row != null) {
                 row.setBackground(ripple(language == hoveredLanguage
-                        || (hoveredLanguage == null && language == ocrLanguage.language()) ? 0xffe9e9e9 : PAPER, 12));
+                        || (hoveredLanguage == null && language == ocrLanguage.language()) ? AppTheme.LINE : PAPER, 12));
                 ((LinearLayout)row).getChildAt(1).setVisibility(language == ocrLanguage.language() ? VISIBLE : INVISIBLE);
                 row.setContentDescription("OCR " + language.label + (language == ocrLanguage.language() ? "，当前选中" : ""));
             }
@@ -1041,7 +1058,7 @@ final class FloatingSearchView extends FrameLayout {
         heading.setGravity(Gravity.CENTER_VERTICAL); heading.setPadding(dp(6), 0, dp(6), dp(12));
         TextView title = text("Groq AI", 20, INK, true);
         heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView badge = text(GroqKeyStore.hasKey(getContext()) ? "已配置" : "待配置", 11, Color.WHITE, true); badge.setPadding(dp(10), dp(6), dp(10), dp(6)); badge.setBackground(shape(INK, 16));
+        TextView badge = text(GroqKeyStore.hasKey(getContext()) ? "已配置" : "待配置", 11, Color.WHITE, true); badge.setPadding(dp(10), dp(6), dp(10), dp(6)); badge.setBackground(shape(AppTheme.BLUE, 16));
         heading.addView(badge); menuCard.addView(heading);
         modelRow(SearchIconView.Kind.PROJECT, "Build  Beta", "构建应用和网站 · 未接入", false, LookupDestinationSettings.Model.BUILD);
         modelRow(SearchIconView.Kind.CONNECTOR, "重型", "专家团队 · 未接入", false, LookupDestinationSettings.Model.HEAVY);
@@ -1071,7 +1088,7 @@ final class FloatingSearchView extends FrameLayout {
             LinearLayout row = entry.getValue();
             boolean selected = destination.model() == entry.getKey();
             row.setSelected(selected);
-            row.setBackground(ripple(selected ? 0xffe9e9e9 : PAPER, 16));
+            row.setBackground(ripple(selected ? AppTheme.LINE : PAPER, 16));
             row.getChildAt(row.getChildCount() - 1).setVisibility(selected ? VISIBLE : GONE);
             String title = ((TextView)((LinearLayout)row.getChildAt(1)).getChildAt(0)).getText().toString();
             boolean enabled = entry.getKey() == LookupDestinationSettings.Model.FAST
@@ -1086,7 +1103,7 @@ final class FloatingSearchView extends FrameLayout {
         menuRow(SearchIconView.Kind.CAMERA, "摄像头", "未接入", false, false);
         menuRow(SearchIconView.Kind.IMAGE, "图库", "未接入", false, false);
         menuRow(SearchIconView.Kind.FILE, "文件", "未接入", false, false);
-        View line = new View(getContext()); line.setBackgroundColor(0xffe6e7e8);
+        View line = new View(getContext()); AppTheme.background(line, AppTheme.LINE);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(1)); lp.setMargins(dp(12), dp(10), dp(12), dp(10)); menuCard.addView(line, lp);
         menuRow(SearchIconView.Kind.SKILLS, "技能", "未接入", false, false);
         menuRow(SearchIconView.Kind.CONNECTOR, "连接器", "未接入", false, false);
@@ -1094,11 +1111,11 @@ final class FloatingSearchView extends FrameLayout {
 
     private LinearLayout menuRow(SearchIconView.Kind kind, String title, String subtitle, boolean enabled, boolean selected) {
         LinearLayout row = new LinearLayout(getContext()); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(10), dp(6), dp(8), dp(6));
-        row.setBackground(ripple(selected ? 0xffe9e9e9 : PAPER, 16));
-        row.addView(icon(kind, enabled ? INK : 0xff909396), new LinearLayout.LayoutParams(dp(25), dp(30)));
+        row.setBackground(ripple(selected ? AppTheme.LINE : PAPER, 16));
+        row.addView(icon(kind, enabled ? INK : AppTheme.MUTED), new LinearLayout.LayoutParams(dp(25), dp(30)));
         LinearLayout labels = new LinearLayout(getContext()); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(12), 0, dp(5), 0);
-        labels.addView(text(title, 16, enabled ? INK : 0xff949698, true));
-        TextView detail = text(subtitle, 11, enabled ? 0xff66696c : 0xffa3a5a6, false); detail.setMaxLines(2); labels.addView(detail);
+        labels.addView(text(title, 16, enabled ? INK : AppTheme.MUTED, true));
+        TextView detail = text(subtitle, 11, AppTheme.MUTED, false); detail.setMaxLines(2); labels.addView(detail);
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         if (selected) row.addView(icon(SearchIconView.Kind.CHECK, INK), new LinearLayout.LayoutParams(dp(22), dp(26)));
         row.setOnClickListener(v -> { if (enabled) closeMenu(); else unavailable(title); });
@@ -1194,7 +1211,7 @@ final class FloatingSearchView extends FrameLayout {
         title.setGravity(Gravity.CENTER);
         tab.addView(title, new FrameLayout.LayoutParams(-1, -1));
         View indicator = new View(getContext());
-        indicator.setBackground(shape(0xffb1b1b1, 2));
+        indicator.setBackground(shape(AppTheme.MUTED, 2));
         FrameLayout.LayoutParams indicatorLayout = new FrameLayout.LayoutParams(
                 dp(15), dp(3), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         indicatorLayout.bottomMargin = dp(4);
@@ -1209,7 +1226,7 @@ final class FloatingSearchView extends FrameLayout {
     private void selectQuestionTab() {
         for (int i = 0; i < tabLabels.length; i++) {
             boolean selected = i == 0;
-            tabLabels[i].setTextColor(selected ? INK : 0xffb0b0b0);
+            AppTheme.text(tabLabels[i], selected ? INK : AppTheme.MUTED);
             tabIndicators[i].setVisibility(selected ? VISIBLE : INVISIBLE);
         }
     }
@@ -1226,6 +1243,7 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private void setDrawerOpen(boolean open) {
+        open = open && drawerMotion.limit() > 0;
         closeMenu();
         if (open) { hideKeyboard(); drawer.refreshHistory(); }
         else { hideKeyboard(); drawer.endSearch(); }
@@ -1238,30 +1256,45 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private void animateDrawer(float target, Runnable after) {
-        if (drawerAnimator != null) drawerAnimator.cancel();
-        drawerAnimator = ValueAnimator.ofFloat(drawerProgress, target);
-        drawerAnimator.setDuration(Math.max(90, (long)(260 * Math.abs(target - drawerProgress))));
-        drawerAnimator.setInterpolator(new DecelerateInterpolator(1.6f));
-        drawerAnimator.addUpdateListener(a -> applyDrawerProgress((float)a.getAnimatedValue()));
-        drawerAnimator.addListener(new AnimatorListenerAdapter() {
-            private boolean cancelled;
-            @Override public void onAnimationCancel(Animator animation) { cancelled = true; }
-            @Override public void onAnimationEnd(Animator animation) {
-                if (!cancelled && !disposed && after != null) after.run();
-            }
-        });
-        drawerAnimator.start();
+        drawerMotion.animate(target > 0, after == null ? null : () -> { if (!disposed) after.run(); });
     }
 
     private void applyDrawerProgress(float progress) {
-        drawerProgress = Math.max(0, Math.min(1, progress));
-        drawer.setVisibility(drawerProgress > 0 ? VISIBLE : INVISIBLE);
-        drawer.setTranslationX(-drawerWidth * (1 - drawerProgress));
-        page.setTranslationX(drawerWidth * drawerProgress);
-        textExplosion.setTranslationX(drawerWidth * drawerProgress);
-        drawerDismiss.setVisibility(drawerProgress > 0 ? VISIBLE : GONE);
-        drawerDismiss.setTranslationX(drawerWidth * drawerProgress);
+        drawerGeometry.update(drawerMode, progress, drawerMotion.limit(), drawerWidth,
+                getResources().getDisplayMetrics().density);
+        boolean visible = progress > 0 && drawerMotion.limit() > 0;
+        boolean push = drawerMode == DrawerStyleSettings.Mode.PUSH;
+        drawer.setVisibility(visible ? VISIBLE : INVISIBLE);
+        drawer.setTranslationX(drawerGeometry.menuX); drawer.setTranslationY(drawerGeometry.menuY);
+        drawer.setPivotX(0); drawer.setPivotY(getHeight() / 2f - drawer.getTop());
+        drawer.setScaleX(drawerGeometry.menuScale); drawer.setScaleY(drawerGeometry.menuScale);
+        drawer.setElevation(push ? 0 : dp(18) * drawerGeometry.fraction);
+        float pageElevation = push ? dp(16) * drawerGeometry.fraction : 0;
+        page.setElevation(pageElevation); textExplosion.setTranslationZ(pageElevation);
+        page.setPivotX(getWidth()); page.setPivotY(getHeight() / 2f - page.getTop());
+        textExplosion.setPivotX(getWidth()); textExplosion.setPivotY(getHeight() / 2f - textExplosion.getTop());
+        page.setTranslationX(drawerGeometry.pageX); textExplosion.setTranslationX(drawerGeometry.pageX);
+        page.setScaleX(drawerGeometry.pageScale); page.setScaleY(drawerGeometry.pageScale);
+        textExplosion.setScaleX(drawerGeometry.pageScale); textExplosion.setScaleY(drawerGeometry.pageScale);
+        drawerPageBackground.setCornerRadius(push ? dp(18) * drawerGeometry.fraction : 0);
+        page.setClipToOutline(push && visible);
+        drawerDismiss.setVisibility(visible ? VISIBLE : GONE);
+        drawerDismiss.setTranslationX(drawerMode == DrawerStyleSettings.Mode.OVERLAY ? 0 : Math.max(0, drawerGeometry.pageX));
+        drawerDismiss.setTranslationZ(pageElevation + (push && visible ? dp(1) : 0));
+        drawerDismiss.setBackgroundColor(((int) (drawerGeometry.shade * 255) << 24) | 0x020813);
+        drawer.applyOpeningFraction(drawerGeometry.fraction);
     }
+
+    private void refreshDrawerStyle() {
+        if (disposed) return;
+        drawerMode = drawerSettings.mode();
+        drawerMotion.configure(drawerWidth, drawerSettings.ratio(drawerMode) / 100f);
+        if (drawerMotion.limit() == 0) state.setDrawerOpen(false);
+        if (clipboardSuspended) drawerMotion.snap(state.isDrawerOpen() ? drawerMotion.limit() : 0);
+        else drawerMotion.animate(state.isDrawerOpen(), null);
+    }
+
+    void experienceDrawer() { if (!disposed) setDrawerOpen(true); }
 
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         if (Build.VERSION.SDK_INT >= 30) {
@@ -1292,9 +1325,12 @@ final class FloatingSearchView extends FrameLayout {
         if (w != oldw && composerHeightAnimator != null) {
             composerHeightAnimator.cancel(); composer.getLayoutParams().height = -2;
         }
-        drawerWidth = Math.min(dp(380), Math.round(w * .89f));
+        drawerWidth = Math.round(DrawerMotionController.fullWidth(w, getResources().getDisplayMetrics().density));
         ViewGroup.LayoutParams lp = drawer.getLayoutParams(); lp.width = drawerWidth; drawer.setLayoutParams(lp);
-        applyDrawerProgress(drawerProgress); post(this::positionMenu);
+        drawerMotion.configure(drawerWidth, drawerSettings.ratio(drawerMode) / 100f);
+        if (w != oldw) drawerMotion.snap(state.isDrawerOpen() ? drawerMotion.limit() : 0);
+        else applyDrawerProgress(drawerMotion.progress());
+        post(this::positionMenu);
         if (Build.VERSION.SDK_INT < 30) updateLegacyViewport();
     }
 
@@ -1335,54 +1371,23 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     @Override public boolean onInterceptTouchEvent(MotionEvent e) {
-        if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
-            downX = e.getX(); downY = e.getY(); startProgress = drawerProgress; swiping = false;
-            // Reserve the outer system-Back edge and the horizontally scrolling pills.
-            int swipeStart = Math.max(dp(24), systemBackInset + dp(8));
-            int viewportBottom = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
-                    ? topInset + legacyViewportHeight : getHeight() - Math.max(safeBottom, imeBottom);
-            swipeEligible = menuCard == null && !containsPoint(recommendations, downX, downY) && downX > swipeStart &&
-                    downX < getWidth() - swipeStart &&
-                    (drawerProgress > 0 || (downY > topInset + header.getHeight() && downY < viewportBottom));
-            recycleVelocity(); velocity = VelocityTracker.obtain(); velocity.addMovement(e);
-        } else if (e.getActionMasked() == MotionEvent.ACTION_MOVE && beginSwipe(e)) {
-            return true;
-        } else if (!swiping && (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL)) recycleVelocity();
-        return super.onInterceptTouchEvent(e);
-    }
-
-    private boolean beginSwipe(MotionEvent e) {
-        if (!swipeEligible) return false;
-        float dx = e.getX() - downX, dy = e.getY() - downY;
-        if (startProgress == 0 && dx <= 0) return false;
-        if (Math.abs(dx) <= ViewConfiguration.get(getContext()).getScaledTouchSlop() || Math.abs(dx) <= Math.abs(dy) * 1.3f) return false;
-        if (drawerAnimator != null) drawerAnimator.cancel();
-        if (!swiping && startProgress == 0 && dx > 0) { hideKeyboard(); drawer.refreshHistory(); }
-        swiping = true;
-        return true;
+        return drawerMotion.handle(e, canSwipeDrawer(e), state.isDrawerOpen()) || super.onInterceptTouchEvent(e);
     }
 
     @Override public boolean onTouchEvent(MotionEvent e) {
-        // Blank content has no child touch target, so ViewGroup skips interception
-        // after DOWN. Recognize that stream here as well as child-owned streams.
-        if (!swiping && e.getActionMasked() == MotionEvent.ACTION_MOVE) beginSwipe(e);
-        if (!swiping) {
-            if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL) recycleVelocity();
-            return super.onTouchEvent(e);
-        }
-        if (velocity != null) velocity.addMovement(e);
-        if (e.getActionMasked() == MotionEvent.ACTION_MOVE) applyDrawerProgress(startProgress + (e.getX() - downX) / drawerWidth);
-        if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-            if (e.getActionMasked() == MotionEvent.ACTION_UP) applyDrawerProgress(startProgress + (e.getX() - downX) / drawerWidth);
-            float speed = 0;
-            if (velocity != null) { velocity.computeCurrentVelocity(1000); speed = velocity.getXVelocity(); }
-            boolean open = e.getActionMasked() == MotionEvent.ACTION_CANCEL ? state.isDrawerOpen() : Math.abs(speed) > dp(500) ? speed > 0 : drawerProgress > .5f;
-            state.setDrawerOpen(open); animateDrawer(open ? 1 : 0); swiping = false; recycleVelocity();
-        }
-        return true;
+        return drawerMotion.handle(e, canSwipeDrawer(e), state.isDrawerOpen()) || super.onTouchEvent(e);
     }
 
-    private void recycleVelocity() { if (velocity != null) velocity.recycle(); velocity = null; }
+    private boolean canSwipeDrawer(MotionEvent e) {
+        int edge = Math.max(dp(24), systemBackInset + dp(8));
+        int bottomEdge = Build.VERSION.SDK_INT < 30 && legacyViewportHeight > 0
+                ? topInset + legacyViewportHeight : getHeight() - Math.max(safeBottom, imeBottom);
+        return !draftDragging && menuCard == null && !containsPoint(recommendations, e.getX(), e.getY())
+                && e.getX() > edge && e.getX() < getWidth() - edge && e.getY() < bottomEdge
+                && (drawerMotion.progress() > 0 || e.getY() > topInset + header.getHeight());
+    }
+
+    private void excludeDrawerGesture() { drawerMotion.excludeGesture(); }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
@@ -1396,6 +1401,7 @@ final class FloatingSearchView extends FrameLayout {
         super.onLayout(changed, l, t, r, b);
         if (emptyView != null) emptyView.setVisibility(
                 body.getHeight() >= dp(state.isPrivateMode() ? 230 : 84) ? VISIBLE : INVISIBLE);
+        if (changed) applyDrawerProgress(drawerMotion.progress());
         if (changed && menuCard != null) post(this::positionMenu);
     }
 
@@ -1421,8 +1427,8 @@ final class FloatingSearchView extends FrameLayout {
         }
         legacyLayoutListener = null;
         legacyPreDrawListener = null;
-        closeMenu(); recycleVelocity();
-        if (drawerAnimator != null) drawerAnimator.cancel();
+        closeMenu(); drawerMotion.stop();
+        drawerSettings.removeObserver(drawerStyleChanged);
         page.animate().cancel(); plus.animate().cancel();
         if (emptyView != null) emptyView.animate().cancel();
     }
@@ -1448,7 +1454,7 @@ final class FloatingSearchView extends FrameLayout {
             float x = layout.getPrimaryHorizontal(offset) + getTotalPaddingLeft() - getScrollX();
             float top = layout.getLineTop(line) + getTotalPaddingTop() - getScrollY();
             float bottom = layout.getLineBottom(line) + getTotalPaddingTop() - getScrollY();
-            dragCaretPaint.setColor(0xff7945a1); dragCaretPaint.setStrokeWidth(dp(2));
+            dragCaretPaint.setColor(AppTheme.ink(AppTheme.PURPLE)); dragCaretPaint.setStrokeWidth(dp(2));
             canvas.drawLine(x, top, x, bottom, dragCaretPaint);
             canvas.drawCircle(x, top, dp(3), dragCaretPaint);
         }
@@ -1477,9 +1483,9 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-    private GradientDrawable shape(int color, int radius) { GradientDrawable bg = new GradientDrawable(); bg.setColor(color); bg.setCornerRadius(dp(radius)); return bg; }
+    private GradientDrawable shape(int color, int radius) { GradientDrawable bg = new AppTheme.Shape(); bg.setColor(color); bg.setCornerRadius(dp(radius)); return bg; }
     private RippleDrawable ripple(int color, int radius) { return new RippleDrawable(ColorStateList.valueOf(0x16000000), shape(color, radius), shape(Color.WHITE, radius)); }
-    private TextView text(String value, int size, int color, boolean bold) { TextView t = new TextView(getContext()); t.setText(value); t.setTextSize(size); t.setTextColor(color); t.setIncludeFontPadding(false); if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return t; }
+    private TextView text(String value, int size, int color, boolean bold) { TextView t = new TextView(getContext()); t.setText(value); t.setTextSize(size); AppTheme.text(t, color); t.setIncludeFontPadding(false); if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return t; }
     private SearchIconView icon(SearchIconView.Kind kind, int color) { SearchIconView v = new SearchIconView(getContext(), kind); v.setColor(color); return v; }
     private SearchIconView button(SearchIconView.Kind kind, String description, int color) { SearchIconView v = icon(kind, INK); v.setPadding(dp(9), dp(9), dp(9), dp(9)); v.setBackground(ripple(color, 24)); v.setContentDescription(description); v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES); return v; }
     private void toast(String message) { Toast.makeText(getContext(), message, Toast.LENGTH_SHORT).show(); }

@@ -13,22 +13,24 @@ public final class SearchIconView extends View {
         MENU, PRIVATE, PLUS, LIGHTNING, CHEVRON, MIC, VOICE, SEND, CLOSE, BACK,
         SEARCH, SETTINGS, NEW_CHAT, CLOCK, CAMERA, IMAGE, FILE, SKILLS,
         CONNECTOR, CHECK, BOT, PROJECT, TASK, MARK, MORE, HAPTICS, WIDGET, LANGUAGE, ADVANCED,
-        BOOK, FOLDER, TRASH, DRAG, REORDER, DATABASE, IMPORT, EYE
+        BOOK, FOLDER, TRASH, DRAG, REORDER, DATABASE, IMPORT, EYE, SUN, MOON, SIDEBAR
     }
 
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final RectF rect = new RectF();
     private Kind kind;
+    private int color = AppTheme.INK;
 
     public SearchIconView(Context context, Kind kind) {
         super(context);
         this.kind = kind;
+        AppTheme.observe(this, this::invalidate);
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeWidth(1.8f);
         stroke.setStrokeCap(Paint.Cap.ROUND);
         stroke.setStrokeJoin(Paint.Join.ROUND);
-        stroke.setColor(0xff171819);
+        stroke.setColor(AppTheme.INK);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
@@ -39,11 +41,11 @@ public final class SearchIconView extends View {
     }
 
     public void setColor(int color) {
-        stroke.setColor(color);
+        this.color = color;
         invalidate();
     }
 
-    public int getColor() { return stroke.getColor(); }
+    public int getColor() { return AppTheme.ink(color); }
 
     @Override public void setSelected(boolean selected) {
         if (isSelected() == selected) return;
@@ -60,6 +62,7 @@ public final class SearchIconView extends View {
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         if (kind == null) return;
+        stroke.setColor(AppTheme.ink(color));
         float size = Math.min(getWidth() - getPaddingLeft() - getPaddingRight(),
                 getHeight() - getPaddingTop() - getPaddingBottom());
         if (size <= 0) return;
@@ -71,6 +74,25 @@ public final class SearchIconView extends View {
         canvas.scale(size / 24f, size / 24f);
         path.reset();
         switch (kind) {
+            case SIDEBAR:
+                roundRect(canvas, 3, 4, 21, 20, 2.5f);
+                line(canvas, 9, 4, 9, 20); break;
+            case SUN:
+                circle(canvas, 12, 12, 4);
+                for (int i = 0; i < 8; i++) {
+                    double angle = i * Math.PI / 4;
+                    float x = (float)Math.cos(angle), y = (float)Math.sin(angle);
+                    line(canvas, 12 + x * 7, 12 + y * 7, 12 + x * 9, 12 + y * 9);
+                }
+                break;
+            case MOON:
+                path.moveTo(20.5f, 13);
+                path.cubicTo(17.8f, 14.3f, 14.6f, 13.5f, 12.8f, 11.2f);
+                path.cubicTo(11.1f, 9, 10.8f, 6, 12, 3.5f);
+                path.cubicTo(7.3f, 3.5f, 3.5f, 7.3f, 3.5f, 12);
+                path.cubicTo(3.5f, 16.7f, 7.3f, 20.5f, 12, 20.5f);
+                path.cubicTo(16.3f, 20.5f, 19.9f, 17.2f, 20.5f, 13);
+                path.close(); canvas.drawPath(path, stroke); break;
             case EYE:
                 path.moveTo(1.5f, 12);
                 path.cubicTo(4, 8, 7.5f, 5, 12, 5);
@@ -83,7 +105,7 @@ public final class SearchIconView extends View {
                 }
                 canvas.drawPath(path, stroke);
                 int eyeColor = stroke.getColor();
-                if (isSelected()) stroke.setColor(0xffffffff);
+                if (isSelected()) stroke.setColor(AppTheme.color(AppTheme.CARD));
                 circle(canvas, 12, 12, 4);
                 stroke.setColor(eyeColor); break;
             case BOOK:

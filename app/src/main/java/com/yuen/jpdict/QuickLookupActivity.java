@@ -59,7 +59,7 @@ public class QuickLookupActivity extends Activity {
     }
 
     private GradientDrawable rounded(int color, int radius) {
-        GradientDrawable g = new GradientDrawable();
+        GradientDrawable g = new AppTheme.Shape();
         g.setColor(color);
         g.setCornerRadius(dp(radius));
         return g;
@@ -69,7 +69,7 @@ public class QuickLookupActivity extends Activity {
         TextView t = new TextView(this);
         t.setText(value);
         t.setTextSize(size);
-        t.setTextColor(color);
+        AppTheme.text(t, color);
         return t;
     }
 
@@ -78,7 +78,8 @@ public class QuickLookupActivity extends Activity {
                 getIntent().getBooleanExtra(FloatingService.EXTRA_POPUP_MODE, false);
         boolean useOverlay = Settings.canDrawOverlays(this);
         if (useOverlay) setTheme(R.style.Theme_LookupLinkBridge);
-        else if (popupMode) setTheme(R.style.Theme_JpQuickLookup_Popup);
+        else if (popupMode) setTheme(AppTheme.isDark() ? R.style.Theme_JpQuickLookup_Popup_Dark : R.style.Theme_JpQuickLookup_Popup);
+        else AppTheme.prepare(this);
 
         super.onCreate(savedInstanceState);
         if (useOverlay) {
@@ -107,7 +108,7 @@ public class QuickLookupActivity extends Activity {
         if (popupMode) {
             panel.setBackground(rounded(Color.WHITE, 18));
         } else {
-            panel.setBackgroundColor(Color.WHITE);
+            AppTheme.background(panel, Color.WHITE);
         }
 
         LinearLayout header = new LinearLayout(this);
@@ -115,7 +116,7 @@ public class QuickLookupActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(18), dp(14), dp(12), dp(12));
 
-        TextView title = text(query.isEmpty() ? "快速查词" : query, 30, 0xff202124);
+        TextView title = text(query.isEmpty() ? "快速查词" : query, 30, AppTheme.INK);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         header.addView(title, new LinearLayout.LayoutParams(0, dp(62), 1));
@@ -124,7 +125,7 @@ public class QuickLookupActivity extends Activity {
                 ? new String[]{"×"}
                 : new String[]{"☆", "◉", "☷", "✚"};
         for (String icon : headerIcons) {
-            TextView iv = text(icon, popupMode ? 32 : 29, 0xff202124);
+            TextView iv = text(icon, popupMode ? 32 : 29, AppTheme.INK);
             iv.setGravity(Gravity.CENTER);
             if (popupMode) iv.setOnClickListener(v -> closeLookupTask());
             else if ("☷".equals(icon)) {
@@ -140,7 +141,7 @@ public class QuickLookupActivity extends Activity {
         panel.addView(header, new LinearLayout.LayoutParams(-1, dp(76)));
 
         View divider = new View(this);
-        divider.setBackgroundColor(0xffe6e8eb);
+        AppTheme.background(divider, AppTheme.LINE);
         panel.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
 
         String[] local = findLocal(query);
@@ -150,10 +151,10 @@ public class QuickLookupActivity extends Activity {
             pronunciation.setGravity(Gravity.CENTER_VERTICAL);
             pronunciation.setPadding(dp(20), dp(12), dp(20), dp(12));
 
-            TextView sound = text("🔊", 24, 0xff009cf0);
+            TextView sound = text("🔊", 24, AppTheme.BLUE);
             pronunciation.addView(sound, new LinearLayout.LayoutParams(dp(42), dp(44)));
 
-            TextView reading = text(local[0] + "   /" + local[1] + "/   " + local[2], 17, 0xff62676d);
+            TextView reading = text(local[0] + "   /" + local[1] + "/   " + local[2], 17, AppTheme.MUTED);
             pronunciation.addView(reading, new LinearLayout.LayoutParams(0, dp(44), 1));
             panel.addView(pronunciation);
         }
@@ -172,7 +173,7 @@ public class QuickLookupActivity extends Activity {
         LinearLayout localCard = new LinearLayout(this);
         localCard.setOrientation(LinearLayout.VERTICAL);
         localCard.setPadding(dp(18), dp(16), dp(18), dp(18));
-        localCard.setBackground(rounded(0xffe8f8ff, 14));
+        localCard.setBackground(rounded(AppTheme.SOFT, 14));
 
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
         cardLp.leftMargin = dp(16);
@@ -181,15 +182,15 @@ public class QuickLookupActivity extends Activity {
         cardLp.bottomMargin = dp(14);
 
         if (local != null) {
-            TextView localWord = text(query, 26, 0xff00a6a6);
+            TextView localWord = text(query, 26, AppTheme.BLUE);
             localWord.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             localCard.addView(localWord);
 
-            TextView localMeta = text(local[0] + " · " + local[1] + " · " + local[2], 16, 0xff596168);
+            TextView localMeta = text(local[0] + " · " + local[1] + " · " + local[2], 16, AppTheme.MUTED);
             localMeta.setPadding(0, dp(8), 0, dp(10));
             localCard.addView(localMeta);
 
-            TextView localMeaning = text(local[3], 19, 0xff17191c);
+            TextView localMeaning = text(local[3], 19, AppTheme.INK);
             localMeaning.setLineSpacing(dp(3), 1f);
             localCard.addView(localMeaning);
         } else {
@@ -197,7 +198,7 @@ public class QuickLookupActivity extends Activity {
                     query.isEmpty()
                             ? "没有收到要查询的内容。"
                             : "本地词库暂未收录该内容。\n下面会自动交由 Groq AI 分析。",
-                    18, 0xff34383d);
+                    18, AppTheme.INK);
             missing.setLineSpacing(dp(4), 1f);
             localCard.addView(missing);
         }
@@ -232,19 +233,19 @@ public class QuickLookupActivity extends Activity {
         LinearLayout aiCard = new LinearLayout(this);
         aiCard.setOrientation(LinearLayout.VERTICAL);
         aiCard.setPadding(dp(18), dp(16), dp(18), dp(20));
-        aiCard.setBackground(rounded(0xfff7f8fa, 14));
+        aiCard.setBackground(rounded(AppTheme.SOFT, 14));
 
         aiProgress = new ProgressBar(this);
         aiProgress.setIndeterminate(true);
         aiCard.addView(aiProgress, new LinearLayout.LayoutParams(dp(32), dp(32)));
 
-        aiBody = text("正在查询 AI…", 18, 0xff202327);
+        aiBody = text("正在查询 AI…", 18, AppTheme.INK);
         aiBody.setPadding(0, dp(10), 0, 0);
         aiBody.setLineSpacing(dp(5), 1f);
         aiBody.setTextIsSelectable(true);
         aiCard.addView(aiBody, new LinearLayout.LayoutParams(-1, -2));
 
-        aiKeyButton = new Button(this);
+        aiKeyButton = new Button(this); AppTheme.button(aiKeyButton);
         aiKeyButton.setAllCaps(false);
         aiKeyButton.setText(GroqKeyStore.hasKey(this) ? "更换 Groq Key" : "配置 Groq Key");
         LinearLayout.LayoutParams keyLp = new LinearLayout.LayoutParams(-1, dp(48));
@@ -255,7 +256,7 @@ public class QuickLookupActivity extends Activity {
 
         content.addView(aiCard, cardLp);
 
-        TextView footer = text("jpdict · 本地词典 + Groq AI", 14, 0xff777d84);
+        TextView footer = text("jpdict · 本地词典 + Groq AI", 14, AppTheme.MUTED);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(12), dp(18), dp(12), dp(6));
         content.addView(footer);
@@ -268,10 +269,10 @@ public class QuickLookupActivity extends Activity {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT));
 
-            TextView resizeHandle = text("↘", 24, 0xff8a8f96);
+            TextView resizeHandle = text("↘", 24, AppTheme.MUTED);
             resizeHandle.setGravity(Gravity.CENTER);
             resizeHandle.setContentDescription("拖动调整窗口大小");
-            resizeHandle.setBackgroundColor(Color.TRANSPARENT);
+            AppTheme.background(resizeHandle, Color.TRANSPARENT);
 
             FrameLayout.LayoutParams resizeLp = new FrameLayout.LayoutParams(dp(44), dp(44));
             resizeLp.gravity = Gravity.END | Gravity.BOTTOM;
@@ -428,10 +429,7 @@ public class QuickLookupActivity extends Activity {
         }
 
         if (Build.VERSION.SDK_INT >= 30) w.setDecorFitsSystemWindows(false);
-        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                | (Build.VERSION.SDK_INT >= 26 ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
-        w.setStatusBarColor(0xffeaf7ff);
-        w.setNavigationBarColor(Color.WHITE);
+        AppTheme.window(this, AppTheme.CARD);
     }
 
     private void installPopupWindowGestures(
@@ -580,12 +578,12 @@ public class QuickLookupActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(18), dp(14), dp(18), dp(14));
-        row.setBackgroundColor(0xfff2f3f5);
+        AppTheme.background(row, AppTheme.SOFT);
 
-        TextView t = text(title, 18, 0xff30343a);
+        TextView t = text(title, 18, AppTheme.INK);
         row.addView(t, new LinearLayout.LayoutParams(0, dp(42), 1));
 
-        TextView arrow = text("⌃", 22, 0xffaeb3b9);
+        TextView arrow = text("⌃", 22, AppTheme.LINE);
         arrow.setGravity(Gravity.CENTER);
         row.addView(arrow, new LinearLayout.LayoutParams(dp(42), dp(42)));
         parent.addView(row, new LinearLayout.LayoutParams(-1, dp(64)));

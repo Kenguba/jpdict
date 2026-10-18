@@ -34,9 +34,9 @@ import android.widget.Toast;
 
 /** One key editor for Activities and focusable search / lookup overlays. */
 public final class GroqKeySettings {
-    private static final int INK = 0xff202327;
-    private static final int BLUE = 0xff008fd1;
-    private static final int SOFT = 0xfff5f6f7;
+    private static final int INK = AppTheme.INK;
+    private static final int BLUE = AppTheme.BLUE;
+    private static final int SOFT = AppTheme.SOFT;
 
     private GroqKeySettings() {}
 
@@ -56,7 +56,7 @@ public final class GroqKeySettings {
         TextView note = text(context, GroqKeyStore.hasKey(context)
                 ? "已全局配置，搜索、OCR 和查词共用。输入新 Key 可替换，留空不会修改。"
                 : "保存后在搜索、OCR 和查词中全局生效。Key 使用本机加密保存。",
-                13, 0xff6d747b, false);
+                13, AppTheme.MUTED, false);
         note.setPadding(0, dp(context, 10), 0, dp(context, 14));
         note.setLineSpacing(dp(context, 3), 1f);
         panel.addView(note);
@@ -64,9 +64,9 @@ public final class GroqKeySettings {
         EditText input = new KeyEditor(context, onBack, onEditing != null);
         input.setSingleLine(true);
         input.setTextSize(15);
-        input.setTextColor(INK);
+        AppTheme.text(input, INK);
         input.setHint("gsk_...");
-        input.setHintTextColor(0xff94999e);
+        AppTheme.hint(input, AppTheme.MUTED);
         input.setPadding(dp(context, 14), dp(context, 10), dp(context, 14), dp(context, 10));
         input.setBackground(rounded(context, SOFT, 12));
         input.setLongClickable(true);
@@ -93,8 +93,8 @@ public final class GroqKeySettings {
         CheckBox visible = new CheckBox(context);
         visible.setText("显示 Key");
         visible.setTextSize(13);
-        visible.setTextColor(INK);
-        visible.setButtonTintList(ColorStateList.valueOf(INK));
+        AppTheme.text(visible, INK);
+        AppTheme.observe(visible, () -> visible.setButtonTintList(ColorStateList.valueOf(AppTheme.ink(INK))));
         visible.setOnCheckedChangeListener((button, checked) -> {
             int selection = input.getSelectionStart();
             input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -116,7 +116,7 @@ public final class GroqKeySettings {
         LinearLayout actions = new LinearLayout(context);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         if (GroqKeyStore.hasKey(context)) {
-            TextView clear = action(context, "清除", 0xff6d747b);
+            TextView clear = action(context, "清除", AppTheme.MUTED);
             clear.setOnClickListener(view -> {
                 if (!GroqKeyStore.clear(context)) {
                     toast(context, "Key 清除失败，请重试");
@@ -159,7 +159,7 @@ public final class GroqKeySettings {
     }
 
     public static void showDialog(Activity activity, Runnable onChanged) {
-        AlertDialog dialog = new AlertDialog.Builder(activity).create();
+        AlertDialog dialog = new AppTheme.DialogBuilder(activity).create();
         ScrollView scroll = new ScrollView(activity);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.addView(createPanel(activity, onChanged, dialog::dismiss, null));
@@ -188,13 +188,13 @@ public final class GroqKeySettings {
             }
 
             @Override public void updateDrawState(TextPaint paint) {
-                paint.setColor(BLUE);
+                paint.setColor(AppTheme.ink(BLUE));
                 paint.setUnderlineText(true);
             }
         }, start, start + "配置 Key".length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         body.setTextIsSelectable(false);
         body.setText(linked);
-        body.setHighlightColor(0xffdceef7);
+        AppTheme.observe(body, () -> body.setHighlightColor(AppTheme.color(AppTheme.PALE)));
         body.setMovementMethod(LinkMovementMethod.getInstance());
     }
 
@@ -281,7 +281,7 @@ public final class GroqKeySettings {
         view.setGravity(Gravity.CENTER);
         view.setMinHeight(dp(context, 48));
         view.setPadding(dp(context, 14), 0, dp(context, 14), 0);
-        view.setBackground(new RippleDrawable(ColorStateList.valueOf(0xffe6e8ea),
+        view.setBackground(new RippleDrawable(ColorStateList.valueOf(AppTheme.LINE),
                 rounded(context, Color.TRANSPARENT, 12), null));
         return view;
     }
@@ -290,14 +290,14 @@ public final class GroqKeySettings {
         TextView view = new TextView(context);
         view.setText(value);
         view.setTextSize(size);
-        view.setTextColor(color);
+        AppTheme.text(view, color);
         view.setIncludeFontPadding(false);
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return view;
     }
 
     private static GradientDrawable rounded(Context context, int color, int radius) {
-        GradientDrawable background = new GradientDrawable();
+        GradientDrawable background = new AppTheme.Shape();
         background.setColor(color);
         background.setCornerRadius(dp(context, radius));
         return background;

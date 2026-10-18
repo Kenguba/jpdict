@@ -31,15 +31,15 @@ final class BubbleImageEditorView extends LinearLayout {
         super(context);
         setOrientation(VERTICAL);
         setPadding(dp(8), dp(2.5f), dp(8), dp(12));
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(0xfff4f5f6); background.setCornerRadius(dp(12));
+        GradientDrawable background = new AppTheme.Shape();
+        background.setColor(AppTheme.SOFT); background.setCornerRadius(dp(12));
         setBackground(background);
         LinearLayout titleRow = row();
-        TextView title = text("图片大小与位置", 11, 0xff354860, true);
+        TextView title = text("图片大小与位置", 11, AppTheme.MUTED, true);
         titleRow.addView(title, new LayoutParams(0, -2, 1));
-        TextView reset = text("居中重置", 10, 0xff008fd1, true);
+        TextView reset = text("居中重置", 10, AppTheme.BLUE, true);
         reset.setGravity(Gravity.CENTER); reset.setPadding(dp(7), dp(7), dp(7), dp(7));
-        GradientDrawable button = new GradientDrawable(); button.setColor(0xffdef7ff); button.setCornerRadius(dp(10));
+        GradientDrawable button = new AppTheme.Shape(); button.setColor(AppTheme.SOFT); button.setCornerRadius(dp(10));
         reset.setBackground(button); reset.setFocusable(true);
         titleRow.addView(reset, new LayoutParams(-2, dp(34)));
         addView(titleRow, new LayoutParams(-1, -2));
@@ -57,7 +57,7 @@ final class BubbleImageEditorView extends LinearLayout {
         horizontalThumb = (BubbleSliderStyle.ValueThumb)horizontal.getThumb();
         vertical = addSlider("垂直", "图片垂直位置，负 100 至正 100 百分比", 200, 0);
         verticalThumb = (BubbleSliderStyle.ValueThumb)vertical.getThumb();
-        TextView help = text("单指移动，双指缩放，滑块微调", 10, 0xff8995a5, false);
+        TextView help = text("单指移动，双指缩放，滑块微调", 10, AppTheme.MUTED, false);
         help.setGravity(Gravity.CENTER); help.setSingleLine(true);
         LayoutParams hintParams = new LayoutParams(-1, -2); hintParams.topMargin = dp(10);
         addView(help, hintParams);
@@ -134,7 +134,7 @@ final class BubbleImageEditorView extends LinearLayout {
             }
             BubbleAppearanceRenderer.drawImage(canvas, getContext(), config, bounds);
             canvas.restoreToCount(save);
-            brush.setStyle(Paint.Style.STROKE); brush.setStrokeWidth(dp(1)); brush.setColor(0xffd4deeb);
+            brush.setStyle(Paint.Style.STROKE); brush.setStrokeWidth(dp(1)); brush.setColor(AppTheme.color(AppTheme.LINE));
             canvas.drawPath(shape, brush);
         }
         @Override public boolean onTouchEvent(MotionEvent event) {
@@ -216,7 +216,7 @@ final class BubbleImageEditorView extends LinearLayout {
     }
 
     private SeekBar addSlider(String label, String description, int max, int inset) {
-        LinearLayout row = row(); row.addView(text(label, 11, 0xff60718a, true), new LayoutParams(dp(29), -2));
+        LinearLayout row = row(); row.addView(text(label, 11, AppTheme.MUTED, true), new LayoutParams(dp(29), -2));
         SeekBar slider = new SeekBar(getContext()); slider.setMax(max); slider.setContentDescription(description);
         BubbleSliderStyle.applyLabeled(slider, "0%", inset);
         row.addView(slider, new LayoutParams(0, dp(36), 1));
@@ -224,7 +224,7 @@ final class BubbleImageEditorView extends LinearLayout {
     }
     private SeekBar.OnSeekBarChangeListener sliderListener(Runnable change) { return new SeekBar.OnSeekBarChangeListener() { public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { if (fromUser && !binding) change.run(); } public void onStartTrackingTouch(SeekBar bar) { } public void onStopTrackingTouch(SeekBar bar) { } }; }
     private LinearLayout row() { LinearLayout row = new LinearLayout(getContext()); row.setOrientation(HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); return row; }
-    private TextView text(String label, int size, int color, boolean bold) { TextView view = new TextView(getContext()); view.setText(label); view.setTextSize(size); view.setTextColor(color); view.setIncludeFontPadding(false); if (bold) view.setTypeface(Typeface.DEFAULT_BOLD); return view; }
+    private TextView text(String label, int size, int color, boolean bold) { TextView view = new TextView(getContext()); view.setText(label); view.setTextSize(size); AppTheme.text(view, color); view.setIncludeFontPadding(false); if (bold) view.setTypeface(Typeface.DEFAULT_BOLD); return view; }
     private static float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

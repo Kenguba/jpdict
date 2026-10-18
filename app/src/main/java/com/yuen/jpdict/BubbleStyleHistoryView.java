@@ -22,7 +22,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
         void onAdd();
         void onDeleteRequested(String presetId);
     }
-    private static final int BLUE = 0xff008fd1;
+    private static final int BLUE = AppTheme.BLUE;
     private final LinearLayout slots;
     private final HorizontalScrollView scroll;
     private final Pager pager;
@@ -35,7 +35,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
         this.listener = listener;
         setOrientation(VERTICAL);
         setPadding(dp(10), dp(6), dp(10), dp(5));
-        setBackground(shape(0xffffffff, 18));
+        setBackground(shape(AppTheme.CARD, 18));
         scroll = new HorizontalScrollView(context) {
             @Override protected void onScrollChanged(int x, int y, int oldX, int oldY) {
                 super.onScrollChanged(x, y, oldX, oldY);
@@ -115,10 +115,10 @@ final class BubbleStyleHistoryView extends LinearLayout {
         }
         View add = new AddSymbol(getContext());
         GradientDrawable dashed = shape(0x00000000, 100);
-        dashed.setStroke(dp(1.6f), 0xffabb9c9, dp(4), dp(3));
+        dashed.setStroke(dp(1.6f), AppTheme.LINE, dp(4), dp(3));
         add.setBackground(dashed);
         FrameLayout plus = new FrameLayout(getContext());
-        plus.setBackground(shape(0xfff4f5f6, 14));
+        plus.setBackground(shape(AppTheme.SOFT, 14));
         plus.addView(add, new FrameLayout.LayoutParams(diameter, diameter, Gravity.CENTER));
         plus.setContentDescription(history.size() >= 10 ? "已达十个样式，无法新增" : "添加当前样式");
         plus.setFocusable(true); plus.setAlpha(history.size() >= 10 ? .45f : 1f);
@@ -129,7 +129,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
     }
     private void markSelected(View slot, boolean selected) {
         slot.setSelected(selected);
-        GradientDrawable outline = shape(selected ? 0xffdef7ff : 0xffffffff, 14);
+        GradientDrawable outline = shape(selected ? AppTheme.SOFT : AppTheme.CARD, 14);
         if (selected) outline.setStroke(dp(1.6f), BLUE);
         slot.setBackground(outline);
     }
@@ -178,9 +178,9 @@ final class BubbleStyleHistoryView extends LinearLayout {
             if (overflow < dp(2)) return;
             float thumb = Math.max(dp(15), getWidth() * visible / (float) total);
             float left = (getWidth() - thumb) * scroll.getScrollX() / overflow;
-            paint.setColor(0xffe5e8ef);
+            paint.setColor(AppTheme.color(AppTheme.LINE));
             canvas.drawRoundRect(0, 0, getWidth(), getHeight(), dp(4), dp(4), paint);
-            paint.setColor(0xffbfc7d6);
+            paint.setColor(AppTheme.color(AppTheme.LINE));
             canvas.drawRoundRect(left, 0, left + thumb, getHeight(), dp(4), dp(4), paint);
         }
     }
@@ -189,10 +189,11 @@ final class BubbleStyleHistoryView extends LinearLayout {
         AddSymbol(Context context) {
             super(context);
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-            paint.setColor(0xff5f7289); paint.setStrokeWidth(dp(2));
+            paint.setColor(AppTheme.ink(AppTheme.MUTED)); paint.setStrokeWidth(dp(2));
             paint.setStrokeCap(Paint.Cap.ROUND);
         }
         @Override protected void onDraw(Canvas canvas) {
+            paint.setColor(AppTheme.ink(AppTheme.MUTED));
             float centerX = getWidth()/2f, centerY = getHeight()/2f;
             float radius = dp(11);
             canvas.drawLine(centerX-radius, centerY, centerX+radius, centerY, paint);
@@ -200,7 +201,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
         }
     }
     private GradientDrawable shape(int color, int radius) {
-        GradientDrawable result = new GradientDrawable(); result.setColor(color);
+        GradientDrawable result = new AppTheme.Shape(); result.setColor(color);
         result.setCornerRadius(dp(radius)); return result;
     }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }

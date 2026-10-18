@@ -127,21 +127,21 @@ final class DictionaryOperation {
     }
     private int dp(float value) { return Math.round(value * context.getResources().getDisplayMetrics().density); }
     private TextView label(Context themed, String text, int size, int color) {
-        TextView result = new TextView(themed); result.setText(text); result.setTextSize(size); result.setTextColor(color); result.setIncludeFontPadding(false); return result;
+        TextView result = new TextView(themed); result.setText(text); result.setTextSize(size); AppTheme.text(result, color); result.setIncludeFontPadding(false); return result;
     }
     private void show(Activity activity) {
         if (dialog != null && dialog.isShowing()) return;
         if (activity == null && !Settings.canDrawOverlays(context)) return;
-        Context themed = activity == null ? new ContextThemeWrapper(context, R.style.Theme_Jpdict_Dialog) : activity;
+        Context themed = AppTheme.dialogContext(activity == null ? context : activity);
         panel = new LinearLayout(themed); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(20), dp(16), dp(20), dp(16));
-        TextView heading = label(themed, "词库操作", 18, 0xff171819); heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        TextView heading = label(themed, "词库操作", 18, AppTheme.INK); heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         LinearLayout.LayoutParams headingLayout = new LinearLayout.LayoutParams(-1, -2); headingLayout.bottomMargin = dp(8); panel.addView(heading, headingLayout);
-        detail = label(themed, message, 14, 0xff73777a); panel.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+        detail = label(themed, message, 14, AppTheme.MUTED); panel.addView(detail, new LinearLayout.LayoutParams(-1, -2));
         progress = new ProgressBar(themed, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000);
         LinearLayout.LayoutParams progressLayout = new LinearLayout.LayoutParams(-1, dp(6)); progressLayout.topMargin = dp(8); panel.addView(progress, progressLayout);
-        button = label(themed, "后台加载", 14, 0xff006bff); button.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); button.setMinHeight(dp(44));
+        button = label(themed, "后台加载", 14, AppTheme.BLUE); button.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); button.setMinHeight(dp(44));
         button.setOnClickListener(v -> { if (complete) dismiss(); else minimize(); }); panel.addView(button, new LinearLayout.LayoutParams(-1, dp(44)));
-        dialog = new AlertDialog.Builder(themed).create(); dialog.setView(panel, 0, 0, 0, 0); dialog.setCancelable(false);
+        dialog = new AppTheme.DialogBuilder(themed).create(); dialog.setView(panel, 0, 0, 0, 0); dialog.setCancelable(false);
         if (activity == null) dialog.getWindow().setType(Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE);
         try {
             dialog.show(); dialog.getWindow().setLayout(Math.min(dp(360), context.getResources().getDisplayMetrics().widthPixels - dp(32)), -2);
@@ -238,17 +238,17 @@ final class DictionaryOperation {
     private final class Bubble extends View {
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         float downX, downY; int startX, startY; boolean dragged;
-        Bubble(Context context) { super(context); setLayerType(View.LAYER_TYPE_SOFTWARE, null); }
+        Bubble(Context context) { super(context); AppTheme.observe(this, this::invalidate); setLayerType(View.LAYER_TYPE_SOFTWARE, null); }
         @Override protected void onDraw(Canvas canvas) {
             float center = getWidth() / 2f, radius = center - dp(4);
-            paint.setStyle(Paint.Style.FILL); paint.setShader(new LinearGradient(0, 0, getWidth(), getHeight(), 0xffe8ddff, 0xffc5ebff, Shader.TileMode.CLAMP));
+            paint.setStyle(Paint.Style.FILL); paint.setShader(new LinearGradient(0, 0, getWidth(), getHeight(), AppTheme.color(AppTheme.SOFT), AppTheme.color(AppTheme.PALE), Shader.TileMode.CLAMP));
             paint.setShadowLayer(dp(3), 0, dp(1), 0x22006bff); canvas.drawCircle(center, center, radius, paint); paint.clearShadowLayer(); paint.setShader(null);
             if (!complete) {
-                paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(dp(2)); paint.setColor(0xff006bff);
+                paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(dp(2)); paint.setColor(AppTheme.ink(AppTheme.BLUE));
                 float angle = total > 0 ? Math.max(12, Math.min(360, 360f * done / total)) : 90;
                 canvas.drawArc(dp(5), dp(5), getWidth() - dp(5), getHeight() - dp(5), -90, angle, false, paint);
             }
-            paint.setStyle(Paint.Style.FILL); paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD)); paint.setTextSize(dp(12)); paint.setTextAlign(Paint.Align.CENTER); paint.setColor(failure == null ? 0xff006bff : 0xffb42318);
+            paint.setStyle(Paint.Style.FILL); paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD)); paint.setTextSize(dp(12)); paint.setTextAlign(Paint.Align.CENTER); paint.setColor(AppTheme.ink(failure == null ? AppTheme.BLUE : AppTheme.RED));
             canvas.drawText(requiresActivity() ? "待选择" : complete ? (failure == null ? "完成" : "失败") : "加载", center, center - (paint.ascent() + paint.descent()) / 2, paint);
         }
         @Override public boolean onTouchEvent(MotionEvent event) {

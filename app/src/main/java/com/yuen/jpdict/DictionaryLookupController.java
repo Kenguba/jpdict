@@ -74,7 +74,7 @@ final class DictionaryLookupController {
     private int dp(int n) { return Math.round(n * context.getResources().getDisplayMetrics().density); }
     private TextView label(String text) {
         TextView label = new TextView(context); label.setText(text); label.setTextSize(15);
-        label.setTextColor(0xff73777a); label.setPadding(dp(14), dp(12), dp(14), dp(12)); return label;
+        AppTheme.text(label, AppTheme.MUTED); label.setPadding(dp(14), dp(12), dp(14), dp(12)); return label;
     }
     private void cache(Section section, DictionaryHtmlDocument document) {
         // The budget controls retained disk pages, never entry acceptance. A page
@@ -109,8 +109,8 @@ final class DictionaryLookupController {
     }
     void showList(View anchor, Runnable manage) {
         LinearLayout menu = new LinearLayout(context); menu.setOrientation(LinearLayout.VERTICAL);
-        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
-        background.setColor(0xffffffff); background.setCornerRadius(dp(16)); menu.setBackground(background);
+        android.graphics.drawable.GradientDrawable background = new AppTheme.Shape();
+        background.setColor(AppTheme.CARD); background.setCornerRadius(dp(16)); menu.setBackground(background);
         ScrollView scroll = new ScrollView(context); scroll.setVerticalScrollBarEnabled(false); scroll.addView(menu);
         PopupWindow popup = new PopupWindow(scroll, dp(280), dp(320), true);
         if (listPopup != null) listPopup.dismiss(); listPopup = popup;
@@ -123,7 +123,7 @@ final class DictionaryLookupController {
                 if (error == null && !closed) { popup.dismiss(); navigation.lookup(word); }
             }));
         }
-        TextView entry = label("管理全部词库"); entry.setTextColor(0xff006bff); menu.addView(entry);
+        TextView entry = label("管理全部词库"); AppTheme.text(entry, AppTheme.BLUE); menu.addView(entry);
         entry.setOnClickListener(v -> { popup.dismiss(); manage.run(); });
         popup.showAsDropDown(anchor, -dp(180), 0);
     }
@@ -138,13 +138,14 @@ final class DictionaryLookupController {
         Section(DictionaryRepository.Dictionary dictionary) {
             this.dictionary = dictionary;
             header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(14), 0, dp(8), 0);
-            header.setBackgroundColor(0xfff4f5f6);
-            TextView title = label(dictionary.name); title.setPadding(0, dp(9), 0, dp(9)); title.setTextColor(0xff34373b);
+            AppTheme.background(header, AppTheme.SOFT);
+            TextView title = label(dictionary.name); title.setPadding(0, dp(9), 0, dp(9)); AppTheme.text(title, AppTheme.INK);
             header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
             arrow.setImageResource(R.drawable.ic_lookup_arrow_up); arrow.setRotation(180);
+            AppTheme.tint(arrow, AppTheme.MUTED);
             arrow.setPadding(dp(12), dp(12), dp(12), dp(12));
             header.addView(arrow, new LinearLayout.LayoutParams(dp(40), dp(40)));
-            header.setMinimumHeight(dp(40)); body.setOrientation(LinearLayout.VERTICAL); body.setBackgroundColor(0xffffffff); body.setVisibility(View.GONE);
+            header.setMinimumHeight(dp(40)); body.setOrientation(LinearLayout.VERTICAL); AppTheme.background(body, AppTheme.CARD); body.setVisibility(View.GONE);
             wantedExpanded = dictionary.lookupExpanded;
             // The saved preference is intent, not a loaded body. All headers
             // stay collapsed until their definition is available.
