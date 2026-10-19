@@ -4,8 +4,13 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.PixelFormat;
 import android.os.SystemClock;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
@@ -35,6 +40,7 @@ final class DrawerStyleValidation {
         if ("com.yuen.jpdict".equals(context.getPackageName())) throw new AssertionError("Use disposable QA applicationId");
         DrawerStyleValidation validation = new DrawerStyleValidation();
         validation.voiceTheme(test, context);
+        validation.fireflyTheme(test, context);
         validation.preferences(test, context);
         validation.search(test, context);
         validation.page(test, context);
@@ -65,6 +71,34 @@ final class DrawerStyleValidation {
             });
         }
         onMain(test, () -> { voice.dispose(); AppTheme.mode(0); });
+    }
+
+    private void fireflyTheme(Instrumentation test, Context context) throws Exception {
+        DrawerWaterfallPreview scene = new DrawerWaterfallPreview(context, new View(context));
+        int[] green = new int[2];
+        for (int mode = 0; mode < 2; mode++) {
+            int theme = mode;
+            onMain(test, () -> AppTheme.mode(theme)); test.waitForIdleSync();
+            onMain(test, () -> {
+                Bitmap frame = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888);
+                scene.draw(new Canvas(frame), 200, 200);
+                green[theme] = android.graphics.Color.green(frame.getPixel(136, 85));
+                frame.recycle();
+            });
+        }
+        check(green[1] > green[0], "Existing firefly point glows brighter in dark mode");
+        Bitmap still = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888);
+        Bitmap animated = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888);
+        onMain(test, () -> {
+            scene.draw(new Canvas(still), 200, 200);
+            field(DrawerWaterfallPreview.class, "started").setLong(scene, SystemClock.uptimeMillis() - 8000);
+            field(DrawerWaterfallPreview.class, "running").setBoolean(scene, true);
+            scene.draw(new Canvas(animated), 200, 200);
+            field(DrawerWaterfallPreview.class, "running").setBoolean(scene, false);
+        });
+        check(!still.sameAs(animated), "Sunlight, rain, and fireflies change with animation time");
+        still.recycle(); animated.recycle();
+        onMain(test, () -> AppTheme.mode(0));
     }
 
     private void preferences(Instrumentation test, Context context) throws Exception {
@@ -264,6 +298,23 @@ final class DrawerStyleValidation {
         try {
             test.waitForIdleSync(); SystemClock.sleep(100);
             screenshot(test, context, "drawer-settings");
+            onMain(test, () -> {
+                View decor = activity.getWindow().getDecorView();
+                check(textView(decor, "已收起 · 轻触展开") == null
+                                && textView(decor, "已展开 · 轻触收起") == null,
+                        "Preview header omits the extra state label");
+                TextView hint = (TextView)textView(decor, "↔ 左右滑动预览 · 长按滑块保存比例");
+                check(hint != null && hint.getText() instanceof Spanned, "Preview hint has styled text");
+                Spanned styled = (Spanned)hint.getText();
+                RelativeSizeSpan[] sizes = styled.getSpans(0, 1, RelativeSizeSpan.class);
+                ForegroundColorSpan[] colors = styled.getSpans(0, 1, ForegroundColorSpan.class);
+                check(sizes.length == 1 && Math.abs(sizes[0].getSizeChange() - 19f / 12) < .01f
+                                && colors.length == 1 && colors[0].getForegroundColor() == 0xfff9b748,
+                        "Hint arrow matches the larger gold HTML treatment");
+            });
+            onMain(test, () -> AppTheme.mode(1)); test.waitForIdleSync(); SystemClock.sleep(100);
+            screenshot(test, context, "drawer-settings-dark");
+            onMain(test, () -> AppTheme.mode(0)); test.waitForIdleSync();
             View slider = (View)field(DrawerStyleSettingsActivity.class, "slider").get(activity);
             DrawerPreviewView preview = (DrawerPreviewView)field(DrawerStyleSettingsActivity.class, "preview").get(activity);
             float density = context.getResources().getDisplayMetrics().density;
