@@ -7,6 +7,10 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Bundle;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -26,7 +30,6 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
     private DrawerPreviewView preview;
     private DrawerWaterfallPreview waterfall;
     private RatioSlider slider;
-    private TextView status;
     private final LinearLayout[] cards = new LinearLayout[3];
     private final TextView[] checks = new TextView[3];
     private final LinearLayout[] tagRows = new LinearLayout[3];
@@ -43,7 +46,6 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
         LinearLayout content = column(); content.setPadding(dp(12), dp(8), dp(12), dp(16));
         LinearLayout heading = new LinearLayout(this); heading.setGravity(Gravity.CENTER_VERTICAL);
         heading.addView(text("动态交互预览", 14, INK, true), new LinearLayout.LayoutParams(0, -2, 1));
-        status = text("已展开 · 轻触收起", 12, MUTED, false); heading.addView(status);
         content.addView(heading, margins(-1, -2, 0, 0, 0, 12));
         FrameLayout stage = new FrameLayout(this);
         stage.setBackground(shape(AppTheme.STAGE, 24, AppTheme.LINE));
@@ -54,16 +56,13 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
         slider = new RatioSlider();
         FrameLayout.LayoutParams sliderLayout = new FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM);
         stage.addView(slider, sliderLayout);
-        preview.setProgressListener(progress -> {
-            slider.invalidate();
-            int percent = Math.round(DrawerMotionController.clamp(progress, 0, 1) * 100);
-            String label = percent == 0 ? "已收起 · 轻触展开" : percent == 100
-                    ? "已展开 · 轻触收起" : "预览 " + percent + "%";
-            if (!label.contentEquals(status.getText())) status.setText(label);
-        });
+        preview.setProgressListener(progress -> slider.invalidate());
         content.addView(stage, new LinearLayout.LayoutParams(-1, dp(sh <= 740 ? 242 : narrow ? 250 : 258)));
         TextView hint = text("↔ 左右滑动预览 · 长按滑块保存比例", 12, MUTED, false);
-        hint.setGravity(Gravity.CENTER);
+        SpannableString hintText = new SpannableString(hint.getText());
+        hintText.setSpan(new RelativeSizeSpan(19f / 12), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        hintText.setSpan(new ForegroundColorSpan(0xfff9b748), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        hint.setText(hintText); hint.setGravity(Gravity.CENTER);
         content.addView(hint, margins(-1, -2, 0, 10, 0, 18));
         LinearLayout choicesHeading = new LinearLayout(this); choicesHeading.setGravity(Gravity.CENTER_VERTICAL);
         choicesHeading.addView(text("选择展开方式", 14, INK, true), new LinearLayout.LayoutParams(0, -2, 1));
