@@ -20,10 +20,11 @@ final class DrawerPreviewView extends View {
     private final DrawerMotionController motion;
     private final boolean interactive;
     private DrawerStyleSettings.Mode mode = DrawerStyleSettings.Mode.FULL_PAGE;
-    private float limit = 1, travel, scale, density;
+    private float limit = 1, ratio = 100, travel, scale, density;
     private boolean open = true, touching;
     private float touchX, touchY;
     private ProgressListener progressListener;
+    private DrawerWaterfallPreview waterfall;
     private android.graphics.Shader menuGradient;
     private android.graphics.Shader thumbnailMenu, thumbnailHome, thumbnailFrame, thumbnailLines;
 
@@ -72,28 +73,30 @@ final class DrawerPreviewView extends View {
     }
 
     void setProgressListener(ProgressListener listener) { progressListener = listener; }
+    void setWaterfallPreview(DrawerWaterfallPreview waterfall) { this.waterfall = waterfall; invalidate(); }
     float progress() { return motion.progress(); }
 
     void show(DrawerStyleSettings.Mode mode, int percent, boolean animate) {
-        this.mode = mode; limit = percent / 100f; open = limit > 0;
+        this.mode = mode; ratio = DrawerMotionController.clamp(percent, 0, 100);
+        limit = ratio == 0 ? 0 : 1; open = limit > 0;
+        travel = phone.width() * ratio / 100f;
         motion.configure(travel, limit);
         updateColors();
         if (animate && interactive) motion.closeThen(() -> motion.animate(open, null));
         else motion.snap(open ? limit : 0);
     }
-
-    void preview(float percent) { motion.snap(percent / 100f); open = percent > 0; }
     void pause() { touching = false; motion.snap(motion.progress()); }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         float inset = getResources().getConfiguration().screenWidthDp <= 365 ? 12 : 14;
-        float width = interactive ? Math.min(Math.min(w * .54f, 188 * density), (h - 48 * density) / .96f) : w - inset * density;
-        float height = interactive ? Math.min(width * .96f, h - 48 * density) : h - inset * density;
-        float top = interactive ? 40 * density : (h - height) / 2;
+        float phoneSpace = h - (interactive ? 96 : 0) * density;
+        float width = interactive ? Math.min(Math.min(w * .54f, 188 * density), phoneSpace / .96f) : w - inset * density;
+        float height = interactive ? Math.min(width * .96f, phoneSpace - 14 * density) : h - inset * density;
+        float top = interactive ? 54 * density : (h - height) / 2;
         phone.set((w - width) / 2, top, (w + width) / 2, top + height);
         float realWidth = getResources().getDisplayMetrics().widthPixels;
         scale = width / realWidth;
-        travel = DrawerMotionController.fullWidth(realWidth, density) * scale;
+        travel = phone.width() * ratio / 100f;
         updateColors();
         motion.configure(travel, limit);
         if (!motion.isRunning() && !motion.isDragging()) motion.snap(open ? limit : 0);
@@ -107,10 +110,21 @@ final class DrawerPreviewView extends View {
         paint.setStyle(Paint.Style.FILL); paint.setShader(null);
         if (!interactive) { drawThumbnail(canvas); return; }
         if (interactive) {
-            paint.setColor(AppTheme.isDark() ? 0x164f678a : 0x186e95c7);
+            float glow = touching && motion.isDragging() && limit > 0
+                    ? DrawerMotionController.clamp((motion.progress() / limit - .5f) * 12.5f, 0, 1) : 0;
+            float centerX = getWidth() / 2f, centerY = getHeight() / 2f;
             paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(density * .65f);
-            for (int i = 0; i < 3; i++) canvas.drawCircle(phone.centerX(), phone.centerY(),
-                    phone.width() * (.65f + i * .22f), paint);
+            for (int i = 0; i < 2; i++) {
+                boolean inner = i == 0;
+                boolean dark = AppTheme.isDark();
+                int baseAlpha = inner ? (dark ? 0x16 : 0x2e) : (dark ? 0x13 : 0x22);
+                int alpha = inner ? Math.round(baseAlpha + (0x48 - baseAlpha) * glow) : baseAlpha;
+                paint.setColor((alpha << 24) | (inner && glow > 0 ? 0xffd187 : 0xc8d2e4));
+                if (inner && glow > 0) paint.setShadowLayer(12 * density * glow, 0, 0, 0x44ffb947);
+                float radius = density * (inner ? 112 : 157.5f) * (inner ? 1 + .015f * glow : 1);
+                canvas.drawCircle(centerX, centerY, radius, paint);
+                paint.clearShadowLayer();
+            }
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(AppTheme.isDark() ? 0x18ffb51c : 0x18006bff);
             canvas.drawCircle(20 * density, 20 * density, 11 * density, paint);
@@ -164,6 +178,12 @@ final class DrawerPreviewView extends View {
         if (mode != DrawerStyleSettings.Mode.PUSH) canvas.translate(-reveal, 0);
         paint.setShader(thumbnailMenu);
         float radius = mode == DrawerStyleSettings.Mode.FULL_PAGE ? 0 : 6 * density;
+        if (mode == DrawerStyleSettings.Mode.OVERLAY) {
+            paint.setShader(null); paint.setColor(0x4b061426);
+            paint.setShadowLayer(9 * density, 4 * density, 0, 0x4b061426);
+            canvas.drawRoundRect(0, 0, width, height, radius, radius, paint);
+            paint.clearShadowLayer(); paint.setColor(0xffffffff); paint.setShader(thumbnailMenu);
+        }
         canvas.drawRoundRect(0, 0, width, height, radius, radius, paint);
         float left = 13 * density + (mode == DrawerStyleSettings.Mode.PUSH ? 0 : reveal);
         float available = width - left - 8 * density;
@@ -193,21 +213,24 @@ final class DrawerPreviewView extends View {
         float radius = mode == DrawerStyleSettings.Mode.PUSH ? 12 * density : 0;
         paint.setColor(AppTheme.isDark() ? 0xff122036 : 0xffced8e5);
         canvas.drawRoundRect(-3 * density, 0, phone.width(), phone.height(), radius, radius, paint);
-        paint.setColor(AppTheme.isDark() ? 0xff748096 : 0xfffcfcfc);
+        paint.setColor(AppTheme.color(AppTheme.PAPER));
         canvas.drawRoundRect(0, 0, phone.width(), phone.height(), radius, radius, paint);
+        if (interactive && waterfall != null) waterfall.draw(canvas, phone.width(), phone.height());
         if (interactive) {
-            paint.setColor(AppTheme.isDark() ? 0xffb0bed0 : 0xffb7cae4);
-            canvas.drawRoundRect(phone.width() * .22f, 20 * density, phone.width() * .60f,
-                    24 * density, 2 * density, 2 * density, paint);
-            paint.setColor(AppTheme.isDark() ? 0xff8290a6 : 0xffe4ebf6);
-            canvas.drawRoundRect(phone.width() * .22f, phone.height() * .53f, phone.width() - 12 * density,
-                    phone.height() * .79f, 9 * density, 9 * density, paint);
-        }
-        for (int i = 0; i < 3; i++) {
-            paint.setColor(AppTheme.isDark() ? 0xffb0bed0 : 0xffb7cae4);
-            float y = phone.height() * (interactive ? .34f + i * .08f : .28f + i * .2f);
-            canvas.drawRoundRect(phone.width() * .22f, y, phone.width() * (i == 1 ? .65f : .76f),
-                    y + 4 * density, 2 * density, 2 * density, paint);
+            paint.setColor(0xfff4f6fd); paint.setTextSize(9 * density);
+            paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            paint.setShadowLayer(4 * density, 0, density, 0x990b2125);
+            float baseline = phone.height() * .42f + paint.getTextSize();
+            canvas.drawText("光落林间", 10 * density, baseline, paint);
+            canvas.drawText("开启今日学习", 10 * density, baseline + paint.getTextSize() * 1.3f, paint);
+            paint.clearShadowLayer();
+        } else {
+            for (int i = 0; i < 3; i++) {
+                paint.setColor(AppTheme.isDark() ? 0xffb0bed0 : 0xffb7cae4);
+                float y = phone.height() * (.28f + i * .2f);
+                canvas.drawRoundRect(phone.width() * .22f, y, phone.width() * (i == 1 ? .65f : .76f),
+                        y + 4 * density, 2 * density, 2 * density, paint);
+            }
         }
         canvas.restore();
     }
@@ -251,14 +274,21 @@ final class DrawerPreviewView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (!interactive) return false;
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) touching = phone.contains(event.getX(), event.getY());
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            touching = phone.contains(event.getX(), event.getY());
+            if (touching && waterfall != null) waterfall.pause();
+        }
         if (!touching) return false;
         touchX = event.getX(); touchY = event.getY(); invalidate();
         boolean consumed = motion.handle(event, true, open);
         if (event.getActionMasked() == MotionEvent.ACTION_UP) {
             touching = false;
             if (!consumed) performClick();
-        } else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) touching = false;
+            if (waterfall != null) waterfall.resume();
+        } else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            touching = false;
+            if (waterfall != null) waterfall.resume();
+        }
         return true;
     }
 
@@ -271,5 +301,7 @@ final class DrawerPreviewView extends View {
         if (interactive) { info.setClassName("android.widget.Button"); info.setCheckable(true); info.setChecked(open); }
     }
 
-    @Override protected void onDetachedFromWindow() { motion.stop(); super.onDetachedFromWindow(); }
+    @Override protected void onDetachedFromWindow() {
+        motion.stop(); if (waterfall != null) waterfall.pause(); super.onDetachedFromWindow();
+    }
 }

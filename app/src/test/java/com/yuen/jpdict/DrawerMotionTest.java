@@ -43,19 +43,21 @@ public final class DrawerMotionTest {
             check(shown >= previous && shown < 1.05f, "Rubber band is monotonic and bounded"); previous = shown;
         }
         near(DrawerMotionController.rubber(-.4f, 1), -DrawerMotionController.rubber(.4f, 0), .000001f, "Both edges use the same resistance");
-        near(DrawerMotionController.fullWidth(400, 1), 356, .001f, "Original phone width");
-        near(DrawerMotionController.fullWidth(1200, 2), 760, .001f, "380dp large-screen cap");
         for (DrawerStyleSettings.Mode mode : DrawerStyleSettings.Mode.values()) {
-            for (float ratio : new float[] {0, .01f, .2f, .44f, .45f, .9f, 1}) {
-                DrawerMotionController.Geometry real = new DrawerMotionController.Geometry(), miniature = new DrawerMotionController.Geometry();
-                real.update(mode, ratio, ratio, 356, 1);
-                miniature.update(mode, ratio, ratio, 178, .5f);
-                near(real.pageX / 2, miniature.pageX, .0001f, "Preview has the same displacement");
-                near(real.menuX / 2, miniature.menuX, .0001f, "Preview has the same menu displacement");
-                near(real.pageScale, miniature.pageScale, 0, "Preview depth matches");
-                check(mode == DrawerStyleSettings.Mode.OVERLAY || real.shade == 0, "Only Overlay dims");
-                if (mode == DrawerStyleSettings.Mode.OVERLAY) near(real.pageX, 0, 0, "Overlay home stays horizontally fixed");
-                else near(real.pageX, 356 * ratio, .0001f, "No hidden 45% minimum or ignored full-page ratio");
+            for (float ratio : new float[] {0, .01f, .2f, .3f, .45f, .9f, 1}) {
+                float width = 356 * ratio, limit = ratio == 0 ? 0 : 1;
+                for (float opening : new float[] {0, .25f, .75f, 1}) {
+                    float progress = ratio == 0 ? 0 : opening;
+                    DrawerMotionController.Geometry real = new DrawerMotionController.Geometry(), miniature = new DrawerMotionController.Geometry();
+                    real.update(mode, progress, limit, width, 1);
+                    miniature.update(mode, progress, limit, width / 2, .5f);
+                    near(real.pageX / 2, miniature.pageX, .0001f, "Preview has the same displacement");
+                    near(real.menuX / 2, miniature.menuX, .0001f, "Preview has the same menu displacement");
+                    near(real.pageScale, miniature.pageScale, 0, "Preview depth matches");
+                    check(mode == DrawerStyleSettings.Mode.OVERLAY || real.shade == 0, "Only Overlay dims");
+                    if (mode == DrawerStyleSettings.Mode.OVERLAY) near(real.pageX, 0, 0, "Overlay home stays horizontally fixed");
+                    else near(real.pageX, width * progress, .0001f, "Page travel follows physical drawer width and opening progress");
+                }
             }
         }
         System.out.println("Drawer motion: " + checks + " trajectory and geometry checks passed");
