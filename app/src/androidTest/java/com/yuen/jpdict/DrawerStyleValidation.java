@@ -320,6 +320,14 @@ final class DrawerStyleValidation {
             float density = context.getResources().getDisplayMetrics().density;
             float left = 28 * density, right = slider.getWidth() - 76 * density;
             check(Math.round(preview.progress() * 100) == 0, "Saved width starts with a closed, independent preview");
+            onMain(test, () -> {
+                long now = SystemClock.uptimeMillis();
+                touch(preview, now, MotionEvent.ACTION_DOWN, 20 * density);
+                touch(preview, now + 16, MotionEvent.ACTION_MOVE, 60 * density);
+                check(preview.progress() > 0, "First-entry drag works from the stage outside the phone frame");
+                touch(preview, now + 32, MotionEvent.ACTION_CANCEL, 60 * density);
+                preview.seek(0);
+            });
             int stageHeight = context.getResources().getConfiguration().screenHeightDp <= 740 ? 242
                     : context.getResources().getConfiguration().screenWidthDp <= 365 ? 250 : 258;
             check(slider.getParent() != null
@@ -327,7 +335,7 @@ final class DrawerStyleValidation {
                     "Preview stage uses the matching responsive HTML height");
             long down = SystemClock.uptimeMillis();
             onMain(test, () -> { touch(slider, down, MotionEvent.ACTION_DOWN, left + 30 * density);
-                touch(slider, down + 1, MotionEvent.ACTION_MOVE, (left + right) / 2);
+                touch(slider, down + 1, MotionEvent.ACTION_MOVE, left + (right - left) * .4f);
                 touch(slider, down + 2, MotionEvent.ACTION_UP, (left + right) / 2); });
             check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 100
                     && Math.round(preview.progress() * 100) == 50, "Rail drag previews without changing the saved width");
@@ -338,10 +346,10 @@ final class DrawerStyleValidation {
             check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 100
                     && Math.round(preview.progress() * 100) == 50, "A quick thumb tap neither saves nor changes the preview");
             onMain(test, () -> { long now = SystemClock.uptimeMillis(); touch(slider, now, MotionEvent.ACTION_DOWN, right);
-                touch(slider, now + 1, MotionEvent.ACTION_MOVE, (left + right) / 2);
-                touch(slider, now + 2, MotionEvent.ACTION_UP, (left + right) / 2); });
+                touch(slider, now + 1, MotionEvent.ACTION_MOVE, left + (right - left) * .75f);
+                touch(slider, now + 2, MotionEvent.ACTION_UP, left + (right - left) * .7f); });
             check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 100
-                    && Math.round(preview.progress() * 100) == 50, "Moving before the hold threshold cancels thumb adjustment");
+                    && Math.round(preview.progress() * 100) == 70, "Quick thumb drag previews its final UP position without saving width");
             long hold = SystemClock.uptimeMillis();
             onMain(test, () -> touch(slider, hold, MotionEvent.ACTION_DOWN, right));
             SystemClock.sleep(750);
@@ -366,6 +374,14 @@ final class DrawerStyleValidation {
                 touch(slider, SystemClock.uptimeMillis() + 1, MotionEvent.ACTION_UP, left); });
             check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50
                     && Math.round(preview.progress() * 100) == 0, "Track tap previews closed without saving width");
+            onMain(test, () -> {
+                long now = SystemClock.uptimeMillis();
+                touch(preview, now, MotionEvent.ACTION_DOWN, 20 * density);
+                touch(preview, now + 16, MotionEvent.ACTION_MOVE, 60 * density);
+                check(preview.progress() > 0, "Closing with the rail keeps the saved width available to drag open again");
+                touch(preview, now + 32, MotionEvent.ACTION_CANCEL, 60 * density);
+                preview.seek(0);
+            });
             if (android.os.Build.VERSION.SDK_INT >= 24) {
                 onMain(test, () -> {
                     android.os.Bundle progress = new android.os.Bundle();
