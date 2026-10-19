@@ -36,8 +36,8 @@ final class BubbleSliderStyle {
     }
 
     private static LayerDrawable standardTrack(SeekBar slider) {
-        GradientDrawable remaining = solidTrack(slider, AppTheme.LINE);
-        ClipDrawable filled = new ClipDrawable(solidTrack(slider, AppTheme.BLUE),
+        GradientDrawable remaining = solidTrack(slider, 0xffe5e5ea);
+        ClipDrawable filled = new ClipDrawable(solidTrack(slider, 0xff007aff),
                 Gravity.START, ClipDrawable.HORIZONTAL);
         LayerDrawable layers = new LayerDrawable(new Drawable[]{remaining, filled});
         layers.setId(0, android.R.id.background);
@@ -109,7 +109,7 @@ final class BubbleSliderStyle {
             face.setAlpha(alpha);
             face.setStyle(Paint.Style.FILL);
             canvas.drawCircle(x, y, 14 * density, face);
-            face.setColor(AppTheme.color(AppTheme.LINE));
+            face.setColor(AppTheme.color(0xffededed));
             face.setAlpha(alpha);
             face.setStyle(Paint.Style.STROKE);
             face.setStrokeWidth(.5f * density);
@@ -165,7 +165,7 @@ final class BubbleSliderStyle {
             face.setAlpha(alpha);
             canvas.drawRoundRect(bounds.left, bounds.top, bounds.right, bounds.bottom,
                     radius, radius, face);
-            face.setColor(AppTheme.color(AppTheme.LINE));
+            face.setColor(AppTheme.color(0xffe3e7ec));
             face.setAlpha(alpha);
             face.setStyle(Paint.Style.STROKE);
             face.setStrokeWidth(Math.max(.5f, density * .55f));
@@ -173,7 +173,7 @@ final class BubbleSliderStyle {
                     bounds.top + face.getStrokeWidth() / 2,
                     bounds.right - face.getStrokeWidth() / 2,
                     bounds.bottom - face.getStrokeWidth() / 2, radius, radius, face);
-            label.setColor(AppTheme.ink(AppTheme.MUTED)); label.setAlpha(alpha);
+            label.setColor(AppTheme.ink(0xff53657a)); label.setAlpha(alpha);
             Paint.FontMetrics metrics = label.getFontMetrics();
             canvas.drawText(value, bounds.exactCenterX(),
                     bounds.exactCenterY() - (metrics.ascent + metrics.descent) / 2, label);

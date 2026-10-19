@@ -39,8 +39,8 @@ public final class SearchDrawerView extends LinearLayout {
         void onUnavailable(String feature);
     }
 
-    private static final int INK = AppTheme.INK;
-    private static final int MUTED = AppTheme.MUTED;
+    private static final int INK = 0xff18191b;
+    private static final int MUTED = 0xff757a7f;
     private static final int SURFACE = AppTheme.PAGE;
     private final Callback callback;
     private final LinearLayout history;
@@ -75,7 +75,7 @@ public final class SearchDrawerView extends LinearLayout {
         TextView avatar = text("JP", 17, AppTheme.CARD);
         avatar.setGravity(Gravity.CENTER);
         avatar.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        avatar.setBackground(shape(AppTheme.BLUE, 24));
+        avatar.setBackground(shape(0xff008d80, 24));
         avatar.setContentDescription("设置");
         avatar.setOnClickListener(v -> callback.onSettings());
         account.addView(avatar, new LayoutParams(dp(44), dp(44)));
@@ -120,7 +120,7 @@ public final class SearchDrawerView extends LinearLayout {
 
         banner = horizontal();
         banner.setPadding(dp(15), dp(13), dp(12), dp(13));
-        banner.setBackground(ripple(AppTheme.BLUE, 30));
+        banner.setBackground(ripple(0xff1748e9, 30));
         banner.setContentDescription("悬浮按钮设置，调整大小、样式和透明度");
         banner.addView(icon(SearchIconView.Kind.LIGHTNING, AppTheme.CARD),
                 new LayoutParams(dp(25), dp(25)));
@@ -132,7 +132,7 @@ public final class SearchDrawerView extends LinearLayout {
         backendName.setSingleLine();
         backendName.setEllipsize(android.text.TextUtils.TruncateAt.END);
         bannerText.addView(backendName);
-        backendStatus = text("", 11, AppTheme.CARD);
+        backendStatus = text("", 11, 0xffdce5ff);
         backendStatus.setSingleLine();
         backendStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
         backendStatus.setPadding(0, dp(2), 0, 0);
@@ -356,7 +356,7 @@ public final class SearchDrawerView extends LinearLayout {
             history.addView(empty);
         }
         if (filtered) {
-            TextView add = text("添加或管理本地文件", 13, AppTheme.BLUE);
+            TextView add = text("添加或管理本地文件", 13, 0xff008fd1);
             add.setPadding(dp(2), dp(16), dp(2), dp(16));
             add.setOnClickListener(v -> callback.onFiles(null));
             history.addView(add);

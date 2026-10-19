@@ -41,6 +41,7 @@ final class DrawerStyleValidation {
         DrawerStyleValidation validation = new DrawerStyleValidation();
         validation.voiceTheme(test, context);
         validation.fireflyTheme(test, context);
+        validation.dividerThemes(test, context);
         validation.preferences(test, context);
         validation.search(test, context);
         validation.page(test, context);
@@ -59,7 +60,8 @@ final class DrawerStyleValidation {
         for (int mode : new int[]{0, 1}) {
             onMain(test, () -> AppTheme.mode(mode)); test.waitForIdleSync();
             onMain(test, () -> {
-                int foreground = AppTheme.ink(AppTheme.PAGE), background = AppTheme.color(AppTheme.INK);
+                int foreground = AppTheme.isDark() ? AppTheme.color(AppTheme.PAGE) : android.graphics.Color.WHITE;
+                int background = AppTheme.color(0xff151416);
                 check(((SearchIconView)action.getChildAt(0)).getColor() == foreground
                                 && contrast(foreground, background) >= 4.5,
                         "Voice button icon stays readable in theme " + mode);
@@ -75,30 +77,144 @@ final class DrawerStyleValidation {
 
     private void fireflyTheme(Instrumentation test, Context context) throws Exception {
         DrawerWaterfallPreview scene = new DrawerWaterfallPreview(context, new View(context));
-        int[] green = new int[2];
-        for (int mode = 0; mode < 2; mode++) {
-            int theme = mode;
-            onMain(test, () -> AppTheme.mode(theme)); test.waitForIdleSync();
-            onMain(test, () -> {
-                Bitmap frame = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888);
-                scene.draw(new Canvas(frame), 200, 200);
-                green[theme] = android.graphics.Color.green(frame.getPixel(136, 85));
-                frame.recycle();
-            });
-        }
-        check(green[1] > green[0], "Existing firefly point glows brighter in dark mode");
-        Bitmap still = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888);
-        Bitmap animated = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888);
+        Object weather = field(DrawerWaterfallPreview.class, "weather").get(scene);
+        field(weather.getClass(), "next").setLong(weather, Long.MAX_VALUE);
+        Object noise = field(DrawerWaterfallPreview.class, "NOISE").get(null);
+        java.lang.reflect.Method fast = noise.getClass().getDeclaredMethod("fast", double.class, double.class);
+        fast.setAccessible(true);
+        // Fixtures evaluated from the supplied HTML's Mulberry32 and Float32 noise table.
+        for (double[] sample : new double[][]{{0, 0, .724674642086029}, {2.7, 4.2, .7040954619617463},
+                {-1.2, -300.3, .30034633593369575}, {800.3, 999.8, .8426149335594052}})
+            check(Math.abs(((Number)fast.invoke(noise, sample[0], sample[1])).doubleValue() - sample[2]) < .000001,
+                    "Native noise matches the HTML fixture, including wrapped negative coordinates");
+        float[][] flies = (float[][])field(DrawerWaterfallPreview.class, "flies").get(scene);
+        check(Math.abs(flies[0][0] + 144.14030665252358) < .0001
+                        && Math.abs(flies[0][1] + 373.19211871922016) < .0001,
+                "Native firefly initialization retains the HTML seed and position");
+        java.util.Calendar noon = java.util.Calendar.getInstance();
+        noon.set(2026, 9, 19, 12, 0, 0); noon.set(java.util.Calendar.MILLISECOND, 0);
+        long day = noon.getTimeInMillis(), night = day - 12 * 3600_000;
+        Bitmap first = Bitmap.createBitmap(300, 300, Bitmap.Config.ARGB_8888);
+        Bitmap second = Bitmap.createBitmap(300, 300, Bitmap.Config.ARGB_8888);
         onMain(test, () -> {
-            scene.draw(new Canvas(still), 200, 200);
-            field(DrawerWaterfallPreview.class, "started").setLong(scene, SystemClock.uptimeMillis() - 8000);
-            field(DrawerWaterfallPreview.class, "running").setBoolean(scene, true);
-            scene.draw(new Canvas(animated), 200, 200);
-            field(DrawerWaterfallPreview.class, "running").setBoolean(scene, false);
+            scene.draw(new Canvas(first), 300, 300, day);
+            AppTheme.mode(1);
+            scene.draw(new Canvas(second), 300, 300, day);
+            check(first.sameAs(second), "Scene time is independent of the app theme");
+            check(android.graphics.Color.alpha(second.getPixel(150, 40)) == 255, "Noon filtering preserves the scene alpha");
+            scene.draw(new Canvas(second), 300, 300, night);
+            check(android.graphics.Color.green(first.getPixel(150, 40)) > android.graphics.Color.green(second.getPixel(150, 40)),
+                    "The same forest follows the phone's local day and night");
+            Bitmap boundary = Bitmap.createBitmap(300, 300, Bitmap.Config.ARGB_8888);
+            Canvas shifted = new Canvas(boundary); shifted.drawColor(0xff40516b); shifted.translate(50, 50);
+            scene.draw(shifted, 200, 200, night);
+            check(boundary.getPixel(0, 0) == 0xff40516b && boundary.getPixel(299, 299) == 0xff40516b,
+                    "Scene tint and water stay inside the moving page and preserve the drawer underneath");
+            boundary.recycle();
+            field(DrawerWaterfallPreview.class, "elapsed").setLong(scene, 8000);
+            scene.draw(new Canvas(second), 300, 300, day);
+            check(!first.sameAs(second), "HTML lake and fireflies move with their retained animation time");
+            scene.resume();
         });
-        check(!still.sameAs(animated), "Sunlight, rain, and fireflies change with animation time");
-        still.recycle(); animated.recycle();
-        onMain(test, () -> AppTheme.mode(0));
+        SystemClock.sleep(60);
+        onMain(test, () -> {
+            scene.pause();
+            long elapsed = field(DrawerWaterfallPreview.class, "elapsed").getLong(scene);
+            check(elapsed >= 8060, "Pausing retains elapsed scene time");
+            scene.draw(new Canvas(first), 300, 300, day);
+            scene.draw(new Canvas(second), 300, 300, day);
+            check(first.sameAs(second), "Paused frames remain stable");
+            for (int hour : new int[]{0, 3, 5, 7, 10, 12, 15, 18, 20, 23}) {
+                noon.set(java.util.Calendar.HOUR_OF_DAY, hour);
+                scene.draw(new Canvas(second), 300, 300, noon.getTimeInMillis());
+            }
+            noon.set(java.util.Calendar.HOUR_OF_DAY, 17); noon.set(java.util.Calendar.MINUTE, 32);
+            scene.draw(new Canvas(second), 300, 300, noon.getTimeInMillis());
+            int dusk = second.getPixel(50, 170);
+            check(android.graphics.Color.green(dusk) > android.graphics.Color.red(dusk) * 1.15
+                            && android.graphics.Color.green(dusk) > android.graphics.Color.blue(dusk) * 1.1,
+                    "Dusk preserves the forest green instead of a grey-purple matte");
+            saveScene(context, second, "nature-dusk");
+            scene.draw(new Canvas(second), 300, 300, night);
+            saveScene(context, second, "nature-night");
+            field(weather.getClass(), "from").setFloat(weather, 1);
+            field(weather.getClass(), "to").setFloat(weather, 1);
+            scene.draw(new Canvas(second), 300, 300, day);
+            saveScene(context, second, "nature-rain");
+            check(field(weather.getClass(), "rain").getFloat(weather) == 1, "Rain renders at its stable target intensity");
+            field(weather.getClass(), "from").setFloat(weather, 0);
+            field(weather.getClass(), "to").setFloat(weather, 0);
+            long start = System.nanoTime();
+            for (int frame = 0; frame < 20; frame++) {
+                field(DrawerWaterfallPreview.class, "elapsed").setLong(scene, 9000 + frame * 34);
+                scene.draw(new Canvas(second), 300, 300, day);
+            }
+            android.util.Log.i("JPDictValidation", "Nature frame mean ms: " + (System.nanoTime() - start) / 20_000_000d);
+            saveScene(context, second, "nature-day");
+            java.util.TimeZone zone = java.util.TimeZone.getDefault();
+            try {
+                java.util.Calendar utc = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"));
+                utc.set(2026, 9, 19, 0, 0, 0);
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("GMT"));
+                scene.draw(new Canvas(first), 300, 300, utc.getTimeInMillis());
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("GMT+12"));
+                scene.draw(new Canvas(second), 300, 300, utc.getTimeInMillis() + 1000);
+                check(android.graphics.Color.green(first.getPixel(150, 40)) < android.graphics.Color.green(second.getPixel(150, 40)),
+                        "A phone time-zone change recalibrates the scene from midnight to noon");
+            } finally { java.util.TimeZone.setDefault(zone); }
+            field(weather.getClass(), "next").setLong(weather, 0);
+            scene.draw(new Canvas(first), 300, 300, day);
+            long next = field(weather.getClass(), "next").getLong(weather);
+            float target = field(weather.getClass(), "to").getFloat(weather);
+            check(next - day >= 300_000 && next - day <= 900_000, "Local random weather holds for five to fifteen minutes");
+            check(target == 0 || target >= .35f && target <= 1, "Rain targets stay within the supported intensity range");
+            scene.draw(new Canvas(second), 300, 300, day + 30_000);
+            check(field(weather.getClass(), "next").getLong(weather) == next
+                            && field(weather.getClass(), "rain").getFloat(weather) == target,
+                    "Weather reaches its target without rolling again during the stable period");
+            scene.draw(new Canvas(second), 300, 300, day - 1000);
+            check(field(weather.getClass(), "changed").getLong(weather) == day - 1000,
+                    "Moving the phone clock backwards restarts the weather transition safely");
+            AppTheme.mode(0);
+        });
+        first.recycle(); second.recycle();
+    }
+
+    private static void saveScene(Context context, Bitmap image, String name) throws java.io.IOException {
+        java.io.File dir = context.getExternalFilesDir("drawer-validation");
+        if (dir == null || !dir.isDirectory() && !dir.mkdirs()) throw new java.io.IOException("QA scene directory");
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(dir, name + ".png"))) {
+            image.compress(Bitmap.CompressFormat.PNG, 100, out);
+        }
+    }
+
+    private void dividerThemes(Instrumentation test, Context context) throws Exception {
+        Activity page = test.startActivitySync(new Intent(context, DictionaryActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            onMain(test, () -> {
+                FloatingBubbleSettingsView bubble = new FloatingBubbleSettingsView(context, FloatingBubbleAppearance.defaults(), c -> {}, () -> {});
+                View[] lines = {divider(page.getWindow().getDecorView()), divider(bubble.stickyHeader())};
+                check(lines[0] != null && lines[1] != null, "Both settings pages expose their existing full-width divider");
+                for (int mode : new int[]{0, 1, 0}) {
+                    AppTheme.mode(mode);
+                    for (View line : lines) {
+                        check(line.getVisibility() == (mode == 1 ? View.INVISIBLE : View.VISIBLE), "Only dark mode hides the divider");
+                        check(line.getLayoutParams().height == Math.round(context.getResources().getDisplayMetrics().density), "Hiding preserves divider spacing");
+                    }
+                }
+            });
+        } finally { onMain(test, page::finish); }
+    }
+    private static View divider(View view) {
+        if (view.getBackground() instanceof android.graphics.drawable.ColorDrawable
+                && ((android.graphics.drawable.ColorDrawable)view.getBackground()).getColor() == AppTheme.color(0x66e6e8eb)) return view;
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup)view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = divider(group.getChildAt(i)); if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     private void preferences(Instrumentation test, Context context) throws Exception {
@@ -328,6 +444,48 @@ final class DrawerStyleValidation {
                 touch(preview, now + 32, MotionEvent.ACTION_CANCEL, 60 * density);
                 preview.seek(0);
             });
+            onMain(test, () -> {
+                DrawerMotionController motion = (DrawerMotionController)field(DrawerPreviewView.class, "motion").get(preview);
+                long now = SystemClock.uptimeMillis();
+                preview.seek(0);
+                touch(preview, now, MotionEvent.ACTION_DOWN, 150 * density);
+                touch(preview, now + 380, MotionEvent.ACTION_MOVE, 90 * density);
+                touch(preview, now + 400, MotionEvent.ACTION_MOVE, 70 * density);
+                check(motion.spring.velocity < 0, "Preview keeps HTML finger velocity while the closed page is clamped");
+                touch(preview, now + 401, MotionEvent.ACTION_UP, 70 * density);
+                check(motion.spring.target == 0, "A left drag on a closed preview never becomes a tap to open");
+                preview.seek(100);
+                touch(preview, now + 1000, MotionEvent.ACTION_DOWN, 150 * density);
+                touch(preview, now + 1400, MotionEvent.ACTION_MOVE, 110 * density);
+                touch(preview, now + 1401, MotionEvent.ACTION_UP, 110 * density);
+                check(motion.spring.target == 0, "HTML slow left drag closes even above the old position threshold");
+                preview.seek(30);
+                touch(preview, now + 2000, MotionEvent.ACTION_DOWN, 80 * density);
+                touch(preview, now + 2016, MotionEvent.ACTION_MOVE, 120 * density);
+                touch(preview, now + 2032, MotionEvent.ACTION_CANCEL, 120 * density);
+                check(Math.abs(motion.spring.target - .3f) < .001f, "Cancel restores the actual partial preview");
+                preview.seek(0);
+                touch(preview, now + 3000, MotionEvent.ACTION_DOWN, 40 * density);
+                touch(preview, now + 3016, MotionEvent.ACTION_MOVE, 70 * density);
+                field(DrawerPreviewView.class, "auraTime").setLong(preview, SystemClock.uptimeMillis() - 160);
+                Bitmap glow = Bitmap.createBitmap(preview.getWidth(), preview.getHeight(), Bitmap.Config.ARGB_8888);
+                Canvas glowCanvas = new Canvas(glow); glowCanvas.drawColor(AppTheme.color(AppTheme.STAGE));
+                preview.draw(glowCanvas);
+                int center = glow.getPixel(Math.round(70 * density), preview.getHeight() / 2);
+                check(android.graphics.Color.red(center) > android.graphics.Color.blue(center) && android.graphics.Color.red(center) > 180,
+                        "The tracked finger center renders the HTML warm glow in light mode");
+                java.io.File dir = context.getExternalFilesDir("drawer-validation");
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(dir, "touch-aura.png"))) {
+                    glow.compress(Bitmap.CompressFormat.PNG, 100, out);
+                }
+                glow.recycle();
+                touch(preview, now + 3032, MotionEvent.ACTION_CANCEL, 70 * density);
+                preview.seek(0);
+                android.graphics.RectF phone = (android.graphics.RectF)field(DrawerPreviewView.class, "phone").get(preview);
+                int sw = context.getResources().getConfiguration().screenWidthDp, sh = context.getResources().getConfiguration().screenHeightDp;
+                near(phone.top / density - 6, sh <= 740 ? 34 : 36, "HTML border-box top margin");
+                near(phone.width() / density + 12, sh <= 740 ? 153 : sw <= 365 ? 162 : 174, "HTML outer frame width");
+            });
             int stageHeight = context.getResources().getConfiguration().screenHeightDp <= 740 ? 242
                     : context.getResources().getConfiguration().screenWidthDp <= 365 ? 250 : 258;
             check(slider.getParent() != null
@@ -349,7 +507,7 @@ final class DrawerStyleValidation {
                 touch(slider, now + 1, MotionEvent.ACTION_MOVE, left + (right - left) * .75f);
                 touch(slider, now + 2, MotionEvent.ACTION_UP, left + (right - left) * .7f); });
             check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 100
-                    && Math.round(preview.progress() * 100) == 70, "Quick thumb drag previews its final UP position without saving width");
+                    && Math.round(preview.progress() * 100) == 50, "Moving the locked thumb cancels adjustment like HTML");
             long hold = SystemClock.uptimeMillis();
             onMain(test, () -> touch(slider, hold, MotionEvent.ACTION_DOWN, right));
             SystemClock.sleep(750);

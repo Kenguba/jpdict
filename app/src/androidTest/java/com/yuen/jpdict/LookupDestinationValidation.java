@@ -281,6 +281,20 @@ final class LookupDestinationValidation {
 
     private void serviceRoutes(Context context, LookupDestinationSettings settings) throws Exception {
         settings.select(LookupDestinationSettings.Model.THIRD_PARTY);
+        check(!"com.yuen.jpdict".equals(context.getPackageName()), "History tests require an isolated package");
+        SharedPreferences history = context.getSharedPreferences("lookup_history", Context.MODE_PRIVATE);
+        for (boolean privacy : new boolean[]{false, true}) {
+            history.edit().putString("items", "previous query").commit();
+            CaptureService route = captureService(context);
+            route.onStartCommand(lookupRequest("history check", true)
+                    .putExtra(FloatingService.EXTRA_LOOKUP_PRIVATE, privacy), 0, 1);
+            check(history.getString("items", "").equals(privacy ? "previous query" : "history check\nprevious query"),
+                    "Third-party history uses the request privacy, including stale Service privacy=" + privacy);
+            route.onStartCommand(lookupRequest("history check", true)
+                    .putExtra(FloatingService.EXTRA_LOOKUP_PRIVATE, privacy), 0, 2);
+            check(history.getString("items", "").equals(privacy ? "previous query" : "history check\nprevious query"),
+                    "Repeated third-party query preserves order without duplicates");
+        }
         String query = "日本語 ;end; a&b + café\nsecond line";
         for (boolean hosted : new boolean[] {false, true}) {
             CaptureService service = captureService(context);

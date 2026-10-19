@@ -22,7 +22,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
         void onAdd();
         void onDeleteRequested(String presetId);
     }
-    private static final int BLUE = AppTheme.BLUE;
+    private static final int BLUE = 0xff008fd1;
     private final LinearLayout slots;
     private final HorizontalScrollView scroll;
     private final Pager pager;
@@ -115,7 +115,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
         }
         View add = new AddSymbol(getContext());
         GradientDrawable dashed = shape(0x00000000, 100);
-        dashed.setStroke(dp(1.6f), AppTheme.LINE, dp(4), dp(3));
+        dashed.setStroke(dp(1.6f), 0xffabb9c9, dp(4), dp(3));
         add.setBackground(dashed);
         FrameLayout plus = new FrameLayout(getContext());
         plus.setBackground(shape(AppTheme.SOFT, 14));
@@ -129,7 +129,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
     }
     private void markSelected(View slot, boolean selected) {
         slot.setSelected(selected);
-        GradientDrawable outline = shape(selected ? AppTheme.SOFT : AppTheme.CARD, 14);
+        GradientDrawable outline = shape(selected ? 0xffdef7ff : AppTheme.CARD, 14);
         if (selected) outline.setStroke(dp(1.6f), BLUE);
         slot.setBackground(outline);
     }
@@ -178,9 +178,9 @@ final class BubbleStyleHistoryView extends LinearLayout {
             if (overflow < dp(2)) return;
             float thumb = Math.max(dp(15), getWidth() * visible / (float) total);
             float left = (getWidth() - thumb) * scroll.getScrollX() / overflow;
-            paint.setColor(AppTheme.color(AppTheme.LINE));
+            paint.setColor(AppTheme.color(0xffe5e8ef));
             canvas.drawRoundRect(0, 0, getWidth(), getHeight(), dp(4), dp(4), paint);
-            paint.setColor(AppTheme.color(AppTheme.LINE));
+            paint.setColor(AppTheme.color(0xffbfc7d6));
             canvas.drawRoundRect(left, 0, left + thumb, getHeight(), dp(4), dp(4), paint);
         }
     }
@@ -189,7 +189,7 @@ final class BubbleStyleHistoryView extends LinearLayout {
         AddSymbol(Context context) {
             super(context);
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-            paint.setColor(AppTheme.ink(AppTheme.MUTED)); paint.setStrokeWidth(dp(2));
+            paint.setColor(AppTheme.ink(0xff5f7289)); paint.setStrokeWidth(dp(2));
             paint.setStrokeCap(Paint.Cap.ROUND);
         }
         @Override protected void onDraw(Canvas canvas) {
