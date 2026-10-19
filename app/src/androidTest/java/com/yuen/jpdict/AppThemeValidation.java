@@ -53,13 +53,17 @@ final class AppThemeValidation {
             main(test, () -> {
                 View root = page.getWindow().getDecorView();
                 View title = text(root, "外观"), bubble = text(root, "悬浮按钮");
-                check(AppTheme.color(AppTheme.PAGE) == 0xfff9f9f9, "Light page background uses the midpoint tone");
+                View content = ((ViewGroup)page.findViewById(android.R.id.content)).getChildAt(0);
+                check(((android.graphics.drawable.ColorDrawable)content.getBackground()).getColor() == 0xfff2f2f2
+                                && AppTheme.color(AppTheme.PAPER) == 0xfffcfcfc,
+                        "Light settings and search retain their distinct original backgrounds");
                 int[] a = new int[2], b = new int[2]; title.getLocationOnScreen(a); bubble.getLocationOnScreen(b);
                 check(a[1] < b[1], "Theme control is above the bubble entry in App group");
                 check(!description(root, "深色模式开启时间").isShown(), "Manual light hides automatic times");
                 description(root, "深色").performClick();
                 check(AppTheme.isDark() && !page.isDestroyed(), "Manual dark applies without Activity recreation");
-                check(AppTheme.color(AppTheme.PAGE) == 0xff171e2b, "Dark page background stays on the existing palette");
+                check(AppTheme.color(AppTheme.PAGE) == 0xff171e2b && AppTheme.color(AppTheme.PAPER) == 0xff171e2b,
+                        "Both restored light backgrounds still map to the existing dark page color");
                 check(((TextView)title).getCurrentTextColor() == AppTheme.ink(AppTheme.MUTED), "Already-mounted section heading recolors");
                 check(!description(root, "深色模式开启时间").isShown(), "Manual dark hides automatic times");
             });

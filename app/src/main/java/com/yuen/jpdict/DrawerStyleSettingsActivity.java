@@ -171,7 +171,8 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
             cards[i].setContentDescription(option.title + "，" + option.english + "，" + option.description);
             thumbnails[i].show(option, settings.ratio(option), false);
         }
-        preview.show(mode, animate ? settings.ratio(mode) : 0, animate);
+        preview.show(mode, settings.ratio(mode), animate);
+        if (!animate) preview.seek(0);
         slider.refresh();
     }
 
@@ -218,7 +219,7 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
 
         private void update(float x, boolean width) {
             int next = percent(x); if (width) value = next;
-            preview.show(selected, Math.min(value, next), false);
+            preview.show(selected, value, false); preview.seek(Math.min(value, next));
         }
 
         @Override public boolean onTouchEvent(MotionEvent e) {
@@ -234,14 +235,17 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
             if (action == MotionEvent.ACTION_CANCEL || action >= MotionEvent.ACTION_POINTER_DOWN || index < 0) { cancel(); return true; }
             if (action == MotionEvent.ACTION_MOVE) {
                 float x = e.getX(index), y = e.getY(index);
-                if (thumb && e.getEventTime() - e.getDownTime() < 700) {
-                    if (Math.hypot(x - startX, y - startY) > dp(9)) startX = -1;
-                    return true;
+                if (Math.abs(x - startX) > dp(9) && Math.abs(x - startX) > Math.abs(y - startY) * 1.3f)
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                if (thumb && startX >= 0 && e.getEventTime() - e.getDownTime() < 700) {
+                    if (Math.hypot(x - startX, y - startY) <= dp(9)) return true;
+                    startX = -1;
                 }
-                if (!thumb || startX >= 0) update(x, thumb);
+                update(x, thumb && startX >= 0);
             } else if (action == MotionEvent.ACTION_UP) {
-                if (thumb) {
-                    if (e.getEventTime() - e.getDownTime() < 700 || startX < 0) { cancel(); return true; }
+                update(e.getX(index), thumb && startX >= 0);
+                if (thumb && startX >= 0) {
+                    if (e.getEventTime() - e.getDownTime() < 700) { cancel(); return true; }
                     settings.saveRatio(selected, value); thumbnails[selected.ordinal()].show(selected, value, false); refresh();
                 }
                 pointer = -1; performClick();
@@ -250,14 +254,15 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
         }
 
         void cancel() {
-            if (pointer >= 0) { value = settings.ratio(selected); preview.show(selected, original, false); }
+            if (pointer >= 0) { value = settings.ratio(selected); preview.show(selected, value, false); preview.seek(original); }
             pointer = -1;
         }
         @Override public boolean performClick() { super.performClick(); return true; }
 
         private void saveAccessible(int percent) {
             cancel(); value = Math.max(0, Math.min(100, percent)); settings.saveRatio(selected, value);
-            preview.show(selected, Math.round(preview.progress() * 100), false); thumbnails[selected.ordinal()].show(selected, value, false); refresh();
+            int progress = Math.round(preview.progress() * 100);
+            preview.show(selected, value, false); preview.seek(progress); thumbnails[selected.ordinal()].show(selected, value, false); refresh();
         }
         @Override public boolean onKeyDown(int key, KeyEvent event) {
             int step = key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_DOWN ? -1

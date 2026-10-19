@@ -85,6 +85,9 @@ final class DrawerPreviewView extends View {
         if (animate && interactive) motion.closeThen(() -> motion.animate(open, null));
         else motion.snap(open ? limit : 0);
     }
+    void seek(int percent) {
+        open = percent > 0 && limit > 0; motion.snap(ratio == 0 ? 0 : percent / ratio);
+    }
     void pause() { touching = false; motion.snap(motion.progress()); }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
@@ -276,7 +279,7 @@ final class DrawerPreviewView extends View {
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (!interactive) return false;
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-            touching = phone.contains(event.getX(), event.getY());
+            touching = true;
             if (touching && waterfall != null) waterfall.pause();
         }
         if (!touching) return false;

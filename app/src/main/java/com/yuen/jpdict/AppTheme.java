@@ -30,14 +30,14 @@ import java.util.HashMap;
 
 /** One palette and one persisted theme policy. User artwork and dictionary HTML never enter it. */
 final class AppTheme {
-    static final int PAGE = 0xfff9f9f9, CARD = Color.WHITE, SOFT = 0xfff4f5f6;
+    static final int PAGE = 0xfff2f2f2, CARD = Color.WHITE, SOFT = 0xfff4f5f6;
     static final int INK = 0xff171819, MUTED = 0xff73777a, FAINT = 0xffa4a7ad;
     static final int BLUE = 0xff006bff, PALE = 0xffe8f2ff, LINE = 0xffe1e5eb;
     static final int PURPLE = 0xff7945a1, LAVENDER = 0xfff2e9fa;
     static final int RED = 0xffcf3e54, ROSE = 0xfffff0f2, GREEN = 0xff118844;
     static final int STAGE = 0xfff0f5fc, RIM = 0xffd9e4f3, MENU = 0xffe2eaf5;
     static final int ACCENT = 0xff006bfe, ACCENT_PALE = 0xfff3f7ff;
-    static final int PAPER = 0xfff9f9f9, ACCENT_INK = 0xfffefeff;
+    static final int PAPER = 0xfffcfcfc, ACCENT_INK = 0xfffefeff;
     static final int SEARCH_PILL = 0xffe4f0ff, DICT_PILL = 0xffe7f5ed, BUBBLE_PILL = 0xffdef7ff;
     static final String BOUNDARY = "com.yuen.jpdict.THEME_BOUNDARY";
     private static final int[][] PALETTE = {
@@ -48,7 +48,7 @@ final class AppTheme {
             {ROSE, 0xff4a2c39}, {GREEN, 0xff6bd6b0}, {STAGE, 0xff253349},
             {RIM, 0xff091724}, {MENU, 0xff35455f}, {ACCENT, 0xffffb51c},
             {SEARCH_PILL, 0xff243d60}, {DICT_PILL, 0xff263f35}, {BUBBLE_PILL, 0xff243d60},
-            {ACCENT_PALE, 0xff39404a}, {ACCENT_INK, 0xff241500}
+            {ACCENT_PALE, 0xff39404a}, {PAPER, 0xff171e2b}, {ACCENT_INK, 0xff241500}
     };
     private interface Refresh { void refresh(); }
     private interface Update { void apply(View view); }
