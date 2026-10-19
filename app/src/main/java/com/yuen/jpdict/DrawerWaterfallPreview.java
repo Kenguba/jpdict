@@ -52,9 +52,9 @@ final class DrawerWaterfallPreview implements Runnable {
         float time = running ? (SystemClock.uptimeMillis() - started) / 1000f : 0;
         paint.setStyle(Paint.Style.STROKE); paint.setStrokeCap(Paint.Cap.ROUND);
         for (int i = 0; i < 5; i++) {
-            float x = width * (.42f + i * .04f);
-            float phase = (time * .22f + i * .19f) % 1;
-            float top = height * (.39f + phase * .08f), bottom = height * .68f;
+            float x = width * (.42f + i * .04f) + (float)Math.sin(time * 1.4f + i) * 2 * density;
+            float phase = (time * .75f + i * .19f) % 1;
+            float top = height * (.34f + phase * .18f), bottom = height * .68f;
             path.reset(); path.moveTo(x, top);
             path.cubicTo(x - 2 * density, top + 12 * density, x + 2 * density, bottom - 12 * density, x, bottom);
             paint.setColor(i % 2 == 0 ? 0x55d4eee2 : 0x3994c6b7);

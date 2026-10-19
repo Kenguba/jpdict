@@ -65,7 +65,7 @@ final class DrawerPreviewView extends View {
         motion = new DrawerMotionController(this, new DrawerMotionController.Listener() {
             public void onProgress(float value) {
                 invalidate();
-                if (progressListener != null) progressListener.changed(value);
+                if (progressListener != null) progressListener.changed(value * ratio / 100f);
             }
             public void onDragStart() {}
             public void onRelease(boolean expanded) { open = expanded; }
@@ -74,13 +74,13 @@ final class DrawerPreviewView extends View {
 
     void setProgressListener(ProgressListener listener) { progressListener = listener; }
     void setWaterfallPreview(DrawerWaterfallPreview waterfall) { this.waterfall = waterfall; invalidate(); }
-    float progress() { return motion.progress(); }
+    float progress() { return motion.progress() * ratio / 100f; }
 
     void show(DrawerStyleSettings.Mode mode, int percent, boolean animate) {
         this.mode = mode; ratio = DrawerMotionController.clamp(percent, 0, 100);
-        limit = ratio == 0 ? 0 : 1; open = limit > 0;
-        travel = phone.width() * ratio / 100f;
-        motion.configure(travel, limit);
+        limit = ratio == 0 ? 0 : 1;
+        travel = phone.width() * ratio / 100f; motion.configure(travel, limit);
+        open = limit > 0;
         updateColors();
         if (animate && interactive) motion.closeThen(() -> motion.animate(open, null));
         else motion.snap(open ? limit : 0);
@@ -88,11 +88,11 @@ final class DrawerPreviewView extends View {
     void pause() { touching = false; motion.snap(motion.progress()); }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        float inset = getResources().getConfiguration().screenWidthDp <= 365 ? 12 : 14;
-        float phoneSpace = h - (interactive ? 96 : 0) * density;
-        float width = interactive ? Math.min(Math.min(w * .54f, 188 * density), phoneSpace / .96f) : w - inset * density;
-        float height = interactive ? Math.min(width * .96f, phoneSpace - 14 * density) : h - inset * density;
-        float top = interactive ? 54 * density : (h - height) / 2;
+        android.content.res.Configuration c = getResources().getConfiguration();
+        float inset = c.screenWidthDp <= 365 ? 12 : 14;
+        float width = interactive ? (c.screenHeightDp <= 740 ? 153 : c.screenWidthDp <= 365 ? 162 : 174) * density : w - inset * density;
+        float height = interactive ? (c.screenHeightDp <= 740 ? 154 : c.screenWidthDp <= 365 ? 164 : 173) * density : h - inset * density;
+        float top = interactive ? (c.screenHeightDp <= 740 ? 34 : 36) * density : (h - height) / 2;
         phone.set((w - width) / 2, top, (w + width) / 2, top + height);
         float realWidth = getResources().getDisplayMetrics().widthPixels;
         scale = width / realWidth;
@@ -240,6 +240,7 @@ final class DrawerPreviewView extends View {
         canvas.save();
         canvas.translate(geometry.menuX, geometry.menuY);
         canvas.scale(geometry.menuScale, geometry.menuScale, 0, phone.height() / 2);
+        canvas.clipRect(0, 0, travel, phone.height());
         paint.setColor(0xffffffff);
         paint.setShader(menuGradient);
         float radius = mode == DrawerStyleSettings.Mode.FULL_PAGE ? 0 : 8 * density;

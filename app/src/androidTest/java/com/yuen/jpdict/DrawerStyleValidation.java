@@ -10,6 +10,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -18,15 +20,51 @@ final class DrawerStyleValidation {
     private int checks;
     private void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
     private void near(float value, float expected, String message) { check(Math.abs(value - expected) < .5f, message); }
+    private static double contrast(int first, int second) {
+        double a = luminance(first), b = luminance(second); return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+    }
+    private static double luminance(int color) {
+        double[] c = {android.graphics.Color.red(color) / 255d, android.graphics.Color.green(color) / 255d,
+                android.graphics.Color.blue(color) / 255d};
+        for (int i = 0; i < 3; i++) c[i] = c[i] <= .04045 ? c[i] / 12.92 : Math.pow((c[i] + .055) / 1.055, 2.4);
+        return c[0] * .2126 + c[1] * .7152 + c[2] * .0722;
+    }
 
     static String run(Instrumentation test) throws Exception {
         Context context = test.getTargetContext();
         if ("com.yuen.jpdict".equals(context.getPackageName())) throw new AssertionError("Use disposable QA applicationId");
         DrawerStyleValidation validation = new DrawerStyleValidation();
+        validation.voiceTheme(test, context);
         validation.preferences(test, context);
         validation.search(test, context);
         validation.page(test, context);
         return "Drawer style: " + validation.checks + " Android assertions passed\n";
+    }
+
+    private void voiceTheme(Instrumentation test, Context context) throws Exception {
+        AtomicReference<FloatingSearchView> holder = new AtomicReference<>();
+        onMain(test, () -> holder.set(new FloatingSearchView(context, "", false, new FloatingSearchView.Callback() {
+            public void onQueryChanged(String value) {} public void onLookup(String value, boolean privacy) {}
+            public void onPrivateModeChanged(boolean privacy) {} public void onEditingChanged(boolean editing) {}
+            public void onOpenPage(String page, boolean privacy) {} public void onClose() {}
+        })));
+        FloatingSearchView voice = holder.get();
+        LinearLayout action = (LinearLayout)field(FloatingSearchView.class, "actionButton").get(voice);
+        for (int mode : new int[]{0, 1}) {
+            onMain(test, () -> AppTheme.mode(mode)); test.waitForIdleSync();
+            onMain(test, () -> {
+                int foreground = AppTheme.ink(AppTheme.PAGE), background = AppTheme.color(AppTheme.INK);
+                check(((SearchIconView)action.getChildAt(0)).getColor() == foreground
+                                && contrast(foreground, background) >= 4.5,
+                        "Voice button icon stays readable in theme " + mode);
+                if (action.getChildCount() > 1) {
+                    check(((TextView)action.getChildAt(1)).getCurrentTextColor() == foreground
+                                    && contrast(foreground, background) >= 4.5,
+                            "Voice button label stays readable in theme " + mode);
+                }
+            });
+        }
+        onMain(test, () -> { voice.dispose(); AppTheme.mode(0); });
     }
 
     private void preferences(Instrumentation test, Context context) throws Exception {
@@ -227,22 +265,65 @@ final class DrawerStyleValidation {
             test.waitForIdleSync(); SystemClock.sleep(100);
             screenshot(test, context, "drawer-settings");
             View slider = (View)field(DrawerStyleSettingsActivity.class, "slider").get(activity);
+            DrawerPreviewView preview = (DrawerPreviewView)field(DrawerStyleSettingsActivity.class, "preview").get(activity);
             float density = context.getResources().getDisplayMetrics().density;
             float left = 28 * density, right = slider.getWidth() - 76 * density;
+            check(Math.round(preview.progress() * 100) == 0, "Saved width starts with a closed, independent preview");
+            int stageHeight = context.getResources().getConfiguration().screenHeightDp <= 740 ? 242
+                    : context.getResources().getConfiguration().screenWidthDp <= 365 ? 250 : 258;
+            check(slider.getParent() != null
+                    && ((View)slider.getParent()).getLayoutParams().height == Math.round(stageHeight * density),
+                    "Preview stage uses the matching responsive HTML height");
             long down = SystemClock.uptimeMillis();
-            onMain(test, () -> { touch(slider, down, MotionEvent.ACTION_DOWN, right);
+            onMain(test, () -> { touch(slider, down, MotionEvent.ACTION_DOWN, left + 30 * density);
                 touch(slider, down + 1, MotionEvent.ACTION_MOVE, (left + right) / 2);
                 touch(slider, down + 2, MotionEvent.ACTION_UP, (left + right) / 2); });
-            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50, "Ordinary thumb drag saves the width on release");
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 100
+                    && Math.round(preview.progress() * 100) == 50, "Rail drag previews without changing the saved width");
             test.waitForIdleSync(); SystemClock.sleep(100);
             screenshot(test, context, "drawer-settings-half");
-            onMain(test, () -> touch(slider, SystemClock.uptimeMillis(), MotionEvent.ACTION_DOWN, (left + right) / 2));
-            onMain(test, () -> { touch(slider, SystemClock.uptimeMillis() + 1, MotionEvent.ACTION_MOVE, right);
-                touch(slider, SystemClock.uptimeMillis() + 2, MotionEvent.ACTION_CANCEL, right); });
-            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50, "Cancelled width adjustment does not overwrite the saved value");
+            onMain(test, () -> { long now = SystemClock.uptimeMillis(); touch(slider, now, MotionEvent.ACTION_DOWN, right);
+                touch(slider, now + 1, MotionEvent.ACTION_UP, right); });
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 100
+                    && Math.round(preview.progress() * 100) == 50, "A quick thumb tap neither saves nor changes the preview");
+            onMain(test, () -> { long now = SystemClock.uptimeMillis(); touch(slider, now, MotionEvent.ACTION_DOWN, right);
+                touch(slider, now + 1, MotionEvent.ACTION_MOVE, (left + right) / 2);
+                touch(slider, now + 2, MotionEvent.ACTION_UP, (left + right) / 2); });
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 100
+                    && Math.round(preview.progress() * 100) == 50, "Moving before the hold threshold cancels thumb adjustment");
+            long hold = SystemClock.uptimeMillis();
+            onMain(test, () -> touch(slider, hold, MotionEvent.ACTION_DOWN, right));
+            SystemClock.sleep(750);
+            long move = SystemClock.uptimeMillis();
+            onMain(test, () -> { touch(slider, hold, move, MotionEvent.ACTION_MOVE, (left + right) / 2);
+                touch(slider, hold, move + 1, MotionEvent.ACTION_UP, (left + right) / 2); });
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50,
+                    "A stationary 700ms thumb hold enables width adjustment and saves on release");
+            onMain(test, () -> { long now = SystemClock.uptimeMillis(); touch(slider, now, MotionEvent.ACTION_DOWN, right);
+                touch(slider, now + 1, MotionEvent.ACTION_UP, right); });
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50,
+                    "Preview cannot expand past the saved width");
+            long hold2 = SystemClock.uptimeMillis();
+            onMain(test, () -> touch(slider, hold2, MotionEvent.ACTION_DOWN, (left + right) / 2));
+            SystemClock.sleep(750);
+            long move2 = SystemClock.uptimeMillis();
+            onMain(test, () -> { touch(slider, hold2, move2, MotionEvent.ACTION_MOVE, right);
+                touch(slider, hold2, move2 + 1, MotionEvent.ACTION_CANCEL, right); });
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50
+                    && Math.round(preview.progress() * 100) == 50, "Cancelled width adjustment restores both saved width and preview");
             onMain(test, () -> { touch(slider, SystemClock.uptimeMillis(), MotionEvent.ACTION_DOWN, left);
                 touch(slider, SystemClock.uptimeMillis() + 1, MotionEvent.ACTION_UP, left); });
-            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 0, "Tapping the track saves the selected width on release");
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50
+                    && Math.round(preview.progress() * 100) == 0, "Track tap previews closed without saving width");
+            if (android.os.Build.VERSION.SDK_INT >= 24) {
+                onMain(test, () -> {
+                    android.os.Bundle progress = new android.os.Bundle();
+                    progress.putFloat(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, 60);
+                    slider.performAccessibilityAction(android.R.id.accessibilityActionSetProgress, progress);
+                });
+                check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 60
+                        && Math.round(preview.progress() * 100) == 0, "Accessible width changes save without altering preview progress");
+            }
             onMain(test, activity::onBackPressed); test.waitForIdleSync();
             check(activity.isFinishing() && !settingsPage.isFinishing(), "Back returns to the existing parent settings page");
             onMain(test, () -> new DrawerStyleSettings(context).saveRatio(DrawerStyleSettings.Mode.FULL_PAGE, 100));
@@ -284,7 +365,10 @@ final class DrawerStyleValidation {
     }
 
     private static void touch(View view, long time, int action, float x) {
-        MotionEvent event = MotionEvent.obtain(time, time, action, x, view.getHeight() / 2f, 0);
+        touch(view, time, time, action, x);
+    }
+    private static void touch(View view, long down, long time, int action, float x) {
+        MotionEvent event = MotionEvent.obtain(down, time, action, x, view.getHeight() / 2f, 0);
         view.dispatchTouchEvent(event); event.recycle();
     }
     private static void screenshot(Instrumentation test, Context context, String name) throws Exception {
