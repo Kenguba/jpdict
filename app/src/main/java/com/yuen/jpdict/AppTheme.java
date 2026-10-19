@@ -41,11 +41,17 @@ final class AppTheme {
     static final int SEARCH_PILL = 0xffe4f0ff, DICT_PILL = 0xffe7f5ed, BUBBLE_PILL = 0xffdef7ff;
     static final String BOUNDARY = "com.yuen.jpdict.THEME_BOUNDARY";
     private static final int[][] PALETTE = {
-            {PAGE, 0xff171e2b}, {CARD, 0xff252e3d}, {SOFT, 0xff303c4e},
-            {INK, 0xffedf2fa}, {MUTED, 0xffacb9cd}, {FAINT, 0xff8291a7},
-            {BLUE, 0xff246bc8}, {PALE, 0xff243d60}, {LINE, 0xff45536a},
-            {PURPLE, 0xffd3b0ef}, {LAVENDER, 0xff40304f}, {RED, 0xffffa0af},
-            {ROSE, 0xff4a2c39}, {GREEN, 0xff6bd6b0}, {STAGE, 0xff253349},
+            {PAGE, 0xff171e2b, 0xfff7f7f7}, {CARD, 0xff252e3d}, {SOFT, 0xff303c4e, 0xfff0f6ff, 0xfff7fbff, 0xfffce8ec, 0xfffff0f3},
+            {INK, 0xffedf2fa, 0xffdce5ff, 0xff151416, 0xff18191b, 0xff222222, 0xff34373b}, {MUTED, 0xffacb9cd, 0xff39465a, 0xff40516b,
+                    0xff55657a, 0xff5c687d, 0xff60718a, 0xff63718a, 0xff68737a, 0xff6d747b, 0xff6d7b91, 0xff6f7780, 0xff71809a,
+                    0xff738096, 0xff74777a, 0xff757a7f, 0xff80858d, 0xff8394a8, 0xff909396, 0xff90959d, 0xff949698, 0xffb1b1b1,
+                    0xffb0b0b0, 0xff66696c, 0xffa3a5a6, 0xff667185, 0xff8994a5, 0xff53657a, 0xff5f7289, 0xffa1a4a5}, {FAINT, 0xff8291a7},
+            {BLUE, 0xff246bc8, 0xff007aff, 0xff008d80, 0xff008fd1, 0xff009bdc, 0xff1748e9, 0xff2673c5, 0xff0b8af7, 0xff0989f8}, {PALE,
+                    0xff243d60}, {LINE, 0xff45536a, 0xffabb9c9, 0xffcbd8e6, 0xffdedede, 0xffe6e7e8, 0xffe6e8eb, 0xffe7e7e7, 0xffe9e9e9,
+                    0xffe9edf3, 0xffe8ebef, 0xffe5e5ea, 0xffededed, 0xffe3e7ec, 0xffe5e8ef, 0xffbfc7d6},
+            {PURPLE, 0xffd3b0ef, 0xff5d2e8c}, {LAVENDER, 0xff40304f}, {RED, 0xffffa0af, 0xff8a3a00, 0xff9c1b1b, 0xffb00020, 0xffcb4355,
+                    0xffd5465d, 0xffdf5366},
+            {ROSE, 0xff4a2c39}, {GREEN, 0xff6bd6b0, 0xff15996c}, {STAGE, 0xff253349},
             {RIM, 0xff091724}, {MENU, 0xff35455f}, {ACCENT, 0xffffb51c},
             {SEARCH_PILL, 0xff243d60}, {DICT_PILL, 0xff263f35}, {BUBBLE_PILL, 0xff243d60},
             {ACCENT_PALE, 0xff39404a}, {PAPER, 0xff171e2b}, {ACCENT_INK, 0xff241500}
@@ -110,10 +116,10 @@ final class AppTheme {
     static int color(int light) {
         if (!dark) return light;
         int rgb = light | 0xff000000;
-        for (int[] pair : PALETTE) if (pair[0] == rgb) return (light & 0xff000000) | (pair[1] & 0xffffff);
+        for (int[] pair : PALETTE) for (int i = 0; i < pair.length; i++) if (i != 1 && pair[i] == rgb) return (light & 0xff000000) | (pair[1] & 0xffffff);
         return light;
     }
-    static int ink(int light) { return light == Color.WHITE ? light : dark && light == BLUE ? 0xff8ab9ff : color(light); }
+    static int ink(int light) { return light == Color.WHITE ? light : dark && color(light) == color(BLUE) ? 0xff8ab9ff : color(light); }
 
     private static void add(Refresh observer) { observers.add(new WeakReference<>(observer)); }
     private static final class Binding implements Refresh {
@@ -149,11 +155,13 @@ final class AppTheme {
         bind(view, 6, v -> v.setBackgroundTintList(ColorStateList.valueOf(ink(BLUE))));
     }
     static void button(android.widget.Button view) {
-        bind(view, 1, v -> ((TextView)v).setTextColor(new ColorStateList(
+        android.widget.Button original = new android.widget.Button(new ContextThemeWrapper(view.getContext(), R.style.Theme_Jpdict_Page));
+        bind(view, 1, v -> ((TextView)v).setTextColor(dark ? new ColorStateList(
                 new int[][]{new int[]{-android.R.attr.state_enabled}, new int[]{}},
-                new int[]{ink(FAINT), ink(BLUE)})));
+                new int[]{ink(FAINT), ink(BLUE)}) : original.getTextColors()));
         Shape shape = new Shape(); shape.setColor(SOFT);
-        shape.setCornerRadius(10 * view.getResources().getDisplayMetrics().density); view.setBackground(shape);
+        shape.setCornerRadius(10 * view.getResources().getDisplayMetrics().density);
+        bind(view, 3, v -> v.setBackground(dark ? shape : original.getBackground()));
     }
 
     /** A UI shape retains its semantic colors, so updating the palette keeps the same View. */

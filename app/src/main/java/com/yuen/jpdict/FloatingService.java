@@ -757,13 +757,14 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
-        if (routeThirdPartyLookup(q, true)) return;
+        if (routeThirdPartyLookup(q, true, searchPrivateMode)) return;
         rootSearchForLookup();
         openLookupHost(q, true, LOOKUP_MODE_FLOAT);
     }
 
-    private boolean routeThirdPartyLookup(String query, boolean returnToSearch) {
+    private boolean routeThirdPartyLookup(String query, boolean returnToSearch, boolean privateMode) {
         if (!LookupDestinationSettings.get(this).isThirdParty()) return false;
+        if (!privateMode) saveLookupHistory(query);
         if (returnToSearch && searchPanel != null && searchPanelHosted && searchPanel.isAttachedToWindow()
                 && lookupOverlay == null && !activeHostSession.isEmpty()) {
             // The Activity protects its search return route before launching
@@ -812,7 +813,7 @@ public class FloatingService extends Service {
     }
 
     private void openOcrLookupPopup(String q) {
-        if (routeThirdPartyLookup(q, false)) return;
+        if (routeThirdPartyLookup(q, false, false)) return;
         dispatchLookupOverlay(q, false);
     }
 
@@ -2010,7 +2011,7 @@ public class FloatingService extends Service {
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 
             if (!q.isEmpty()) {
-                if (routeThirdPartyLookup(q, returnToSearch)) {
+                if (routeThirdPartyLookup(q, returnToSearch, intent.getBooleanExtra(EXTRA_LOOKUP_PRIVATE, false))) {
                     // All initial lookup entry points share the selected destination.
                 } else if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
                     lookupPrivateMode = intent.getBooleanExtra(EXTRA_LOOKUP_PRIVATE, false);

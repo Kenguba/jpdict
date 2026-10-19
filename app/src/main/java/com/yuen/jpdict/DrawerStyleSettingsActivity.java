@@ -219,14 +219,14 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
 
         private void update(float x, boolean width) {
             int next = percent(x); if (width) value = next;
-            preview.show(selected, value, false); preview.seek(Math.min(value, next));
+            preview.show(selected, value, false); preview.seek(Math.min(value, next)); waterfall.pause();
         }
 
         @Override public boolean onTouchEvent(MotionEvent e) {
             int action = e.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
                 cancel(); pointer = e.getPointerId(0); startX = e.getX(); startY = e.getY(); thumb = Math.abs(startX - thumbX()) <= dp(20);
-                preview.pause(); original = Math.round(preview.progress() * 100);
+                preview.pause(); waterfall.pause(); original = Math.round(preview.progress() * 100);
                 if (!thumb) update(startX, false);
                 return true;
             }
@@ -241,14 +241,14 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
                     if (Math.hypot(x - startX, y - startY) <= dp(9)) return true;
                     startX = -1;
                 }
-                update(x, thumb && startX >= 0);
+                if (!thumb || startX >= 0) update(x, thumb);
             } else if (action == MotionEvent.ACTION_UP) {
-                update(e.getX(index), thumb && startX >= 0);
+                if (!thumb || startX >= 0) update(e.getX(index), thumb);
                 if (thumb && startX >= 0) {
                     if (e.getEventTime() - e.getDownTime() < 700) { cancel(); return true; }
                     settings.saveRatio(selected, value); thumbnails[selected.ordinal()].show(selected, value, false); refresh();
                 }
-                pointer = -1; performClick();
+                pointer = -1; waterfall.resume(); performClick();
             }
             return true;
         }

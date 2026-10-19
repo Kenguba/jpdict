@@ -1,7 +1,9 @@
 package com.yuen.jpdict;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.RadialGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -22,7 +24,12 @@ final class DrawerPreviewView extends View {
     private DrawerStyleSettings.Mode mode = DrawerStyleSettings.Mode.FULL_PAGE;
     private float limit = 1, ratio = 100, travel, scale, density;
     private boolean open = true, touching;
+    private Runnable modeChange;
     private float touchX, touchY;
+    private float aura;
+    private long auraTime;
+    private Bitmap touchAura;
+    private android.graphics.Shader cardAura;
     private ProgressListener progressListener;
     private DrawerWaterfallPreview waterfall;
     private android.graphics.Shader menuGradient;
@@ -59,13 +66,21 @@ final class DrawerPreviewView extends View {
         this.interactive = interactive;
         AppTheme.observe(this, this::updateColors);
         density = getResources().getDisplayMetrics().density;
+        if (interactive) {
+            touchAura = createTouchAura();
+            cardAura = new RadialGradient(0, 0, 75.6f * density,
+                    0x2af5b446, 0x00f5b446, android.graphics.Shader.TileMode.CLAMP);
+        }
         setClickable(interactive); setFocusable(interactive);
         setContentDescription("动态抽屉预览，左右拖动，轻触展开或收起");
         if (!interactive) setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         motion = new DrawerMotionController(this, new DrawerMotionController.Listener() {
             public void onProgress(float value) {
+                if (waterfall != null && !touching) {
+                    if (motion.isRunning()) waterfall.pause(); else waterfall.resume();
+                }
                 invalidate();
-                if (progressListener != null) progressListener.changed(value * ratio / 100f);
+                if (progressListener != null) progressListener.changed(progress());
             }
             public void onDragStart() {}
             public void onRelease(boolean expanded) { open = expanded; }
@@ -74,16 +89,20 @@ final class DrawerPreviewView extends View {
 
     void setProgressListener(ProgressListener listener) { progressListener = listener; }
     void setWaterfallPreview(DrawerWaterfallPreview waterfall) { this.waterfall = waterfall; invalidate(); }
-    float progress() { return motion.progress() * ratio / 100f; }
+    float progress() { return DrawerMotionController.clamp(motion.progress(), 0, 1) * ratio / 100f; }
 
     void show(DrawerStyleSettings.Mode mode, int percent, boolean animate) {
+        if (animate && interactive) {
+            modeChange = () -> { show(mode, percent, false); motion.snap(0); motion.animate(open, null); };
+            motion.closeThen(modeChange); return;
+        }
+        modeChange = null;
         this.mode = mode; ratio = DrawerMotionController.clamp(percent, 0, 100);
         limit = ratio == 0 ? 0 : 1;
-        travel = phone.width() * ratio / 100f; motion.configure(travel, limit);
+        travel = phone.width() * ratio / 100f; motion.configurePreview(travel, ratio / 100f);
         open = limit > 0;
         updateColors();
-        if (animate && interactive) motion.closeThen(() -> motion.animate(open, null));
-        else motion.snap(open ? limit : 0);
+        motion.snap(open ? limit : 0);
     }
     void seek(int percent) {
         open = percent > 0 && limit > 0; motion.snap(ratio == 0 ? 0 : percent / ratio);
@@ -97,14 +116,15 @@ final class DrawerPreviewView extends View {
         float height = interactive ? (c.screenHeightDp <= 740 ? 154 : c.screenWidthDp <= 365 ? 164 : 173) * density : h - inset * density;
         float top = interactive ? (c.screenHeightDp <= 740 ? 34 : 36) * density : (h - height) / 2;
         phone.set((w - width) / 2, top, (w + width) / 2, top + height);
+        if (interactive) phone.inset(6 * density, 6 * density);
         float realWidth = getResources().getDisplayMetrics().widthPixels;
-        scale = width / realWidth;
+        scale = phone.width() / realWidth;
         travel = phone.width() * ratio / 100f;
         updateColors();
-        motion.configure(travel, limit);
+        motion.configurePreview(travel, ratio / 100f);
         if (!motion.isRunning() && !motion.isDragging()) motion.snap(open ? limit : 0);
-        clip.reset(); clip.addRoundRect(phone, (interactive ? 24 : 7) * density,
-                (interactive ? 24 : 7) * density, Path.Direction.CW);
+        clip.reset(); clip.addRoundRect(phone, (interactive ? 23 : 7) * density,
+                (interactive ? 23 : 7) * density, Path.Direction.CW);
     }
 
     @Override protected void onDraw(Canvas canvas) {
@@ -112,6 +132,13 @@ final class DrawerPreviewView extends View {
         if (phone.isEmpty()) return;
         paint.setStyle(Paint.Style.FILL); paint.setShader(null);
         if (!interactive) { drawThumbnail(canvas); return; }
+        long now = android.os.SystemClock.uptimeMillis();
+        float target = touching && motion.isDragging() ? 1 : 0;
+        aura = DrawerMotionController.animationsEnabled(getContext())
+                ? DrawerMotionController.clamp(aura + (target * 2 - 1) * (now - auraTime) / 160f, 0, 1) : target;
+        auraTime = now;
+        if (aura > 0 && aura < 1) postInvalidateOnAnimation();
+        drawAura(canvas, false);
         if (interactive) {
             float glow = touching && motion.isDragging() && limit > 0
                     ? DrawerMotionController.clamp((motion.progress() / limit - .5f) * 12.5f, 0, 1) : 0;
@@ -138,7 +165,7 @@ final class DrawerPreviewView extends View {
             canvas.drawText("L I V E  P R E V I E W", 36 * density, 24 * density, paint);
         }
         paint.setColor(AppTheme.isDark() ? 0x38435e7c : 0x28405f8f);
-        float rim = (interactive ? 6 : 5) * density, radius = (interactive ? 30 : 14) * density;
+        float rim = (interactive ? 6 : 5) * density, radius = (interactive ? 29 : 14) * density;
         canvas.drawRoundRect(phone.left - rim - density, phone.top - rim - density,
                 phone.right + rim + density, phone.bottom + rim + 2 * density, radius, radius, paint);
         paint.setShadowLayer(6 * density, 0, 4 * density, AppTheme.isDark() ? 0x44030b15 : 0x20426388);
@@ -147,7 +174,7 @@ final class DrawerPreviewView extends View {
                 phone.bottom + rim, radius, radius, paint); paint.clearShadowLayer();
         canvas.save(); canvas.clipPath(clip);
         canvas.translate(phone.left, phone.top);
-        geometry.update(mode, motion.progress(), limit, travel, density * scale);
+        geometry.update(mode, DrawerMotionController.clamp(motion.progress(), 0, 100 / Math.max(1, ratio)), limit, travel, density * scale);
         canvas.drawColor(AppTheme.color(AppTheme.STAGE));
         if (mode == DrawerStyleSettings.Mode.PUSH) drawMenu(canvas);
         drawPage(canvas);
@@ -157,10 +184,35 @@ final class DrawerPreviewView extends View {
         }
         if (mode != DrawerStyleSettings.Mode.PUSH) drawMenu(canvas);
         canvas.restore();
-        if (touching) {
-            paint.setColor((AppTheme.color(AppTheme.ACCENT) & 0xffffff) | 0x18000000);
-            canvas.drawCircle(touchX, touchY, 22 * density, paint);
+        drawAura(canvas, true);
+    }
+
+    private void drawAura(Canvas canvas, boolean front) {
+        if (aura <= 0) return;
+        canvas.save(); canvas.translate(touchX, touchY);
+        paint.setAlpha(Math.round(255 * aura * (front ? .85f : 1)));
+        if (front) canvas.drawBitmap(touchAura, -touchAura.getWidth() / 2f, -touchAura.getHeight() / 2f, paint);
+        else {
+            paint.setShader(cardAura); canvas.drawCircle(0, 0, 105 * density, paint); paint.setShader(null);
         }
+        paint.setAlpha(255); canvas.restore();
+    }
+
+    private Bitmap createTouchAura() {
+        int size = Math.round(122 * density);
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap); canvas.translate(size / 2f, size / 2f); canvas.scale(density, density);
+        paint.setColor(0x0bffc261); canvas.drawCircle(0, 0, 35.5f, paint);
+        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1);
+        paint.setColor(0x7cf9c06a); paint.setShadowLayer(35, 0, 0, 0x4cffc261);
+        canvas.drawCircle(0, 0, 25, paint); paint.clearShadowLayer();
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0xffffffff);
+        paint.setShader(new RadialGradient(0, 0, 17.85f, 0x2bffd77d, 0x00ffd77d, android.graphics.Shader.TileMode.CLAMP));
+        canvas.drawCircle(0, 0, 25.5f, paint); paint.setShader(null);
+        paint.setColor(0xfffff2cf); paint.setShadowLayer(14, 0, 0, 0xffffc86c);
+        canvas.drawCircle(0, 0, 6.5f, paint); paint.clearShadowLayer();
+        return bitmap;
     }
 
     /** HTML selector illustrations use a fixed 20% reveal, independent of the saved live progress. */
@@ -279,6 +331,8 @@ final class DrawerPreviewView extends View {
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (!interactive) return false;
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            auraTime = android.os.SystemClock.uptimeMillis();
+            if (modeChange != null) modeChange.run();
             touching = true;
             if (touching && waterfall != null) waterfall.pause();
         }
@@ -288,10 +342,10 @@ final class DrawerPreviewView extends View {
         if (event.getActionMasked() == MotionEvent.ACTION_UP) {
             touching = false;
             if (!consumed) performClick();
-            if (waterfall != null) waterfall.resume();
+            if (waterfall != null && !motion.isRunning()) waterfall.resume();
         } else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             touching = false;
-            if (waterfall != null) waterfall.resume();
+            if (waterfall != null && !motion.isRunning()) waterfall.resume();
         }
         return true;
     }

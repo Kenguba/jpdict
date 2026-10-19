@@ -64,8 +64,8 @@ final class FloatingSearchView extends FrameLayout {
     }
 
     private static final int PAPER = AppTheme.PAPER;
-    private static final int INK = AppTheme.INK;
-    private static final int MUTED = AppTheme.MUTED;
+    private static final int INK = 0xff151416;
+    private static final int MUTED = 0xff949698;
     private static final int SOFT = AppTheme.PAGE;
     private final Callback callback;
     private final Rect legacyVisibleFrame = new Rect();
@@ -193,11 +193,11 @@ final class FloatingSearchView extends FrameLayout {
         LinearLayout pills = new LinearLayout(context);
         pills.setGravity(Gravity.CENTER_VERTICAL);
         recommendations.addView(pills, new HorizontalScrollView.LayoutParams(-2, -1));
-        addPill(pills, "搜索词库", SearchIconView.Kind.SEARCH, AppTheme.SEARCH_PILL, AppTheme.BLUE,
+        addPill(pills, "搜索词库", SearchIconView.Kind.SEARCH, AppTheme.SEARCH_PILL, 0xff2673c5,
                 this::submitFromButton);
-        addPill(pills, "词库管理", SearchIconView.Kind.BOOK, AppTheme.DICT_PILL, AppTheme.GREEN,
+        addPill(pills, "词库管理", SearchIconView.Kind.BOOK, AppTheme.DICT_PILL, 0xff15996c,
                 () -> openPage(FloatingSearchRoutes.PAGE_DICTIONARIES));
-        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, AppTheme.BUBBLE_PILL, AppTheme.BLUE,
+        addPill(pills, "悬浮按钮设置", SearchIconView.Kind.SETTINGS, AppTheme.BUBBLE_PILL, 0xff009bdc,
                 () -> openPage(FloatingSearchRoutes.PAGE_BUBBLE_SETTINGS));
         addPill(pills, "设置", SearchIconView.Kind.SETTINGS, SOFT, INK,
                 () -> openPage(FloatingSearchRoutes.PAGE_SETTINGS));
@@ -249,7 +249,7 @@ final class FloatingSearchView extends FrameLayout {
         languageLabel.setPadding(dp(5), 0, dp(5), 0);
         modelButton.addView(languageLabel);
         updateLanguageButton();
-        modelButton.addView(icon(SearchIconView.Kind.CHEVRON, AppTheme.MUTED), new LinearLayout.LayoutParams(dp(13), dp(18)));
+        modelButton.addView(icon(SearchIconView.Kind.CHEVRON, 0xff74777a), new LinearLayout.LayoutParams(dp(13), dp(18)));
         LinearLayout.LayoutParams modelLp = new LinearLayout.LayoutParams(-2, dp(36));
         modelLp.leftMargin = dp(7);
         tools.addView(modelButton, modelLp);
@@ -265,8 +265,8 @@ final class FloatingSearchView extends FrameLayout {
         draftTrash.setGravity(Gravity.CENTER);
         draftTrash.setBackground(ripple(AppTheme.ROSE, 18));
         draftTrash.setContentDescription("删除暂存文字，拖到此处松手删除");
-        draftTrash.addView(icon(SearchIconView.Kind.TRASH, AppTheme.RED), new LinearLayout.LayoutParams(dp(21), dp(24)));
-        TextView trashLabel = text("拖到这里删除", 13, AppTheme.RED, true);
+        draftTrash.addView(icon(SearchIconView.Kind.TRASH, 0xffd5465d), new LinearLayout.LayoutParams(dp(21), dp(24)));
+        TextView trashLabel = text("拖到这里删除", 13, 0xffd5465d, true);
         trashLabel.setPadding(dp(8), 0, 0, 0); draftTrash.addView(trashLabel);
         draftTrash.setVisibility(GONE);
         draftChips = new SearchDraftChips(context, input, this, draftTrash, new SearchDraftChips.DragUi() {
@@ -477,7 +477,7 @@ final class FloatingSearchView extends FrameLayout {
         candidate.setSingleLine(true);
         candidate.setEllipsize(TextUtils.TruncateAt.END);
         candidate.setPadding(dp(8), dp(5), dp(8), dp(5));
-        candidate.setBackground(ripple(AppTheme.SOFT, 14));
+        candidate.setBackground(ripple(0xfff0f6ff, 14));
         candidate.setContentDescription("查询候选词 " + word);
         candidate.setOnClickListener(v -> {
             if (disposed) return;
@@ -814,7 +814,7 @@ final class FloatingSearchView extends FrameLayout {
 
     private void applyPrivateMode(boolean animate) {
         boolean privacy = state.isPrivateMode();
-        privateButton.setBackground(ripple(privacy ? AppTheme.LINE : SOFT, 24));
+        privateButton.setBackground(ripple(privacy ? 0xffdedede : SOFT, 24));
         privateButton.setContentDescription(privacy ? "退出私密查询" : "进入私密查询");
         input.setHint(privacy ? "临时对话" : "随便问点什么");
         input.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI |
@@ -830,14 +830,14 @@ final class FloatingSearchView extends FrameLayout {
         empty.setOrientation(LinearLayout.VERTICAL);
         empty.setGravity(Gravity.CENTER);
         empty.setPadding(dp(24), 0, dp(24), 0);
-        SearchIconView mark = icon(privacy ? SearchIconView.Kind.PRIVATE : SearchIconView.Kind.BOOK, AppTheme.LINE);
+        SearchIconView mark = icon(privacy ? SearchIconView.Kind.PRIVATE : SearchIconView.Kind.BOOK, 0xffe7e7e7);
         empty.addView(mark, new LinearLayout.LayoutParams(dp(84), dp(84)));
         if (privacy) {
             TextView title = text("私密聊天", 20, INK, true);
             title.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
             lp.topMargin = dp(25); empty.addView(title, lp);
-            TextView note = text("本次查询不写入本机历史。\n使用 AI 时，内容仍会发送至 Groq。", 14, AppTheme.MUTED, false);
+            TextView note = text("本次查询不写入本机历史。\n使用 AI 时，内容仍会发送至 Groq。", 14, 0xff68737a, false);
             note.setGravity(Gravity.CENTER); note.setLineSpacing(dp(4), 1);
             LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
             noteLp.topMargin = dp(18); empty.addView(note, noteLp);
@@ -855,7 +855,7 @@ final class FloatingSearchView extends FrameLayout {
         boolean hasText = !input.getText().toString().trim().isEmpty();
         boolean send = hasText || state.isPrivateMode();
         actionButton.removeAllViews();
-        int ink = send && !hasText ? AppTheme.MUTED : AppTheme.ink(AppTheme.PAGE);
+        int ink = send && !hasText ? AppTheme.ink(0xffa1a4a5) : AppTheme.isDark() ? AppTheme.color(AppTheme.PAGE) : Color.WHITE;
         actionButton.setBackground(ripple(send && !hasText ? SOFT : INK, 24));
         actionButton.addView(icon(send ? SearchIconView.Kind.SEND : SearchIconView.Kind.VOICE, ink), new LinearLayout.LayoutParams(dp(20), dp(24)));
         if (!send && getResources().getDisplayMetrics().widthPixels / getResources().getDisplayMetrics().density >= 350 && getResources().getConfiguration().fontScale <= 1.2f) {
@@ -1012,7 +1012,7 @@ final class FloatingSearchView extends FrameLayout {
             View row = languageRows[language.ordinal()];
             if (row != null) {
                 row.setBackground(ripple(language == hoveredLanguage
-                        || (hoveredLanguage == null && language == ocrLanguage.language()) ? AppTheme.LINE : PAPER, 12));
+                        || (hoveredLanguage == null && language == ocrLanguage.language()) ? 0xffe9e9e9 : PAPER, 12));
                 ((LinearLayout)row).getChildAt(1).setVisibility(language == ocrLanguage.language() ? VISIBLE : INVISIBLE);
                 row.setContentDescription("OCR " + language.label + (language == ocrLanguage.language() ? "，当前选中" : ""));
             }
@@ -1089,7 +1089,7 @@ final class FloatingSearchView extends FrameLayout {
             LinearLayout row = entry.getValue();
             boolean selected = destination.model() == entry.getKey();
             row.setSelected(selected);
-            row.setBackground(ripple(selected ? AppTheme.LINE : PAPER, 16));
+            row.setBackground(ripple(selected ? 0xffe9e9e9 : PAPER, 16));
             row.getChildAt(row.getChildCount() - 1).setVisibility(selected ? VISIBLE : GONE);
             String title = ((TextView)((LinearLayout)row.getChildAt(1)).getChildAt(0)).getText().toString();
             boolean enabled = entry.getKey() == LookupDestinationSettings.Model.FAST
@@ -1104,7 +1104,7 @@ final class FloatingSearchView extends FrameLayout {
         menuRow(SearchIconView.Kind.CAMERA, "摄像头", "未接入", false, false);
         menuRow(SearchIconView.Kind.IMAGE, "图库", "未接入", false, false);
         menuRow(SearchIconView.Kind.FILE, "文件", "未接入", false, false);
-        View line = new View(getContext()); AppTheme.background(line, AppTheme.LINE);
+        View line = new View(getContext()); AppTheme.background(line, 0xffe6e7e8);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(1)); lp.setMargins(dp(12), dp(10), dp(12), dp(10)); menuCard.addView(line, lp);
         menuRow(SearchIconView.Kind.SKILLS, "技能", "未接入", false, false);
         menuRow(SearchIconView.Kind.CONNECTOR, "连接器", "未接入", false, false);
@@ -1112,11 +1112,11 @@ final class FloatingSearchView extends FrameLayout {
 
     private LinearLayout menuRow(SearchIconView.Kind kind, String title, String subtitle, boolean enabled, boolean selected) {
         LinearLayout row = new LinearLayout(getContext()); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(10), dp(6), dp(8), dp(6));
-        row.setBackground(ripple(selected ? AppTheme.LINE : PAPER, 16));
-        row.addView(icon(kind, enabled ? INK : AppTheme.MUTED), new LinearLayout.LayoutParams(dp(25), dp(30)));
+        row.setBackground(ripple(selected ? 0xffe9e9e9 : PAPER, 16));
+        row.addView(icon(kind, enabled ? INK : 0xff909396), new LinearLayout.LayoutParams(dp(25), dp(30)));
         LinearLayout labels = new LinearLayout(getContext()); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(12), 0, dp(5), 0);
-        labels.addView(text(title, 16, enabled ? INK : AppTheme.MUTED, true));
-        TextView detail = text(subtitle, 11, AppTheme.MUTED, false); detail.setMaxLines(2); labels.addView(detail);
+        labels.addView(text(title, 16, enabled ? INK : 0xff949698, true));
+        TextView detail = text(subtitle, 11, enabled ? 0xff66696c : 0xffa3a5a6, false); detail.setMaxLines(2); labels.addView(detail);
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         if (selected) row.addView(icon(SearchIconView.Kind.CHECK, INK), new LinearLayout.LayoutParams(dp(22), dp(26)));
         row.setOnClickListener(v -> { if (enabled) closeMenu(); else unavailable(title); });
@@ -1212,7 +1212,7 @@ final class FloatingSearchView extends FrameLayout {
         title.setGravity(Gravity.CENTER);
         tab.addView(title, new FrameLayout.LayoutParams(-1, -1));
         View indicator = new View(getContext());
-        indicator.setBackground(shape(AppTheme.MUTED, 2));
+        indicator.setBackground(shape(0xffb1b1b1, 2));
         FrameLayout.LayoutParams indicatorLayout = new FrameLayout.LayoutParams(
                 dp(15), dp(3), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         indicatorLayout.bottomMargin = dp(4);
@@ -1227,7 +1227,7 @@ final class FloatingSearchView extends FrameLayout {
     private void selectQuestionTab() {
         for (int i = 0; i < tabLabels.length; i++) {
             boolean selected = i == 0;
-            AppTheme.text(tabLabels[i], selected ? INK : AppTheme.MUTED);
+            AppTheme.text(tabLabels[i], selected ? INK : 0xffb0b0b0);
             tabIndicators[i].setVisibility(selected ? VISIBLE : INVISIBLE);
         }
     }

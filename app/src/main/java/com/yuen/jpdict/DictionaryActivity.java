@@ -58,7 +58,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setPadding(dp(edge), 0, dp(edge), 0);
         for (String tab : new String[]{"已安装", "词库下载"}) {
-            TextView button = text(tab, 16, AppTheme.BLUE); button.setGravity(Gravity.CENTER);
+            TextView button = text(tab, 16, 0xff007aff); button.setGravity(Gravity.CENTER);
             button.setPadding(0, 0, 0, 0); button.setIncludeFontPadding(false);
             button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
             button.setBackgroundResource(R.drawable.dictionary_tab);
@@ -68,6 +68,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         }
         root.addView(tabs);
         View tabLine = new View(this); AppTheme.background(tabLine, 0x66e6e8eb);
+        AppTheme.observe(tabLine, () -> tabLine.setVisibility(AppTheme.isDark() ? View.INVISIBLE : View.VISIBLE));
         LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(-1, dp(1));
         lineParams.leftMargin = dp(edge); lineParams.rightMargin = dp(edge);
         root.addView(tabLine, lineParams);
@@ -80,7 +81,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         for (int i = 0; i < tabButtons.length; i++) {
             boolean selected = downloads == (i == 1);
             tabButtons[i].setSelected(selected);
-            AppTheme.text(tabButtons[i], selected ? AppTheme.BLUE : AppTheme.MUTED);
+            AppTheme.text(tabButtons[i], selected ? 0xff007aff : 0xff5c687d);
         }
         int generation = ++pageGeneration;
         content.removeAllViews(); status = text("正在读取词库…", 14, AppTheme.MUTED); content.addView(status);
@@ -108,9 +109,9 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         int position = scroll.getScrollY();
         content.removeAllViews();
         LinearLayout search = new LinearLayout(this); search.setGravity(Gravity.CENTER_VERTICAL);
-        GradientDrawable bg = new AppTheme.Shape(); bg.setColor(AppTheme.LINE); bg.setCornerRadius(dp(14)); search.setBackground(bg);
+        GradientDrawable bg = new AppTheme.Shape(); bg.setColor(0xffe8ebef); bg.setCornerRadius(dp(14)); search.setBackground(bg);
         search.setPadding(dp(12), 0, dp(8), 0);
-        SearchIconView magnifier = new SearchIconView(this, SearchIconView.Kind.SEARCH); magnifier.setColor(AppTheme.MUTED);
+        SearchIconView magnifier = new SearchIconView(this, SearchIconView.Kind.SEARCH); magnifier.setColor(0xff80858d);
         search.addView(magnifier, new LinearLayout.LayoutParams(dp(21), dp(21)));
         EditText field = new EditText(this); AppTheme.input(field); field.setSingleLine(); field.setTextSize(14); field.setHint("搜索已安装的词库"); field.setText(filter);
         AppTheme.background(field, android.graphics.Color.TRANSPARENT); field.setPadding(dp(9), 0, dp(4), 0); field.setContentDescription("搜索已安装的词库");
@@ -122,9 +123,9 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         content.addView(actions);
         LinearLayout reorderHint = new LinearLayout(this); reorderHint.setGravity(Gravity.CENTER_VERTICAL);
         reorderHint.setPadding(dp(6), dp(12), dp(6), dp(12));
-        SearchIconView reorder = new SearchIconView(this, SearchIconView.Kind.REORDER); reorder.setColor(AppTheme.MUTED);
+        SearchIconView reorder = new SearchIconView(this, SearchIconView.Kind.REORDER); reorder.setColor(0xffa4a7ad);
         reorderHint.addView(reorder, new LinearLayout.LayoutParams(dp(18), dp(18)));
-        TextView hint = text("长按卡片或右侧手柄拖动排序", 11, AppTheme.MUTED); hint.setPadding(dp(8), 0, 0, 0);
+        TextView hint = text("长按卡片或右侧手柄拖动排序", 11, 0xff90959d); hint.setPadding(dp(8), 0, 0, 0);
         reorderHint.addView(hint); content.addView(reorderHint);
         renderLibraries();
         field.addTextChangedListener(new TextWatcher() {
@@ -241,7 +242,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
         AlertDialog dialog = new AppTheme.DialogBuilder(this).create(); dialog.setView(panel, 0, 0, 0, 0);
         for (int i = 0; i < labels.length; i++) {
             final int index = i;
-            TextView row = text(labels[i], 14, AppTheme.INK); row.setIncludeFontPadding(false);
+            TextView row = text(labels[i], 14, 0xff34373b); row.setIncludeFontPadding(false);
             row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(8), dp(10), dp(8), dp(10)); row.setMinimumHeight(dp(44));
             android.util.TypedValue feedback = new android.util.TypedValue(); getTheme().resolveAttribute(android.R.attr.selectableItemBackground, feedback, true);
             row.setBackgroundResource(feedback.resourceId); panel.addView(row);

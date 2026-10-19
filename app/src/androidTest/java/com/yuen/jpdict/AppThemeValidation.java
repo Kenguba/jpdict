@@ -28,10 +28,10 @@ final class AppThemeValidation {
     private void check(boolean value, String message) { checks++; if (!value) throw new AssertionError(message); }
     static String run(Instrumentation test) throws Exception {
         Context context = test.getTargetContext();
-        if (!context.getPackageName().endsWith(".drawerqa")) throw new AssertionError("Disposable QA package required");
+        if (!context.getPackageName().startsWith("com.yuen.jpdict.drawerqa")) throw new AssertionError("Disposable QA package required");
         AppThemeValidation validation = new AppThemeValidation();
         main(test, () -> context.getSharedPreferences("appearance", 0).edit().clear().commit());
-        validation.clock(); validation.pages(test, context); validation.retention(test, context);
+        validation.clock(); validation.lightPalette(test, context); validation.pages(test, context); validation.retention(test, context);
         validation.html(test, context);
         validation.widgets(test, context);
         main(test, () -> AppTheme.mode(0));
@@ -46,6 +46,67 @@ final class AppThemeValidation {
             check(AppTheme.darkAt(2, 480, 1020, time) == (minute >= 480 && minute < 1020), "Every minute of a same-day interval");
             check(!AppTheme.darkAt(0, 1320, 420, time) && AppTheme.darkAt(1, 1320, 420, time), "Manual modes ignore schedule");
         }
+    }
+    private void lightPalette(Instrumentation test, Context context) throws Exception {
+        Activity mainPage = test.startActivitySync(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            main(test, () -> {
+                View title = text(mainPage.getWindow().getDecorView(), "日语悬浮搜索");
+                check(((TextView)title).getCurrentTextColor() == 0xff222222, "Main title retains the original charcoal");
+                check(((android.graphics.drawable.ColorDrawable)((View)title.getParent()).getBackground()).getColor() == 0xfff7f7f7,
+                        "Main page retains its original light background");
+                android.widget.Button key = (android.widget.Button)field(mainPage, "groqKeyButton");
+                android.widget.Button original = new android.widget.Button(new android.view.ContextThemeWrapper(context, R.style.Theme_Jpdict_Page));
+                for (boolean enabled : new boolean[]{true, false}) {
+                    key.setEnabled(enabled); original.setEnabled(enabled);
+                    check(key.getCurrentTextColor() == original.getCurrentTextColor()
+                                    && key.getBackground().getClass() == original.getBackground().getClass(),
+                            "Light buttons preserve native enabled and disabled appearance");
+                }
+                key.setEnabled(true); AppTheme.mode(1);
+                check(((android.graphics.drawable.ColorDrawable)((View)title.getParent()).getBackground()).getColor() == 0xff171e2b,
+                        "Restoring the main light color preserves its existing dark page background");
+                AppTheme.mode(0);
+                check(key.getCurrentTextColor() == original.getTextColors().getDefaultColor(), "Mounted native button restores after a theme round trip");
+            });
+            test.waitForIdleSync(); screenshot(test, context, "palette-main-light");
+        } finally { main(test, mainPage::finish); }
+        main(test, () -> {
+            FloatingSearchView search = new FloatingSearchView(context, "", false, new FloatingSearchView.Callback() {
+                public void onQueryChanged(String value) {} public void onLookup(String value, boolean privacy) {}
+                public void onPrivateModeChanged(boolean privacy) {} public void onEditingChanged(boolean editing) {}
+                public void onOpenPage(String page, boolean privacy) {} public void onClose() {}
+            });
+            try {
+                EditText input = (EditText)field(search, "input");
+                check(input.getCurrentTextColor() == 0xff151416 && input.getCurrentHintTextColor() == 0xff949698,
+                        "Search restores the old input and hint colors");
+                for (Object[] pill : new Object[][]{{"搜索词库", 0xff2673c5}, {"词库管理", 0xff15996c}, {"悬浮按钮设置", 0xff009bdc}})
+                    check(((TextView)text(search, (String)pill[0])).getCurrentTextColor() == (Integer)pill[1], "Each search shortcut keeps its distinct original color");
+                SearchDrawerView drawer = (SearchDrawerView)field(search, "drawer");
+                check(((TextView)text(drawer, "JP Native")).getCurrentTextColor() == 0xff18191b, "Drawer restores its original text color");
+                check(((TextView)field(drawer, "backendStatus")).getCurrentTextColor() == 0xffdce5ff, "Drawer banner restores its pale subtitle");
+                FloatingBubbleSettingsView bubble = new FloatingBubbleSettingsView(context, FloatingBubbleAppearance.defaults(), c -> {}, () -> {});
+                check(((TextView)field(bubble, "appearanceTab")).getCurrentTextColor() == 0xff007aff, "Bubble selected tab restores the original blue");
+                check(((TextView)field(bubble, "sizeValue")).getCurrentTextColor() == 0xff6d747b, "Bubble editor restores its original grey");
+                for (int mode : new int[]{1, 0}) {
+                    AppTheme.mode(mode);
+                    check(input.getCurrentTextColor() == (mode == 1 ? 0xffedf2fa : 0xff151416), "Restored input colors follow the existing global theme state");
+                }
+            } finally { search.dispose(); }
+        });
+        Activity dictionary = test.startActivitySync(new Intent(context, DictionaryActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            main(test, () -> {
+                TextView[] tabs = (TextView[])field(dictionary, "tabButtons");
+                check(tabs[0].getCurrentTextColor() == 0xff007aff && tabs[1].getCurrentTextColor() == 0xff5c687d,
+                        "Dictionary tabs retain distinct original selected and unselected colors");
+            });
+            test.waitForIdleSync(); screenshot(test, context, "palette-dictionary-light");
+        } finally { main(test, dictionary::finish); }
+        Activity bubble = test.startActivitySync(new Intent(context, FloatingBubbleSettingsActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try { test.waitForIdleSync(); screenshot(test, context, "palette-bubble-light"); }
+        finally { main(test, bubble::finish); }
     }
     private void pages(Instrumentation test, Context context) throws Exception {
         Activity page = test.startActivitySync(new Intent(context, SearchSettingsActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -81,7 +142,7 @@ final class AppThemeValidation {
             main(test, () -> {
                 android.widget.TimePicker before = activePicker();
                 before.setHour(23); before.setMinute(17);
-                AppTheme.mode(0);
+                AppTheme.mode(AppTheme.isDark() ? 0 : 1);
                 android.widget.TimePicker after = activePicker();
                 check(after != before && after.getHour() == 23 && after.getMinute() == 17,
                         "Open native time picker refreshes theme without losing pending time");
@@ -137,7 +198,7 @@ final class AppThemeValidation {
     }
     static String restart(Instrumentation test, boolean save) throws Exception {
         Context context = test.getTargetContext();
-        if (!context.getPackageName().endsWith(".drawerqa")) throw new AssertionError("Disposable QA package required");
+        if (!context.getPackageName().startsWith("com.yuen.jpdict.drawerqa")) throw new AssertionError("Disposable QA package required");
         if (save) {
             main(test, () -> { AppTheme.times(1410, 370); AppTheme.mode(1); });
             context.getSharedPreferences("appearance", 0).edit().commit();
@@ -194,11 +255,11 @@ final class AppThemeValidation {
             check(input == field(search, "input") && input.getText().toString().equals("保留 selected draft"), "Same search editor and draft survive theme change");
             check(input.getSelectionStart() == 2 && input.getSelectionEnd() == 6, "Text selection survives theme change");
             check(state.isPrivateMode() && state.isDrawerOpen(), "Private mode and drawer logical state survive");
-            check(input.getCurrentTextColor() == AppTheme.ink(AppTheme.INK), "Retained search input is readable in dark mode");
+            check(input.getCurrentTextColor() == AppTheme.ink(0xff151416), "Retained search input is readable in dark mode");
             TextView bannerSubtitle = (TextView)field(field(search, "drawer"), "backendStatus");
             for (int mode : new int[]{0, 1}) {
                 AppTheme.mode(mode);
-                check(contrast(bannerSubtitle.getCurrentTextColor(), AppTheme.color(AppTheme.BLUE)) >= 4.5,
+                check(contrast(bannerSubtitle.getCurrentTextColor(), AppTheme.color(0xff1748e9)) >= 4.5,
                         "Bubble banner subtitle remains readable on blue in theme " + mode);
             }
             for (int background : new int[]{AppTheme.PAGE, AppTheme.CARD, AppTheme.SOFT}) {

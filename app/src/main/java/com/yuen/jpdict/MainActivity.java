@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
         TextView buildInfo=text("当前版本：" + BuildConfig.VERSION_NAME
                 + "  ·  versionCode " + BuildConfig.VERSION_CODE);
         buildInfo.setTextSize(14);
-        AppTheme.text(buildInfo, AppTheme.MUTED);
+        AppTheme.text(buildInfo, 0xff6f7780);
         root.addView(buildInfo);
 
         groqStatus=text("");
@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
         if(lastCrash!=null && !lastCrash.trim().isEmpty()){
             TextView crash=text("上次 Java 崩溃：\n"+lastCrash);
             crash.setTextSize(12);
-            AppTheme.text(crash, AppTheme.RED);
+            AppTheme.text(crash, 0xffb00020);
             crash.setTextIsSelectable(true);
             root.addView(crash);
         }
@@ -78,7 +78,7 @@ public class MainActivity extends Activity {
         if(exitInfo!=null && !exitInfo.isEmpty()){
             TextView exit=text("系统上次退出记录：\n"+exitInfo);
             exit.setTextSize(12);
-            AppTheme.text(exit, AppTheme.RED);
+            AppTheme.text(exit, 0xff8a3a00);
             exit.setTextIsSelectable(true);
             root.addView(exit);
         }
@@ -88,7 +88,7 @@ public class MainActivity extends Activity {
         if(lastAction!=null && !lastAction.isEmpty()){
             TextView action=text("崩溃前最后动作：\n"+lastAction);
             action.setTextSize(12);
-            AppTheme.text(action, AppTheme.PURPLE);
+            AppTheme.text(action, 0xff5d2e8c);
             action.setTextIsSelectable(true);
             root.addView(action);
         }
@@ -98,7 +98,7 @@ public class MainActivity extends Activity {
         if(handled!=null && !handled.isEmpty()){
             TextView hv=text("已捕获异常：\n"+handled);
             hv.setTextSize(12);
-            AppTheme.text(hv, AppTheme.RED);
+            AppTheme.text(hv, 0xff9c1b1b);
             hv.setTextIsSelectable(true);
             root.addView(hv);
         }
@@ -179,7 +179,7 @@ public class MainActivity extends Activity {
         if(groqStatus==null || groqKeyButton==null) return;
         boolean configured=GroqKeyStore.hasKey(this);
         groqStatus.setText("Groq AI：" + (configured ? "Key 已全局配置" : "未配置"));
-        AppTheme.text(groqStatus, configured ? AppTheme.GREEN : AppTheme.RED);
+        AppTheme.text(groqStatus, configured ? AppTheme.GREEN : 0xffb00020);
         groqKeyButton.setText(configured ? "🤖 更换 Groq Key" : "🤖 配置 Groq Key");
     }
 
@@ -253,11 +253,11 @@ public class MainActivity extends Activity {
         l.setOrientation(LinearLayout.VERTICAL);
         int p=dp(20);
         l.setPadding(p,p,p,p);
-        AppTheme.background(l, AppTheme.SOFT);
+        AppTheme.background(l, 0xfff7f7f7);
         return l;
     }
     static TextView title(String s){ TextView v=text(s); v.setTextSize(28); v.setPadding(0,0,0,dp(18)); return v; }
-    static TextView text(String s){ TextView v=new TextView(App.get()); v.setText(s); AppTheme.text(v, AppTheme.INK); v.setTextSize(17); v.setPadding(0,dp(8),0,dp(8)); return v; }
+    static TextView text(String s){ TextView v=new TextView(App.get()); v.setText(s); AppTheme.text(v, 0xff222222); v.setTextSize(17); v.setPadding(0,dp(8),0,dp(8)); return v; }
     static Button button(String s, View.OnClickListener l){ Button b=new Button(App.get()); AppTheme.button(b); b.setText(s); b.setAllCaps(false); b.setOnClickListener(l); return b; }
     static int dp(int v){ return Math.round(v*App.get().getResources().getDisplayMetrics().density); }
 

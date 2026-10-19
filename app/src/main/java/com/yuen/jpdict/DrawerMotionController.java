@@ -17,13 +17,14 @@ final class DrawerMotionController {
     /** Units are fractions of the original drawer width, and fractions/second. */
     static final class Spring {
         float position, velocity, target;
+        float omega = 25, zeta = .89f;
 
         boolean step(float seconds) {
             float dt = Math.max(.004f, Math.min(.35f, seconds));
             int steps = Math.max(2, (int) Math.ceil(dt / .008f));
             float h = dt / steps;
             for (int i = 0; i < steps; i++) {
-                velocity += (-625f * (position - target) - 44.5f * velocity) * h;
+                velocity += (-omega * omega * (position - target) - 2 * zeta * omega * velocity) * h;
                 position += velocity * h;
             }
             if (Math.abs(position - target) < .0015f && Math.abs(velocity) < .018f) {
@@ -54,16 +55,20 @@ final class DrawerMotionController {
 
     static float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
     static float rubber(float raw, float limit) {
+        return rubber(raw, limit, .05f, .35f);
+    }
+    private static float rubber(float raw, float limit, float maxStretch, float coefficient) {
         float edge = raw < 0 ? 0 : limit;
         if (raw >= 0 && raw <= limit) return raw;
-        float stretch = .05f * (1 - 1 / (1 + Math.abs(raw - edge) * .35f));
+        float stretch = maxStretch * (1 - 1 / (1 + Math.abs(raw - edge) * coefficient));
         return edge + Math.copySign(stretch, raw - edge);
     }
-    private static float unRubber(float shown, float limit) {
+    private static float unRubber(float shown, float limit, float stretch, float coefficient) {
+        if (stretch <= 0) return clamp(shown, 0, limit);
         float edge = shown < 0 ? 0 : limit;
         if (shown >= 0 && shown <= limit) return shown;
-        float distance = Math.min(.0499f, Math.abs(shown - edge));
-        return edge + Math.copySign((1 / (1 - distance / .05f) - 1) / .35f, shown - edge);
+        float distance = Math.min(stretch * .998f, Math.abs(shown - edge));
+        return edge + Math.copySign((1 / (1 - distance / stretch) - 1) / coefficient, shown - edge);
     }
 
     static boolean animationsEnabled(Context context) {
@@ -78,6 +83,8 @@ final class DrawerMotionController {
     private final long[] times = new long[18];
     private final float[] fingers = new float[18], positions = new float[18];
     private float width = 1, limit = 1, downX, downY, rawStart, downTarget, downVelocity;
+    private float stretch = .05f, coefficient = .35f;
+    private boolean preview;
     private int pointer = -1, samples;
     private boolean eligible, dragging, running, heldAnimation, consumed;
     private long lastFrame, lastEventTime = -1, suppressClickUntil;
@@ -105,6 +112,13 @@ final class DrawerMotionController {
     void configure(float width, float limit) {
         this.width = Math.max(1, width);
         this.limit = clamp(limit, 0, 1);
+    }
+
+    void configurePreview(float width, float ratio) {
+        preview = true; configure(width, ratio == 0 ? 0 : 1);
+        stretch = ratio == 0 ? 0 : Math.min(.065f, 1 - ratio) / ratio;
+        coefficient = stretch > 0 ? .35f / stretch : .35f;
+        spring.omega = 26; spring.zeta = .87f;
     }
 
     void stop() {
@@ -155,11 +169,12 @@ final class DrawerMotionController {
             spring.velocity = -closingStart * 6 * t * (1 - t) / .13f;
             more = t < 1;
         } else more = spring.step(seconds);
+        if (preview && spring.position < 0) { spring.position = 0; spring.velocity = 0; more = spring.target > 0; }
         lastFrame = now;
+        if (!more) running = false;
         listener.onProgress(spring.position);
         if (more) view.postOnAnimation(frame);
         else {
-            running = false;
             Runnable done = after; after = null;
             if (done != null) done.run();
         }
@@ -173,18 +188,18 @@ final class DrawerMotionController {
         if (action == MotionEvent.ACTION_DOWN) {
             eligible = canStart && limit > 0;
             pointer = event.getPointerId(0); dragging = false; samples = 0;
-            downX = event.getX(); downY = event.getY(); downTarget = open ? limit : 0;
-            rawStart = unRubber(spring.position, limit);
+            downX = event.getX(); downY = event.getY(); downTarget = preview ? spring.position : open ? limit : 0;
+            rawStart = unRubber(spring.position, limit, stretch, coefficient);
             downVelocity = spring.velocity; heldAnimation = running && eligible;
             if (eligible) { view.removeCallbacks(frame); running = false; after = null; }
             sample(event.getEventTime(), downX);
             return false;
         }
-        if (pointer < 0) return false;
+        if (pointer < 0) return preview;
         int index = event.findPointerIndex(pointer);
         if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_POINTER_DOWN
                 || index < 0 || action == MotionEvent.ACTION_POINTER_UP) {
-            consumed = dragging;
+            consumed = preview || dragging;
             if (dragging || heldAnimation) {
                 listener.onRelease(downTarget > 0);
                 settle(downTarget, spring.velocity, null);
@@ -193,35 +208,35 @@ final class DrawerMotionController {
             return consumed;
         }
         float x = event.getX(index), dx = x - downX, dy = event.getY(index) - downY;
-        if (eligible && !dragging && Math.abs(dy) > slop && Math.abs(dy) > Math.abs(dx) * 1.1f) {
+        if (eligible && !dragging && Math.abs(dy) > (preview ? 10 * density : slop) && Math.abs(dy) > Math.abs(dx) * (preview ? 1.13f : 1.1f)) {
             eligible = false;
             if (heldAnimation) settle(downTarget, downVelocity, null);
         }
         if (action == MotionEvent.ACTION_MOVE && eligible && !dragging
-                && Math.abs(dx) > slop && Math.abs(dx) > Math.abs(dy) * 1.3f
-                && (spring.position > 0 || dx > 0)) {
+                && Math.abs(dx) > (preview ? 5 * density : slop) && Math.abs(dx) > Math.abs(dy) * (preview ? 1.1f : 1.3f)
+                && (preview || spring.position > 0 || dx > 0)) {
             dragging = true; heldAnimation = false;
             listener.onDragStart();
             if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(true);
         }
         if (dragging) {
-            spring.position = rubber(rawStart + dx / width, limit);
+            spring.position = rubber(rawStart + dx / width, limit, stretch, coefficient);
             sample(event.getEventTime(), x);
-            spring.velocity = velocity(positions) / width;
+            spring.velocity = velocity(preview ? fingers : positions) / width;
             listener.onProgress(spring.position);
             consumed = true;
         }
         if (action == MotionEvent.ACTION_UP) {
             if (dragging) {
                 float fingerVelocity = velocity(fingers);
-                boolean target = Math.abs(fingerVelocity) > 350 * density && Math.abs(dx) > 12 * density
-                        ? fingerVelocity > 0 : spring.position > limit * .46f;
+                boolean target = Math.abs(fingerVelocity) > (preview ? 320 : 350) * density && Math.abs(dx) > (preview ? 7 : 12) * density
+                        ? fingerVelocity > 0 : preview && Math.abs(dx) > 24 * density ? dx > 0 : spring.position > limit * (preview ? .5f : .46f);
                 float velocity = spring.velocity;
                 suppressClickUntil = event.getEventTime() + 320;
                 listener.onRelease(target);
                 settle(target ? limit : 0, velocity, null);
             } else {
-                consumed = eligible && event.getEventTime() < suppressClickUntil;
+                consumed = preview && !eligible || eligible && event.getEventTime() < suppressClickUntil;
                 if (heldAnimation) settle(downTarget, downVelocity, null);
             }
             pointer = -1;

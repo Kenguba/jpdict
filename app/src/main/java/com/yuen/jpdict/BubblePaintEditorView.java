@@ -30,7 +30,7 @@ import java.util.Map;
 /** Independent Icon/background editing over one immutable appearance draft. */
 final class BubblePaintEditorView extends LinearLayout {
     interface Listener { void onChanged(FloatingBubbleAppearance.Config config); }
-    private static final int BLUE = AppTheme.BLUE, PALE = AppTheme.PALE, SOFT = AppTheme.SOFT;
+    private static final int BLUE = 0xff008fd1, PALE = 0xffdef7ff, SOFT = AppTheme.SOFT;
     private static final int[] SOLID_PRESETS = {0xff078df4,0xff22c55e,0xfffacc15,0xfff472b6,0xff9254de,0xff2a3547};
     private static final int[][] LINEAR_PRESETS = {{0xff168aff,0xffa855f7},{0xff06b6d4,0xff2563eb},
             {0xfff472b6,0xff9333ea},{0xfffb923c,0xffec4899},{0xfffacc15,0xfff97316},{0xff22c55e,0xff06b6d4}};
@@ -84,7 +84,7 @@ final class BubblePaintEditorView extends LinearLayout {
         String[] labels = {"纯色", "线性渐变", "自由渐变"};
         for (int i = 0; i < 3; i++) {
             final int mode = i;
-            modes[i] = text(labels[i], 11, AppTheme.MUTED, true);
+            modes[i] = text(labels[i], 11, 0xff63718a, true);
             modes[i].setSingleLine(true);
             modes[i].setGravity(Gravity.CENTER);
             modes[i].setFocusable(true);
@@ -107,23 +107,23 @@ final class BubblePaintEditorView extends LinearLayout {
 
         solid = column();
         LinearLayout colorHead = row();
-        colorHead.addView(text("当前纯色", 11, AppTheme.MUTED, true), new LayoutParams(0, -2, 1));
+        colorHead.addView(text("当前纯色", 11, 0xff6d7b91, true), new LayoutParams(0, -2, 1));
         solidHex = hexInput("纯色十六进制值", 11);
         colorHead.addView(solidHex, new LayoutParams(dp(90), dp(34)));
         solid.addView(colorHead, spaced(-1, -2, 0, 9));
         picker = new BubbleColorPickerView(context);
         solid.addView(picker, new LayoutParams(-1, -2));
-        solid.addView(text("纯色预设 · 6 种颜色，左右滑动", 10, AppTheme.MUTED, true), spaced(-1, -2, 6, 7));
+        solid.addView(text("纯色预设 · 6 种颜色，左右滑动", 10, 0xff40516b, true), spaced(-1, -2, 6, 7));
         solidPresets = row();
         solid.addView(horizontal(solidPresets, "纯色预设，左右滑动选择"));
         addView(solid, new LayoutParams(-1, -2));
 
         gradient = column();
-        gradient.addView(text("渐变预设 · 6 种样式，左右滑动", 10, AppTheme.MUTED, true), spaced(-1, -2, 0, 7));
+        gradient.addView(text("渐变预设 · 6 种样式，左右滑动", 10, 0xff40516b, true), spaced(-1, -2, 0, 7));
         gradientPresets = row();
         gradient.addView(horizontal(gradientPresets, "渐变预设，左右滑动选择", true));
         linear = column();
-        linear.addView(text("线性渐变颜色", 12, AppTheme.MUTED, true), spaced(-1, -2, 10, 7));
+        linear.addView(text("线性渐变颜色", 12, 0xff40516b, true), spaced(-1, -2, 10, 7));
         LinearLayout stops = row();
         startHex = hexInput("起始色色值", 10);
         endHex = hexInput("结束色色值", 10);
@@ -132,7 +132,7 @@ final class BubblePaintEditorView extends LinearLayout {
         addStop(stops, "起始色", startSwatch, startHex, false);
         addStop(stops, "结束色", endSwatch, endHex, true);
         linear.addView(stops, new LayoutParams(-1, -2));
-        linear.addView(text("渐变方向", 12, AppTheme.MUTED, true), spaced(-1, -2, 10, 7));
+        linear.addView(text("渐变方向", 12, 0xff40516b, true), spaced(-1, -2, 10, 7));
         dial = new BubbleAngleDialView(context);
         linear.addView(dial, spaced(-1, -2, 5, 12));
         gradient.addView(linear, new LayoutParams(-1, -2));
@@ -239,7 +239,7 @@ final class BubblePaintEditorView extends LinearLayout {
             boolean active = paint.mode == i;
             modes[i].setSelected(active);
             modes[i].setBackground(background(active ? PALE : SOFT, 11));
-            AppTheme.text(modes[i], active ? BLUE : AppTheme.MUTED);
+            AppTheme.text(modes[i], active ? BLUE : 0xff63718a);
         }
         targetLabel.setText("icon".equals(target) ? "Icon · 点背景切换" : "背景 · 点图标切换");
         preview.setContentDescription("当前编辑" + ("icon".equals(target) ? " Icon，点背景切换" : "背景，点图标切换"));
@@ -366,7 +366,7 @@ final class BubblePaintEditorView extends LinearLayout {
             FloatingBubbleAppearance.Builder builder = new FloatingBubbleAppearance.Builder(config);
             builder.opacityPercent = 100;
             BubbleAppearanceRenderer.draw(canvas, getContext(), builder.build(), bounds, this);
-            brush.setStyle(Paint.Style.STROKE); brush.setStrokeWidth(dp(2)); brush.setColor(AppTheme.ink(AppTheme.BLUE));
+            brush.setStyle(Paint.Style.STROKE); brush.setStrokeWidth(dp(2)); brush.setColor(AppTheme.ink(0xff0989f8));
             if ("icon".equals(target)) {
                 brush.setPathEffect(new android.graphics.DashPathEffect(new float[]{dp(3), dp(3)}, 0));
                 float inset = dp(10);
@@ -407,7 +407,7 @@ final class BubblePaintEditorView extends LinearLayout {
             if (paint.mode == FloatingBubbleAppearance.COLOR_FREE) BubblePaintRenderer.drawSampled(canvas, inner, paint, this, 120, 80, true);
             else BubblePaintRenderer.draw(canvas, inner, paint, this);
             canvas.restoreToCount(saved);
-            if (isSelected()) { brush.setStyle(Paint.Style.STROKE); brush.setStrokeWidth(dp(1.5f)); brush.setColor(AppTheme.ink(AppTheme.BLUE)); canvas.drawRoundRect(outer, dp(10), dp(10), brush); }
+            if (isSelected()) { brush.setStyle(Paint.Style.STROKE); brush.setStrokeWidth(dp(1.5f)); brush.setColor(AppTheme.ink(0xff0989f8)); canvas.drawRoundRect(outer, dp(10), dp(10), brush); }
         }
     }
 
@@ -422,7 +422,7 @@ final class BubblePaintEditorView extends LinearLayout {
         return 0xff000000 | Integer.parseInt(hex, 16);
     }
     private void addStop(LinearLayout parent, String label, View swatch, EditText input, boolean margin) {
-        LinearLayout cell = column(); cell.addView(text(label, 11, AppTheme.MUTED, false), spaced(-1, -2, 5, 5));
+        LinearLayout cell = column(); cell.addView(text(label, 11, 0xff738096, false), spaced(-1, -2, 5, 5));
         LinearLayout row = row(); swatch.setFocusable(true); swatch.setContentDescription("选择" + label);
         row.addView(swatch, new LayoutParams(dp(27), dp(27)));
         LayoutParams inputParams = new LayoutParams(0, dp(34), 1); inputParams.leftMargin = dp(4); row.addView(input, inputParams);
@@ -454,7 +454,7 @@ final class BubblePaintEditorView extends LinearLayout {
     }
     private LayoutParams swatchParams(int width, int height, int index, int gap) { LayoutParams params = new LayoutParams(dp(width), dp(height)); if (index > 0) params.leftMargin = dp(gap); return params; }
     private EditText hexInput(String description, int size) {
-        EditText input = new EditText(getContext()); input.setSingleLine(true); input.setTextSize(size); AppTheme.text(input, AppTheme.MUTED); input.setIncludeFontPadding(false); input.setGravity(Gravity.CENTER); input.setPadding(dp(2), 0, dp(2), 0); input.setBackground(background(SOFT, 10)); input.setContentDescription(description);
+        EditText input = new EditText(getContext()); input.setSingleLine(true); input.setTextSize(size); AppTheme.text(input, 0xff39465a); input.setIncludeFontPadding(false); input.setGravity(Gravity.CENTER); input.setPadding(dp(2), 0, dp(2), 0); input.setBackground(background(SOFT, 10)); input.setContentDescription(description);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(7)}); input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         input.setOnFocusChangeListener((view, focused) -> { if (!focused && !binding) bind(); }); return input;
     }
