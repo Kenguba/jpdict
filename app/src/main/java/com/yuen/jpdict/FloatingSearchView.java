@@ -292,6 +292,7 @@ final class FloatingSearchView extends FrameLayout {
         actionLp.leftMargin = dp(7);
         tools.addView(actionButton, actionLp);
         actionButton.setOnClickListener(v -> submitFromButton());
+        AppTheme.observe(actionButton, this::updateAction);
         composer.addView(tools, new LinearLayout.LayoutParams(-1, dp(44)));
         LinearLayout.LayoutParams composerLp = new LinearLayout.LayoutParams(-1, -2);
         composerLp.setMargins(dp(8), 0, dp(8), 0);
@@ -854,11 +855,11 @@ final class FloatingSearchView extends FrameLayout {
         boolean hasText = !input.getText().toString().trim().isEmpty();
         boolean send = hasText || state.isPrivateMode();
         actionButton.removeAllViews();
-        int ink = send && !hasText ? AppTheme.MUTED : Color.WHITE;
+        int ink = send && !hasText ? AppTheme.MUTED : AppTheme.ink(AppTheme.PAGE);
         actionButton.setBackground(ripple(send && !hasText ? SOFT : INK, 24));
         actionButton.addView(icon(send ? SearchIconView.Kind.SEND : SearchIconView.Kind.VOICE, ink), new LinearLayout.LayoutParams(dp(20), dp(24)));
         if (!send && getResources().getDisplayMetrics().widthPixels / getResources().getDisplayMetrics().density >= 350 && getResources().getConfiguration().fontScale <= 1.2f) {
-            TextView title = text("开始说话", 13, Color.WHITE, true); title.setPadding(dp(5), 0, 0, 0);
+            TextView title = text("开始说话", 13, ink, true); title.setPadding(dp(5), 0, 0, 0);
             actionButton.addView(title);
         }
         actionButton.setContentDescription(send ? "提交查词" : "开始说话，尚未接入");

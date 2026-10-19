@@ -17,7 +17,6 @@ import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 /** Native routed settings, using the same motion rules as the real search drawer. */
 public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivity {
@@ -36,6 +35,8 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         settings = new DrawerStyleSettings(this); selected = settings.mode();
+        int sw = getResources().getConfiguration().screenWidthDp, sh = getResources().getConfiguration().screenHeightDp;
+        boolean narrow = sw <= 365;
         LinearLayout root = createPage("侧边栏展开方式", false);
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false); scroll.setFillViewport(true);
@@ -60,8 +61,8 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
                     ? "已展开 · 轻触收起" : "预览 " + percent + "%";
             if (!label.contentEquals(status.getText())) status.setText(label);
         });
-        content.addView(stage, new LinearLayout.LayoutParams(-1, dp(240)));
-        TextView hint = text("左右滑动预览 · 拖动设置侧栏宽度，松手保存", 12, MUTED, false);
+        content.addView(stage, new LinearLayout.LayoutParams(-1, dp(sh <= 740 ? 242 : narrow ? 250 : 258)));
+        TextView hint = text("↔ 左右滑动预览 · 长按滑块保存比例", 12, MUTED, false);
         hint.setGravity(Gravity.CENTER);
         content.addView(hint, margins(-1, -2, 0, 10, 0, 18));
         LinearLayout choicesHeading = new LinearLayout(this); choicesHeading.setGravity(Gravity.CENTER_VERTICAL);
@@ -69,7 +70,7 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
         choicesHeading.addView(text("点击卡片即时切换", 12, MUTED, false));
         content.addView(choicesHeading, margins(-1, -2, 0, 0, 0, 12));
         LinearLayout choices = new LinearLayout(this);
-        boolean stacked = getResources().getConfiguration().screenWidthDp
+        boolean stacked = sw
                 / getResources().getConfiguration().fontScale < 330;
         choices.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         for (DrawerStyleSettings.Mode mode : DrawerStyleSettings.Mode.values()) {
@@ -171,7 +172,7 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
             cards[i].setContentDescription(option.title + "，" + option.english + "，" + option.description);
             thumbnails[i].show(option, settings.ratio(option), false);
         }
-        preview.show(mode, settings.ratio(mode), animate);
+        preview.show(mode, animate ? settings.ratio(mode) : 0, animate);
         slider.refresh();
     }
 
@@ -187,20 +188,22 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
     private final class RatioSlider extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private int value, original, pointer = -1;
+        private float startX, startY;
+        private boolean thumb;
 
         RatioSlider() { super(DrawerStyleSettingsActivity.this); setFocusable(true); setClickable(true); }
-        void refresh() { value = settings.ratio(selected); setContentDescription("侧栏宽度 " + value + "%，拖动调整并松手保存"); invalidate(); }
+        void refresh() { value = settings.ratio(selected); setContentDescription(value + "%，长按调整"); invalidate(); }
         private float left() { return dp(28); }
         private float right() { return Math.max(left() + 1, getWidth() - dp(76)); }
         private float thumbX() { return left() + (right() - left()) * value / 100f; }
         private int percent(float x) { return Math.round(DrawerMotionController.clamp((x - left()) / (right() - left()), 0, 1) * 100); }
 
         @Override protected void onDraw(Canvas canvas) {
-            float y = getHeight() / 2f, x = thumbX();
+            float y = getHeight() / 2f, x = thumbX(); int progress = Math.round(preview.progress() * 100);
             paint.setColor(AppTheme.color(AppTheme.LINE)); paint.setStrokeWidth(dp(5)); paint.setStrokeCap(Paint.Cap.ROUND);
             canvas.drawLine(left(), y, right(), y, paint);
             paint.setColor(AppTheme.color(BLUE));
-            canvas.drawLine(left(), y, left() + (right() - left()) * value / 100f, y, paint);
+            canvas.drawLine(left(), y, left() + (right() - left()) * progress / 100f, y, paint);
             paint.setColor((AppTheme.color(BLUE) & 0xffffff) | 0x18000000);
             canvas.drawCircle(x, y, dp(20), paint);
             paint.setShadowLayer(dp(3), 0, dp(2), 0x48000000);
@@ -210,46 +213,52 @@ public final class DrawerStyleSettingsActivity extends FloatingSearchPageActivit
             paint.setTextSize(dp(10)); paint.setTextAlign(Paint.Align.CENTER); paint.setColor(AppTheme.ink(AppTheme.ACCENT_INK));
             canvas.drawText(String.valueOf(value), x, y - (paint.ascent() + paint.descent()) / 2, paint);
             paint.setColor(AppTheme.color(BLUE)); paint.setTextSize(dp(16)); paint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText(value + "%",
+            canvas.drawText(progress + "%",
                     getWidth() - dp(35), y - (paint.ascent() + paint.descent()) / 2, paint);
         }
 
-        private void updateValue(float x) {
-            value = percent(x); preview.show(selected, value, false); invalidate();
+        private void update(float x, boolean width) {
+            int next = percent(x); if (width) value = next;
+            preview.show(selected, Math.min(value, next), false);
         }
 
         @Override public boolean onTouchEvent(MotionEvent e) {
             int action = e.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
-                cancel(); pointer = e.getPointerId(0); original = value; preview.pause();
-                updateValue(e.getX());
+                cancel(); pointer = e.getPointerId(0); startX = e.getX(); startY = e.getY(); thumb = Math.abs(startX - thumbX()) <= dp(20);
+                preview.pause(); original = Math.round(preview.progress() * 100);
+                if (!thumb) update(startX, false);
                 return true;
             }
             if (pointer < 0) return false;
             int index = e.findPointerIndex(pointer);
-            if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_POINTER_DOWN
-                    || action == MotionEvent.ACTION_POINTER_UP || index < 0) { cancel(); return true; }
-            if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_UP) {
-                updateValue(e.getX(index));
-                if (action == MotionEvent.ACTION_UP) {
-                    settings.saveRatio(selected, value); thumbnails[selected.ordinal()].show(selected, value, false);
-                    Toast.makeText(DrawerStyleSettingsActivity.this, "已保存侧栏宽度 " + value + "%", Toast.LENGTH_SHORT).show();
-                    clearGesture(); refresh(); performClick();
+            if (action == MotionEvent.ACTION_CANCEL || action >= MotionEvent.ACTION_POINTER_DOWN || index < 0) { cancel(); return true; }
+            if (action == MotionEvent.ACTION_MOVE) {
+                float x = e.getX(index), y = e.getY(index);
+                if (thumb && e.getEventTime() - e.getDownTime() < 700) {
+                    if (Math.hypot(x - startX, y - startY) > dp(9)) startX = -1;
+                    return true;
                 }
+                if (!thumb || startX >= 0) update(x, thumb);
+            } else if (action == MotionEvent.ACTION_UP) {
+                if (thumb) {
+                    if (e.getEventTime() - e.getDownTime() < 700 || startX < 0) { cancel(); return true; }
+                    settings.saveRatio(selected, value); thumbnails[selected.ordinal()].show(selected, value, false); refresh();
+                }
+                pointer = -1; performClick();
             }
             return true;
         }
 
-        private void clearGesture() { pointer = -1; invalidate(); }
         void cancel() {
-            if (pointer >= 0) { value = original; preview.show(selected, value, false); }
-            clearGesture();
+            if (pointer >= 0) { value = settings.ratio(selected); preview.show(selected, original, false); }
+            pointer = -1;
         }
         @Override public boolean performClick() { super.performClick(); return true; }
 
         private void saveAccessible(int percent) {
             cancel(); value = Math.max(0, Math.min(100, percent)); settings.saveRatio(selected, value);
-            preview.show(selected, value, false); thumbnails[selected.ordinal()].show(selected, value, false); refresh();
+            preview.show(selected, Math.round(preview.progress() * 100), false); thumbnails[selected.ordinal()].show(selected, value, false); refresh();
         }
         @Override public boolean onKeyDown(int key, KeyEvent event) {
             int step = key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_DOWN ? -1
