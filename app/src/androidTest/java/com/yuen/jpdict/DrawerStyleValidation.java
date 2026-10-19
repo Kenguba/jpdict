@@ -82,15 +82,17 @@ final class DrawerStyleValidation {
         FloatingSearchView view = holder.get();
         try {
             for (DrawerStyleSettings.Mode mode : DrawerStyleSettings.Mode.values()) {
-                for (int ratio : new int[]{0, 20, 45, 90, 100}) {
+                for (int ratio : new int[]{0, 30, 45, 90, 100}) {
                     onMain(test, () -> { settings.select(mode); settings.saveRatio(mode, ratio); view.experienceDrawer(); });
                     SystemClock.sleep(650);
                     onMain(test, () -> {
                         View page = (View)field(FloatingSearchView.class, "page").get(view);
                         View menu = (View)field(FloatingSearchView.class, "drawer").get(view);
                         View dismiss = (View)field(FloatingSearchView.class, "drawerDismiss").get(view);
-                        float width = DrawerMotionController.fullWidth(view.getWidth(), context.getResources().getDisplayMetrics().density);
-                        near(page.getTranslationX(), mode == DrawerStyleSettings.Mode.OVERLAY ? 0 : width * ratio / 100, "Actual page geometry matches saved ratio");
+                        float width = Math.max(1, Math.round(view.getWidth() * ratio / 100f));
+                        near(menu.getWidth(), width, "Actual drawer width matches saved percentage");
+                        near(page.getTranslationX(), ratio == 0 || mode == DrawerStyleSettings.Mode.OVERLAY ? 0 : width,
+                                "Page travel matches actual drawer width");
                         check(ratio > 0 ? menu.getVisibility() == View.VISIBLE : menu.getVisibility() != View.VISIBLE && dismiss.getVisibility() == View.GONE,
                                 "Zero percent cannot leave an invisible touch blocker");
                         check(ratio == 0 || mode != DrawerStyleSettings.Mode.PUSH || page.getZ() > menu.getZ(), "Push keeps the home page in front");
@@ -228,19 +230,19 @@ final class DrawerStyleValidation {
             float density = context.getResources().getDisplayMetrics().density;
             float left = 28 * density, right = slider.getWidth() - 76 * density;
             long down = SystemClock.uptimeMillis();
-            onMain(test, () -> touch(slider, down, MotionEvent.ACTION_DOWN, right));
-            SystemClock.sleep(730);
-            onMain(test, () -> { touch(slider, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, (left + right) / 2);
-                touch(slider, SystemClock.uptimeMillis() + 1, MotionEvent.ACTION_UP, (left + right) / 2); });
-            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50, "700ms thumb hold then drag saves the real ratio");
+            onMain(test, () -> { touch(slider, down, MotionEvent.ACTION_DOWN, right);
+                touch(slider, down + 1, MotionEvent.ACTION_MOVE, (left + right) / 2);
+                touch(slider, down + 2, MotionEvent.ACTION_UP, (left + right) / 2); });
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50, "Ordinary thumb drag saves the width on release");
+            test.waitForIdleSync(); SystemClock.sleep(100);
+            screenshot(test, context, "drawer-settings-half");
             onMain(test, () -> touch(slider, SystemClock.uptimeMillis(), MotionEvent.ACTION_DOWN, (left + right) / 2));
-            SystemClock.sleep(730);
-            onMain(test, () -> { touch(slider, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, right);
-                touch(slider, SystemClock.uptimeMillis() + 1, MotionEvent.ACTION_CANCEL, right); });
-            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50, "Cancelled long press never persists its temporary ratio");
+            onMain(test, () -> { touch(slider, SystemClock.uptimeMillis() + 1, MotionEvent.ACTION_MOVE, right);
+                touch(slider, SystemClock.uptimeMillis() + 2, MotionEvent.ACTION_CANCEL, right); });
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50, "Cancelled width adjustment does not overwrite the saved value");
             onMain(test, () -> { touch(slider, SystemClock.uptimeMillis(), MotionEvent.ACTION_DOWN, left);
                 touch(slider, SystemClock.uptimeMillis() + 1, MotionEvent.ACTION_UP, left); });
-            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 50, "Ordinary track scrubbing previews without saving");
+            check(new DrawerStyleSettings(context).ratio(DrawerStyleSettings.Mode.FULL_PAGE) == 0, "Tapping the track saves the selected width on release");
             onMain(test, activity::onBackPressed); test.waitForIdleSync();
             check(activity.isFinishing() && !settingsPage.isFinishing(), "Back returns to the existing parent settings page");
             onMain(test, () -> new DrawerStyleSettings(context).saveRatio(DrawerStyleSettings.Mode.FULL_PAGE, 100));
@@ -248,9 +250,14 @@ final class DrawerStyleValidation {
             onMain(test, () -> FloatingSearchRoutes.openFromActivity(settingsPage, FloatingSearchRoutes.PAGE_DRAWER_STYLE, true));
             Activity experiencePage = test.waitForMonitorWithTimeout(next, 5000); test.removeMonitor(next);
             check(experiencePage != null, "The drawer settings route remains usable after Back");
+            test.waitForIdleSync(); SystemClock.sleep(100);
             onMain(test, () -> {
-                View button = textView(experiencePage.getWindow().getDecorView(), "立即体验当前方式");
-                check(button != null, "The native experience button is reachable"); button.performClick();
+                android.widget.TextView button = (android.widget.TextView)textView(experiencePage.getWindow().getDecorView(), "立即体验当前方式");
+                check(button != null, "The native experience button is reachable");
+                check(button.getCompoundDrawables()[2] == null, "Experience button has no trailing arrow");
+                check((button.getGravity() & android.view.Gravity.CENTER_HORIZONTAL) != 0, "Experience button content is centered");
+                check(button.getLineCount() == 1, "Experience button label fits on one centered line");
+                button.performClick();
             });
             for (int i = 0; i < 100 && !settingsPage.isFinishing(); i++) SystemClock.sleep(50);
             check(settingsPage.isFinishing() && experiencePage.isFinishing(),

@@ -53,11 +53,13 @@ final class AppThemeValidation {
             main(test, () -> {
                 View root = page.getWindow().getDecorView();
                 View title = text(root, "外观"), bubble = text(root, "悬浮按钮");
+                check(AppTheme.color(AppTheme.PAGE) == 0xfff9f9f9, "Light page background uses the midpoint tone");
                 int[] a = new int[2], b = new int[2]; title.getLocationOnScreen(a); bubble.getLocationOnScreen(b);
                 check(a[1] < b[1], "Theme control is above the bubble entry in App group");
                 check(!description(root, "深色模式开启时间").isShown(), "Manual light hides automatic times");
                 description(root, "深色").performClick();
                 check(AppTheme.isDark() && !page.isDestroyed(), "Manual dark applies without Activity recreation");
+                check(AppTheme.color(AppTheme.PAGE) == 0xff171e2b, "Dark page background stays on the existing palette");
                 check(((TextView)title).getCurrentTextColor() == AppTheme.ink(AppTheme.MUTED), "Already-mounted section heading recolors");
                 check(!description(root, "深色模式开启时间").isShown(), "Manual dark hides automatic times");
             });

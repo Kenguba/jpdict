@@ -52,7 +52,6 @@ final class DrawerMotionController {
         }
     }
 
-    static float fullWidth(float screenWidth, float density) { return Math.min(380 * density, screenWidth * .89f); }
     static float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
     static float rubber(float raw, float limit) {
         float edge = raw < 0 ? 0 : limit;

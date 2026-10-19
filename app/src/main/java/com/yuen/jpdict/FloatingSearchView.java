@@ -1288,10 +1288,18 @@ final class FloatingSearchView extends FrameLayout {
     private void refreshDrawerStyle() {
         if (disposed) return;
         drawerMode = drawerSettings.mode();
-        drawerMotion.configure(drawerWidth, drawerSettings.ratio(drawerMode) / 100f);
+        configureDrawerWidth(getWidth());
         if (drawerMotion.limit() == 0) state.setDrawerOpen(false);
         if (clipboardSuspended) drawerMotion.snap(state.isDrawerOpen() ? drawerMotion.limit() : 0);
         else drawerMotion.animate(state.isDrawerOpen(), null);
+    }
+
+    private void configureDrawerWidth(int viewportWidth) {
+        int percent = drawerSettings.ratio(drawerMode);
+        drawerWidth = Math.max(1, Math.round(viewportWidth * percent / 100f));
+        ViewGroup.LayoutParams params = drawer.getLayoutParams();
+        if (params.width != drawerWidth) { params.width = drawerWidth; drawer.setLayoutParams(params); }
+        drawerMotion.configure(drawerWidth, percent == 0 ? 0 : 1);
     }
 
     void experienceDrawer() { if (!disposed) setDrawerOpen(true); }
@@ -1325,9 +1333,7 @@ final class FloatingSearchView extends FrameLayout {
         if (w != oldw && composerHeightAnimator != null) {
             composerHeightAnimator.cancel(); composer.getLayoutParams().height = -2;
         }
-        drawerWidth = Math.round(DrawerMotionController.fullWidth(w, getResources().getDisplayMetrics().density));
-        ViewGroup.LayoutParams lp = drawer.getLayoutParams(); lp.width = drawerWidth; drawer.setLayoutParams(lp);
-        drawerMotion.configure(drawerWidth, drawerSettings.ratio(drawerMode) / 100f);
+        configureDrawerWidth(w);
         if (w != oldw) drawerMotion.snap(state.isDrawerOpen() ? drawerMotion.limit() : 0);
         else applyDrawerProgress(drawerMotion.progress());
         post(this::positionMenu);
