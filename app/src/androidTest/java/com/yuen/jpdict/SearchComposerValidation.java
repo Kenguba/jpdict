@@ -108,6 +108,16 @@ final class SearchComposerValidation {
             Thread.sleep(400); test.waitForIdleSync();
             test.runOnMainSync(() -> check(findClickableText(explosion, "hold on") == phrase.get(),
                     "Completed matching updates a confirmed phrase in place"));
+            await(test, () -> findClickableText(explosion, "Please") != null,
+                    "An unmatched word remains clickable without a dictionary entry");
+            AtomicReference<View> unmatched = new AtomicReference<>();
+            test.runOnMainSync(() -> unmatched.set(findClickableText(explosion, "Please")));
+            tap(test, unmatched.get());
+            await(test, () -> "Please".equals(lookup.get()), "An unmatched chip routes its original word to lookup");
+            test.runOnMainSync(() -> check("查询词条 Please".contentEquals(unmatched.get().getContentDescription()),
+                    "An unmatched chip exposes the accessible lookup action"));
+            test.runOnMainSync(() -> check(findText(explosion, "!") != null
+                    && findClickableText(explosion, "!") == null, "Punctuation is visible but not clickable"));
             test.runOnMainSync(() -> { input.setText("hold on"); lookup.set(null); });
             await(test, () -> findClickableText(explosion, "hold on") != null,
                     "Matching the complete short phrase does not hide the explosion area");

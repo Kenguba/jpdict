@@ -119,9 +119,9 @@ final class SearchTextExplosionView extends LinearLayout {
                 view.setBackground(next.word ? new RippleDrawable(ColorStateList.valueOf(0x12006bff), shape, null) : null);
             }
             part = next;
-            view.setContentDescription(next.matched ? "查询本地词条 " + next.text : next.text);
-            view.setOnClickListener(next.matched ? v -> actions.lookup(part.text) : null);
-            view.setClickable(next.matched);
+            view.setContentDescription(next.word ? "查询词条 " + next.text : next.text);
+            view.setOnClickListener(next.word ? v -> actions.lookup(part.text) : null);
+            view.setClickable(next.word);
             int targetInk = AppTheme.ink(next.matched ? AppTheme.BLUE : AppTheme.MUTED);
             int targetFill = AppTheme.color(next.matched ? AppTheme.PALE : AppTheme.SOFT);
             int targetStroke = AppTheme.color(AppTheme.LINE);
