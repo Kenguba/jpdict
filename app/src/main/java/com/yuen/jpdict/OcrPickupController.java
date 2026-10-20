@@ -268,8 +268,9 @@ final class OcrPickupController implements AutoCloseable {
         if (!MainActivity.ScreenCaptureService.READY) { requestAuthorization(); return; }
         armed = waiting = true; released = immediatelyRelease;
         refining = false;
+        final OcrLanguageSettings.Language language = OcrLanguageSettings.get(context).language();
         singleEnglishWord = mode == OcrPickupMode.ENGLISH || (mode == OcrPickupMode.WORD
-                && OcrLanguageSettings.get(context).language() == OcrLanguageSettings.Language.ENGLISH);
+                && language == OcrLanguageSettings.Language.ENGLISH);
         captureVisible = false;
         sweep.clear(); regions.clear(); selected = null;
         if (immediatelyRelease) path.clear();
@@ -281,7 +282,8 @@ final class OcrPickupController implements AutoCloseable {
             if (!armed || closed || session != requestedSession) return;
             context.startService(new Intent(context, MainActivity.ScreenCaptureService.class)
                     .setAction(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
-                    .putExtra("session", requestedSession).putExtra("pickup_mode", mode.value));
+                    .putExtra("session", requestedSession).putExtra("pickup_mode", mode.value)
+                    .putExtra("language", language.value));
         };
         // Let the outgoing white direction ring leave the next display frame
         // before requesting capture; it must never cover the text being read.
@@ -289,6 +291,9 @@ final class OcrPickupController implements AutoCloseable {
         main.removeCallbacks(timeout); main.postDelayed(timeout, OCR_TIMEOUT_MS);
     }
     private void requestAuthorization() {
+        if (MainActivity.ScreenCaptureService.retiredPreviewTaskCount() >= 2) {
+            fail(MainActivity.ScreenCaptureService.STALLED_ERROR); return;
+        }
         cancel(); pendingAuthorization = true;
         context.startActivity(new Intent(context, MainActivity.OcrActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
