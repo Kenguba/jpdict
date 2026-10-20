@@ -25,7 +25,7 @@ final class OcrValidation {
     private void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
     static String run(Instrumentation instrumentation, boolean fonts) throws Exception {
         OcrValidation test = new OcrValidation();
-        test.mainFailureReporting(instrumentation); test.images(); test.selection(); test.repeatedCapture(instrumentation); test.canceledCapture(instrumentation); test.stalledPreviewRecovery(instrumentation); test.captureStopRecovery(instrumentation); test.repeatedStallStopsCapture(instrumentation); test.gestures(instrumentation);
+        test.mainFailureReporting(instrumentation); test.images(); test.selection(); test.repeatedCapture(instrumentation); test.canceledCapture(instrumentation); test.queuedLanguageSnapshot(instrumentation); test.nonPreviewRequestsSerialized(instrumentation); test.capturePhaseTimeoutDoesNotRetireModel(instrumentation); test.stalledPreviewRecovery(instrumentation); test.captureStopRecovery(instrumentation); test.repeatedStallStopsCapture(instrumentation); test.gestures(instrumentation);
         String measured = fonts ? test.fonts(instrumentation) : "";
         return "OCR: " + test.checks + " assertions passed\n" + OcrLanguageValidation.run(instrumentation) + measured;
     }
@@ -297,6 +297,7 @@ final class OcrValidation {
             service.ocrRecognizer=stalled;
             service.previewFrame=abandonedFrame;
             service.previewSession=service.previewOperation=71;
+            service.modelOperation=71;
             service.previewInFlight=true;
             service.pendingPreview=new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",72L);
             service.previewSession=0; // A newer gesture replaced the visible session while 71 was in flight.
@@ -327,6 +328,29 @@ final class OcrValidation {
         abandonedFrame.release();
         check(abandonedFrame.borrow(71)==null,"A retired frame rejects future use after its original reader releases it");
     }
+    private void capturePhaseTimeoutDoesNotRetireModel(Instrumentation instrumentation) throws Exception {
+        List<Intent> responses=new ArrayList<>();
+        MultilingualOcrRecognizer recognizer=fakeRecognizer();
+        MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+            @Override public String getPackageName(){return instrumentation.getTargetContext().getPackageName();}
+            @Override public void sendBroadcast(Intent intent){responses.add(new Intent(intent));}
+            @Override MultilingualOcrRecognizer createOcrRecognizer(){throw new AssertionError("No replacement is needed before a model task is submitted");}
+        };
+        onMain(instrumentation,()->{
+            service.ocrRecognizer=recognizer;
+            service.previewSession=70;
+            service.activeRequest=new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",70L);
+            service.beginPreviewOperation(70);
+            service.timeoutPreviewOperation(70);
+            check(MainActivity.ScreenCaptureService.retiredPreviewTaskCount()==0
+                            &&service.retiredPreviewOperations.isEmpty()&&service.ocrRecognizer==recognizer,
+                    "A timeout during screenshot acquisition does not consume the uncancelable-model task budget");
+            check(responses.stream().anyMatch(in->"OCR 响应超时，已重置识别器，请重试".equals(in.getStringExtra("error"))),
+                    "The stalled capture phase still reports its timeout to the active preview");
+            service.captureMain.removeCallbacksAndMessages(null);
+            recognizer.close();
+        });
+    }
     private static MultilingualOcrRecognizer fakeRecognizer(){
         TextRecognizer model=(TextRecognizer)Proxy.newProxyInstance(TextRecognizer.class.getClassLoader(),
                 new Class<?>[]{TextRecognizer.class},(proxy,method,args)->{
@@ -334,6 +358,90 @@ final class OcrValidation {
                     return null;
                 });
         return new MultilingualOcrRecognizer(model,model,model,null);
+    }
+    private void queuedLanguageSnapshot(Instrumentation instrumentation) throws Exception {
+        Context app=instrumentation.getTargetContext();
+        OcrLanguageSettings settings=OcrLanguageSettings.get(app);
+        OcrLanguageSettings.Language previous=settings.language();
+        onMain(instrumentation,()->settings.setLanguage(OcrLanguageSettings.Language.CHINESE));
+        for(String language:new String[]{OcrLanguageSettings.Language.ENGLISH.value,null}){
+            MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+                @Override public String getPackageName(){return app.getPackageName();}
+                @Override boolean captureAlive(){return true;}
+                @Override public void sendBroadcast(Intent intent){}
+            };
+            onMain(instrumentation,()->{
+                Intent request=new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW)
+                        .putExtra("session",language==null?202L:201L).putExtra("pickup_mode","word");
+                if(language!=null)request.putExtra("language",language);
+                service.captureOnce(request);
+                check(service.previewLanguage==(language==null?OcrLanguageSettings.Language.CHINESE:OcrLanguageSettings.Language.ENGLISH),
+                        "Queued preview uses its captured language; legacy intents still use the shared preference");
+                service.captureMain.removeCallbacksAndMessages(null);
+            });
+        }
+        onMain(instrumentation,()->settings.setLanguage(previous));
+    }
+    private void nonPreviewRequestsSerialized(Instrumentation instrumentation) throws Exception {
+        Context app=instrumentation.getTargetContext();
+        List<Intent> responses=new ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+        TaskCompletionSource<Text> held=new TaskCompletionSource<>();
+        TextRecognizer model=(TextRecognizer)Proxy.newProxyInstance(TextRecognizer.class.getClassLoader(),
+                new Class<?>[]{TextRecognizer.class},(proxy,method,args)->{
+                    if("process".equals(method.getName()))return calls.incrementAndGet()==1?held.getTask()
+                            :Tasks.forException(new IllegalStateException("injected OCR failure"));
+                    return null;
+                });
+        MultilingualOcrRecognizer recognizer=new MultilingualOcrRecognizer(model,model,model,null);
+        recognizer.initialize(app);
+        MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+            {attachBaseContext(app);}
+            @Override public String getPackageName(){return app.getPackageName();}
+            @Override boolean captureAlive(){return captureFrames!=null;}
+            @Override public void sendBroadcast(Intent intent){responses.add(new Intent(intent));}
+        };
+        AtomicReference<ImageWriter> writer=new AtomicReference<>();
+        OcrLanguageSettings settings=OcrLanguageSettings.get(app);
+        OcrLanguageSettings.Language previous=settings.language();
+        try{
+            onMain(instrumentation,()->{
+                settings.setLanguage(OcrLanguageSettings.Language.ENGLISH);
+                service.w=service.h=8;service.ocrRecognizer=recognizer;
+                service.captureFrames=new ScreenCaptureFrames(8,8,service.captureMain);
+                writer.set(ImageWriter.newInstance(service.captureFrames.surface(),1));
+                Image image=writer.get().dequeueInputImage();
+                java.nio.ByteBuffer pixels=image.getPlanes()[0].getBuffer();while(pixels.remaining()>=4)pixels.putInt(Color.WHITE);
+                writer.get().queueInputImage(image);
+            });
+            for(int index=0;index<12;index++){
+                onMain(instrumentation,()->service.captureOnce(null));
+                Thread.sleep(120);
+            }
+            awaitMain(instrumentation,()->calls.get()==1,"Serialized notification OCR did not start");
+            onMain(instrumentation,()->{
+                check(service.previewInFlight&&service.pendingPreview!=null
+                                &&MainActivity.ScreenCaptureService.ACT_OCR.equals(service.pendingPreview.getAction()),
+                        "Notification captures share the same in-flight gate and retain only the newest full-screen request");
+                service.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_REGION)
+                        .putExtra("x",0).putExtra("y",0).putExtra("w",8).putExtra("h",8));
+                check(calls.get()==1&&MainActivity.ScreenCaptureService.ACT_OCR_REGION.equals(service.pendingPreview.getAction()),
+                        "A region request replaces the queued notification request without starting a second model task");
+                held.setException(new IllegalStateException("release injected OCR task"));
+            });
+            awaitMain(instrumentation,()->calls.get()==2&&responses.stream().anyMatch(in->MainActivity.ScreenCaptureService.ACTION_RESULT.equals(in.getAction())),
+                    "The latest queued region request did not run after the active task completed");
+            onMain(instrumentation,()->check(!service.previewInFlight&&service.pendingPreview==null,
+                    "Failure completion releases the shared operation gate and drains its latest request"));
+        }finally{
+            if(!held.getTask().isComplete())held.setException(new IllegalStateException("test cleanup"));
+            onMain(instrumentation,()->{
+                service.captureMain.removeCallbacksAndMessages(null);
+                if(writer.get()!=null)writer.get().close();
+                if(service.captureFrames!=null)service.captureFrames.close();
+                recognizer.close();settings.setLanguage(previous);
+            });
+        }
     }
     private void captureStopRecovery(Instrumentation instrumentation) throws Exception {
         MultilingualOcrRecognizer replacement=fakeRecognizer();
@@ -346,6 +454,7 @@ final class OcrValidation {
         onMain(instrumentation,()->{
             service.ocrRecognizer=stalled;
             service.previewSession=88;
+            service.modelOperation=88;
             service.beginPreviewOperation(88);
             service.stopCapture();
             check(service.previewInFlight && service.previewOperation==88,
@@ -363,6 +472,7 @@ final class OcrValidation {
         List<Intent> responses=new ArrayList<>();int[] stopped={0};
         MultilingualOcrRecognizer recognizer=fakeRecognizer();
         MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+            {attachBaseContext(instrumentation.getTargetContext());}
             @Override public String getPackageName(){return instrumentation.getTargetContext().getPackageName();}
             @Override public void sendBroadcast(Intent intent){responses.add(new Intent(intent));}
             @Override void stopCaptureService(){stopped[0]++;}
@@ -373,6 +483,7 @@ final class OcrValidation {
             MainActivity.ScreenCaptureService.READY=false;
             service.ocrRecognizer=recognizer;
             service.previewSession=service.previewOperation=94;
+            service.modelOperation=94;
             service.previewInFlight=true;
             service.retiredPreviewOperations.add(93L);
             synchronized(MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS){
@@ -383,22 +494,24 @@ final class OcrValidation {
             check(!service.previewInFlight && service.previewOperation==0 && service.pendingPreview==null,
                     "A second permanently stalled task stops the retry queue instead of accumulating orphan jobs");
             check(responses.size()==1 && responses.get(0).getLongExtra("session",-1)==95
-                            && responses.get(0).getBooleanExtra("permission_required",false)
+                            && MainActivity.ScreenCaptureService.STALLED_ERROR.equals(responses.get(0).getStringExtra("error"))
+                            && !responses.get(0).getBooleanExtra("permission_required",false)
                             && stopped[0]==1 && !MainActivity.ScreenCaptureService.READY,
-                    "The bounded recovery asks the controller to renew capture and tears down the failed projection service");
+                    "The bounded recovery reports an OCR-engine stall instead of requesting useless permission and tears down capture");
             check(service.retiredPreviewOperations.size()==2 && service.retiredPreviewOperations.contains(93L)
                             && service.retiredPreviewOperations.contains(94L)
                             && MainActivity.ScreenCaptureService.retiredPreviewTaskCount()==2,
                     "Repeated stalls are counted across the service restart boundary and capped at two physical tasks");
             List<Intent> blocked=new ArrayList<>();
             MainActivity.ScreenCaptureService restarted=new MainActivity.ScreenCaptureService(){
+                {attachBaseContext(instrumentation.getTargetContext());}
                 @Override public String getPackageName(){return instrumentation.getTargetContext().getPackageName();}
                 @Override public void sendBroadcast(Intent intent){blocked.add(new Intent(intent));}
                 @Override boolean captureAlive(){throw new AssertionError("No new capture may start while two retired tasks remain");}
             };
             restarted.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW).putExtra("session",96L));
-            check(blocked.size()==1 && "仍有 OCR 任务未返回，请稍后重试".equals(blocked.get(0).getStringExtra("error")),
-                    "A newly created service cannot reset the process-wide retired-task cap");
+            check(blocked.size()==1 && MainActivity.ScreenCaptureService.STALLED_ERROR.equals(blocked.get(0).getStringExtra("error")),
+                    "A newly created service cannot reset the process-wide retired-task cap and reports the recovery cause");
             synchronized(MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS){
                 MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.remove(93L);
                 MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.remove(94L);
@@ -498,6 +611,8 @@ final class OcrValidation {
     private void gestures(Instrumentation instrumentation) throws Exception {
         Context app = instrumentation.getTargetContext();
         LookupDestinationSettings destinations = LookupDestinationSettings.get(app);
+        OcrLanguageSettings languages=OcrLanguageSettings.get(app);
+        OcrLanguageSettings.Language previousLanguage=languages.language();
         LookupDestinationSettings.Model previousDestination = destinations.model();
         boolean previousThirdParty = destinations.isThirdParty();
         AtomicReference<Intent> request = new AtomicReference<>();
@@ -528,6 +643,21 @@ final class OcrValidation {
         MainActivity.ScreenCaptureService.READY = false;
         try {
             onMain(instrumentation, () -> { owner.set(new OcrPickupController(capture, host)); listener.set(owner.get().listener()); view.set(new View(app)); });
+            onMain(instrumentation,()->{
+                synchronized(MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS){
+                    MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.add(-901L);
+                    MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.add(-902L);
+                }
+                try{
+                    java.lang.reflect.Method retry=OcrPickupController.class.getDeclaredMethod("requestAuthorization");
+                    retry.setAccessible(true);retry.invoke(owner.get());
+                    check(activities[0]==0,"A known stalled engine does not open another screen-sharing authorization flow");
+                }catch(ReflectiveOperationException error){throw new AssertionError(error);}
+                finally{synchronized(MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS){
+                    MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.remove(-901L);
+                    MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.remove(-902L);
+                }}
+            });
             onMain(instrumentation, () -> {
                 touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
                 touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 520, 720);
@@ -582,7 +712,8 @@ final class OcrValidation {
             onMain(instrumentation, () -> check(activities[0] == 1 && request.get() == null, "Explicit Japanese OCR reauthorizes a missing screen projection"));
             app.sendBroadcast(new Intent(MainActivity.OcrActivity.ACTION_FINISHED).setPackage(app.getPackageName()).putExtra("granted", false));
             Thread.sleep(100);
-            onMain(instrumentation, () -> { MainActivity.ScreenCaptureService.READY = true; moves[0] = 0; });
+            onMain(instrumentation, () -> { MainActivity.ScreenCaptureService.READY = true; moves[0] = 0;
+                languages.setLanguage(OcrLanguageSettings.Language.MIXED); });
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_DOWN, 420, 720);
             touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, 421, 721);
             onMain(instrumentation, () -> check(request.get() == null && moves[0] == 0, "Finger jitter cannot move the bubble or start OCR"));
@@ -615,6 +746,9 @@ final class OcrValidation {
             onMain(instrumentation, () -> {
                 check(request.get() != null && MainActivity.ScreenCaptureService.ACT_OCR_PREVIEW.equals(request.get().getAction())
                         && "word".equals(request.get().getStringExtra("pickup_mode")), "Normal dwell uses the composer language rather than inheriting a previous joystick mode");
+                check(OcrLanguageSettings.Language.MIXED.value.equals(request.get().getStringExtra("language")),
+                        "A preview request carries the language selected when its gesture began");
+                languages.setLanguage(OcrLanguageSettings.Language.CHINESE);
                 check(requestStartedAt.get()-relocatedAt.get() >= OcrDwellGate.DELAY_MS,
                         "Only a full 150ms at the replacement pointer area permits capture; the old deadline cannot fire");
             });
@@ -626,15 +760,18 @@ final class OcrValidation {
                                 && (Long)field(owner.get(), "session") == session,
                         "A delayed stop from the old projection cannot silently cancel a fresh pickup");
             });
-            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, finalX, 720);
-            int finalLeft = Math.round(finalX)-20;
-            onMain(instrumentation, () -> check(saves[0] == 2 && position.left == finalLeft, "OCR drag saves the moved bubble once on release"));
+            int finalLeft = Math.round(finalX+1)-20;
             float y = 700-12*density;
             app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",session)
                     .putExtra("words",new String[]{"日本語"}).putExtra("boxes",new int[]{finalLeft,(int)y-10,finalLeft+44,(int)y+10}));
+            Thread.sleep(100); // Deliver the main-thread preview result before releasing the pointer.
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_MOVE, finalX+1, 720);
+            touch(instrumentation, listener.get(), view.get(), MotionEvent.ACTION_UP, finalX+1, 720);
+            onMain(instrumentation, () -> check(saves[0] == 2 && position.left == finalLeft, "OCR drag saves the moved bubble once on release"));
             awaitAction(request,MainActivity.ScreenCaptureService.ACT_OCR_REFINE);
             check(MainActivity.ScreenCaptureService.ACT_OCR_REFINE.equals(request.get().getAction()), "Release requests localized refinement on the same captured frame");
-            check("日本語".equals(request.get().getStringExtra("seed")) && request.get().getFloatExtra("aim_x",0) == finalX,
+            check("日本語".equals(request.get().getStringExtra("seed"))
+                            && Math.abs(request.get().getFloatExtra("aim_x",0)-(finalX+1))<0.1f,
                     "Aim uses the requested position before WindowManager renders the move");
             app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",session)
                     .putExtra("refined",true).putExtra("text","日本語"));
@@ -787,6 +924,7 @@ final class OcrValidation {
                             "Closing during any animation immediately releases every owned OCR window");
                 }
                 destinations.select(previousDestination);
+                languages.setLanguage(previousLanguage);
             });
             MainActivity.ScreenCaptureService.READY = wasReady;
         }
