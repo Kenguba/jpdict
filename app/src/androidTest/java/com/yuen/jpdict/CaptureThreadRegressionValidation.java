@@ -26,6 +26,8 @@ final class CaptureThreadRegressionValidation {
     static String run(Instrumentation instrumentation) throws Exception {
         CaptureThreadRegressionValidation test = new CaptureThreadRegressionValidation();
         test.cancelAndRestart(instrumentation);
+        test.stopNonPreviewCapture(instrumentation, false);
+        test.stopNonPreviewCapture(instrumentation, true);
         return "Capture worker: " + test.checks + " device assertions passed\n";
     }
     private void cancelAndRestart(Instrumentation instrumentation) throws Exception {
@@ -99,6 +101,60 @@ final class CaptureThreadRegressionValidation {
                 service.captureMain.removeCallbacksAndMessages(null); service.captureFrames = null;
                 writer.get().close(); source.get().close();
                 for (Bitmap bitmap : copies) bitmap.recycle();
+            });
+        }
+    }
+    private void stopNonPreviewCapture(Instrumentation instrumentation, boolean copying) throws Exception {
+        List<String> published = new ArrayList<>();
+        MainActivity.ScreenCaptureService service = new MainActivity.ScreenCaptureService() {
+            @Override public String getPackageName() { return instrumentation.getTargetContext().getPackageName(); }
+            @Override public void sendBroadcast(Intent intent) {}
+            @Override boolean captureAlive() { return captureFrames != null; }
+            @Override void requireProjection(Intent intent) { published.add("unexpected authorization"); }
+            @Override void sendOcrResult(String text, String error) { published.add(error == null ? text : error); }
+            @Override void recognize(Bitmap bitmap, boolean region, long operation) {
+                published.add("unexpected recognition"); bitmap.recycle(); finishPreviewOperation(operation);
+            }
+        };
+        AtomicReference<ScreenCaptureFrames> source = new AtomicReference<>();
+        AtomicReference<ImageWriter> writer = new AtomicReference<>();
+        CountDownLatch blocked = new CountDownLatch(1), release = new CountDownLatch(1);
+        onMain(instrumentation, () -> {
+            service.w = 7; service.h = 5;
+            source.set(new ScreenCaptureFrames(7, 5, service.captureMain)); service.captureFrames = source.get();
+            writer.set(ImageWriter.newInstance(source.get().surface(), 1)); queue(writer.get(), Color.GREEN);
+        });
+        Handler worker = (Handler) field(source.get(), "worker");
+        HandlerThread thread = (HandlerThread) field(source.get(), "thread");
+        worker.post(() -> {
+            blocked.countDown();
+            try { release.await(5, TimeUnit.SECONDS); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+        });
+        try {
+            check(blocked.await(5, TimeUnit.SECONDS), "The non-preview capture worker can be held before cancellation");
+            Runnable stop = () -> {
+                service.stopCapture();
+                check(service.previewInFlight && service.activeRequest == null,
+                        "Stopping during the acquisition delay or queued native copy invalidates only the logical request");
+            };
+            onMain(instrumentation, () -> {
+                service.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_REGION));
+                if (!copying) stop.run();
+            });
+            if (copying) {
+                SystemClock.sleep(360);
+                onMain(instrumentation, stop);
+            }
+            release.countDown(); await(instrumentation, () -> !service.previewInFlight);
+            onMain(instrumentation, () -> check(published.isEmpty() && MainActivity.ScreenCaptureService.retiredPreviewTaskCount() == 0,
+                    "Stopped capture stages release their gate without publishing, reauthorizing or retiring an unsubmitted model"));
+            thread.join(3000);
+            check(!thread.isAlive(), "Stopping a queued non-preview copy eventually releases its native capture worker");
+        } finally {
+            release.countDown();
+            onMain(instrumentation, () -> {
+                service.captureMain.removeCallbacksAndMessages(null); writer.get().close(); source.get().close();
             });
         }
     }
