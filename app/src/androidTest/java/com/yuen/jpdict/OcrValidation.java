@@ -25,7 +25,7 @@ final class OcrValidation {
     private void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
     static String run(Instrumentation instrumentation, boolean fonts) throws Exception {
         OcrValidation test = new OcrValidation();
-        test.mainFailureReporting(instrumentation); test.images(); test.selection(); test.repeatedCapture(instrumentation); test.canceledCapture(instrumentation); test.queuedLanguageSnapshot(instrumentation); test.nonPreviewRequestsSerialized(instrumentation); test.capturePhaseTimeoutDoesNotRetireModel(instrumentation); test.stalledPreviewRecovery(instrumentation); test.captureStopRecovery(instrumentation); test.repeatedStallStopsCapture(instrumentation); test.gestures(instrumentation);
+        test.mainFailureReporting(instrumentation); test.images(); test.selection(); test.repeatedCapture(instrumentation); test.canceledCapture(instrumentation); test.queuedLanguageSnapshot(instrumentation); test.nonPreviewRequestsSerialized(instrumentation); test.capturePhaseTimeoutDoesNotRetireModel(instrumentation); test.stalledPreviewRecovery(instrumentation); test.captureStopRecovery(instrumentation); test.stoppedCaptureCallbacks(instrumentation); test.repeatedStallStopsCapture(instrumentation); test.gestures(instrumentation);
         String measured = fonts ? test.fonts(instrumentation) : "";
         return "OCR: " + test.checks + " assertions passed\n" + OcrLanguageValidation.run(instrumentation) + measured;
     }
@@ -467,6 +467,71 @@ final class OcrValidation {
             service.captureMain.removeCallbacksAndMessages(null);
             stalled.close();replacement.close();
         });
+    }
+    private void stoppedCaptureCallbacks(Instrumentation instrumentation) throws Exception {
+        Context app=instrumentation.getTargetContext();
+        OcrLanguageSettings settings=OcrLanguageSettings.get(app);
+        OcrLanguageSettings.Language previous=settings.language();
+        onMain(instrumentation,()->settings.setLanguage(OcrLanguageSettings.Language.ENGLISH));
+        try{
+            for(int variant=0;variant<3;variant++){
+                boolean region=variant!=2, failure=variant==1;
+                long operation=-301L-variant;
+                List<String> results=new ArrayList<>();
+                AtomicReference<Intent> renewed=new AtomicReference<>();
+                java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+                TaskCompletionSource<Text> held=new TaskCompletionSource<>();
+                TextRecognizer model=(TextRecognizer)Proxy.newProxyInstance(TextRecognizer.class.getClassLoader(),
+                        new Class<?>[]{TextRecognizer.class},(proxy,method,args)->{
+                            if("process".equals(method.getName()))return calls.incrementAndGet()==1?held.getTask()
+                                    :Tasks.forResult(new Text("current",Collections.emptyList()));
+                            return null;
+                        });
+                MultilingualOcrRecognizer recognizer=new MultilingualOcrRecognizer(model,model,model,null);
+                recognizer.initialize(app);
+                MainActivity.ScreenCaptureService service=new MainActivity.ScreenCaptureService(){
+                    {attachBaseContext(app);ocrRecognizer=recognizer;}
+                    @Override public void sendBroadcast(Intent intent){}
+                    @Override void sendOcrResult(String text,String error){results.add(error==null?text:error);}
+                    @Override public void startActivity(Intent intent){results.add(intent.getStringExtra("query"));}
+                    @Override boolean captureAlive(){return false;}
+                    @Override void requireProjection(Intent request){renewed.set(new Intent(request));}
+                };
+                Bitmap old=Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888);
+                Bitmap current=Bitmap.createBitmap(8,8,Bitmap.Config.ARGB_8888);
+                try{
+                    onMain(instrumentation,()->{
+                        service.activeRequest=new Intent(region?MainActivity.ScreenCaptureService.ACT_OCR_REGION:MainActivity.ScreenCaptureService.ACT_OCR);
+                        service.beginPreviewOperation(operation);service.recognize(old,region,operation);
+                    });
+                    awaitMain(instrumentation,()->calls.get()==1,"The old model task did not start");
+                    onMain(instrumentation,()->{
+                        service.stopCapture();
+                        check(service.activeRequest==null && service.previewInFlight && service.previewOperation==operation && !old.isRecycled(),
+                                "Stopping invalidates the logical request while preserving its physical model lock and bitmap");
+                        service.captureOnce(new Intent(MainActivity.ScreenCaptureService.ACT_OCR_REGION).putExtra("marker",operation));
+                        check(service.pendingPreview!=null && calls.get()==1 && renewed.get()==null,
+                                "A renewed capture waits for the stopped model to release its physical operation");
+                    });
+                    if(failure)held.setException(new IllegalStateException("stale failure"));
+                    else held.setResult(new Text("stale success",Collections.emptyList()));
+                    awaitMain(instrumentation,()->renewed.get()!=null,"The queued capture did not resume after the old callback");
+                    onMain(instrumentation,()->{
+                        check(results.isEmpty() && old.isRecycled() && !service.previewInFlight && service.pendingPreview==null
+                                        && renewed.get().getLongExtra("marker",0)==operation,
+                                "A stopped region success/failure or notification success cannot publish, but releases the bitmap and newest request");
+                        service.activeRequest=renewed.get();service.beginPreviewOperation(operation-10);
+                        service.recognize(current,true,operation-10);
+                    });
+                    awaitMain(instrumentation,current::isRecycled,"The renewed model task did not finish");
+                    onMain(instrumentation,()->check(results.equals(Collections.singletonList("current")) && !service.previewInFlight,
+                            "Only the renewed capture publishes and releases its operation normally"));
+                }finally{
+                    if(!held.getTask().isComplete())held.setException(new IllegalStateException("test cleanup"));
+                    onMain(instrumentation,()->{service.captureMain.removeCallbacksAndMessages(null);recognizer.close();});
+                }
+            }
+        }finally{onMain(instrumentation,()->settings.setLanguage(previous));}
     }
     private void repeatedStallStopsCapture(Instrumentation instrumentation) throws Exception {
         List<Intent> responses=new ArrayList<>();int[] stopped={0};

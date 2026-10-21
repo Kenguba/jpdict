@@ -541,7 +541,7 @@ public class MainActivity extends Activity {
             captureMain.postDelayed(new Runnable(){
                 int attempts;
                 @Override public void run(){
-                if(operation!=previewOperation || (preview && session!=previewSession)){
+                if(operation!=previewOperation || activeRequest==null || (preview && session!=previewSession)){
                     finishPreviewOperation(operation);return;}
                 if(!captureAlive()){finishPreviewOperation(operation);requireProjection(operationRequest);return;}
                 final ScreenCaptureFrames source=captureFrames;
@@ -549,7 +549,7 @@ public class MainActivity extends Activity {
                 try{source.copyLatest(crop,(bitmap,error,retryable)->{
                     // Copy completion may arrive after cancellation, rotation or
                     // a renewed projection. Only the owning capture can publish.
-                    if(operation!=previewOperation || (preview && session!=previewSession)){
+                    if(operation!=previewOperation || activeRequest==null || (preview && session!=previewSession)){
                         if(bitmap!=null)bitmap.recycle();
                         finishPreviewOperation(operation);return;
                     }
@@ -777,7 +777,7 @@ public class MainActivity extends Activity {
                     new MultilingualOcrRecognizer.Callback() {
                         @Override public void onSuccess(String q) {
                             try {
-                                if(operation!=previewOperation)return;
+                                if(operation!=previewOperation || activeRequest==null)return;
                                 if(region){
                                     sendOcrResult(q,null);
                                 }else{
@@ -794,7 +794,7 @@ public class MainActivity extends Activity {
 
                         @Override public void onFailure(Exception e) {
                             try {
-                                if(operation!=previewOperation)return;
+                                if(operation!=previewOperation || activeRequest==null)return;
                                 String message=e==null || e.getMessage()==null
                                         ? "没有识别到文字"
                                         : e.getMessage();
@@ -841,7 +841,7 @@ public class MainActivity extends Activity {
         }
         void stopCapture(){
             boolean wasReady=READY;
-            previewSession=0;pendingPreview=null;
+            previewSession=0;pendingPreview=null;activeRequest=null;
             // Stopping MediaProjection does not cancel an ML Kit Task. Keep
             // its operation lock and watchdog until its callback or watchdog
             // retires it; a renewed projection must not overlap that client.
