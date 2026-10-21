@@ -23,6 +23,7 @@ public final class DictionaryInstrumentation extends Instrumentation {
     private boolean remoteMode;
     private boolean destinationMode;
     private boolean pagesMode;
+    private boolean searchHostMode;
     private boolean drawerMode;
     private boolean themeMode;
     private String themeRestart;
@@ -39,6 +40,7 @@ public final class DictionaryInstrumentation extends Instrumentation {
         remoteMode = arguments != null && arguments.containsKey("dictionary_remote");
         destinationMode = arguments != null && arguments.containsKey("destination");
         pagesMode = arguments != null && arguments.containsKey("pages");
+        searchHostMode = arguments != null && arguments.containsKey("search_host");
         drawerMode = arguments != null && arguments.containsKey("drawer");
         themeMode = arguments != null && arguments.containsKey("theme");
         themeRestart = arguments == null ? null : arguments.getString("theme_restart");
@@ -47,6 +49,10 @@ public final class DictionaryInstrumentation extends Instrumentation {
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (searchHostMode) {
+                result.putString("stream", SearchHostWindowValidation.run(this));
+                finish(android.app.Activity.RESULT_OK, result); return;
+            }
             if (themeRestart != null) {
                 result.putString("stream", AppThemeValidation.restart(this, "save".equals(themeRestart)));
                 finish(android.app.Activity.RESULT_OK, result); return;

@@ -116,7 +116,7 @@ final class OcrLookupRoundTripValidation {
                 main(test, () -> paper.getLocationOnScreen(origin));
                 float aimX = origin[0] + 200 + ink.measureText(expected) / 2;
                 float aimY = origin[1] + 500 + (ink.ascent() + ink.descent()) / 2;
-                float gap = 12 * app.getResources().getDisplayMetrics().density;
+                float offset = 48 * app.getResources().getDisplayMetrics().density;
                 AtomicReference<Rect> position = new AtomicReference<>();
                 main(test, () -> {
                     paper.invalidate();
@@ -125,7 +125,7 @@ final class OcrLookupRoundTripValidation {
                     OcrPickupController.Host host = (OcrPickupController.Host)field(owner, "host");
                     host.position();
                     Rect before = host.position();
-                    host.move(Math.round(aimX - (mode == OcrPickupMode.WORD ? 120 : 0) - before.width()/2f), Math.round(aimY + gap));
+                    host.move(Math.round(aimX - (mode == OcrPickupMode.WORD ? 120 : 0) - before.width()/2f), Math.round(aimY + offset - before.height()/2f));
                 });
                 Thread.sleep(250);
                 main(test, () -> {

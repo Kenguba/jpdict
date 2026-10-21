@@ -194,7 +194,7 @@ final class OcrPickupController implements AutoCloseable {
                 wm.getDefaultDisplay().getRealMetrics(screen);
                 pointer.update(y, y+start.height(), screen.heightPixels, density);
                 int top = Math.round(pointer.clampBubbleTop(y, start.height(), screen.heightPixels, density));
-                updateAim(host.move(x, top), event.getRawX()); lastX = x; lastY = y;
+                updateAim(host.move(x, top)); lastX = x; lastY = y;
                 if (wasBelow != pointer.below()) {
                     // Side changes are positioning, not a text-selection stroke.
                     sweep.clear(); path.clear(); selected = null; dwell.reset();
@@ -221,7 +221,7 @@ final class OcrPickupController implements AutoCloseable {
                         pointer.reset();
                         downX = event.getRawX(); downY = event.getRawY(); start = host.position();
                         stopTouch = stop;
-                        updateAim(start, event.getRawX()); lastX = start.left; lastY = start.top; direction = -1;
+                        updateAim(start); lastX = start.left; lastY = start.top; direction = -1;
                         moved = held = ocrRequested = false; pressed = view; dwell.reset();
                         generation = gestureGeneration;
                         main.postDelayed(hold, 700); return true;
@@ -235,7 +235,7 @@ final class OcrPickupController implements AutoCloseable {
                         pressed = null; main.removeCallbacks(activate);
                         dragging = false;
                         if (held) {
-                            updateAim(start, downX);
+                            updateAim(start);
                             hideJoystick();
                             OcrPickupMode chosen = OcrPickupMode.forDirection(direction);
                             if (direction == 3) {
@@ -322,10 +322,10 @@ final class OcrPickupController implements AutoCloseable {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return null;
         return Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? "向上滑动" : "向下滑动") : (dx < 0 ? "向左滑动" : "向右滑动");
     }
-    private void updateAim(Rect bubble, float touchX) {
+    private void updateAim(Rect bubble) {
         aimBubble.set(bubble);
         wm.getDefaultDisplay().getRealMetrics(screen);
-        aimX = pointer.horizontalAim(touchX, screen.widthPixels, density);
+        aimX = pointer.horizontalAim(bubble.exactCenterX(), screen.widthPixels, density);
         aimY = pointer.update(bubble.top, bubble.bottom, screen.heightPixels, density);
         if (overlay != null) overlay.invalidate();
     }

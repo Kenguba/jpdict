@@ -40,6 +40,8 @@ public class FloatingService extends Service {
             "com.yuen.jpdict.LOOKUP_DISMISS";
     public static final String EXTRA_LOOKUP_HOSTED = "lookup_hosted";
     public static final String EXTRA_HOST_SESSION = "lookup_host_session";
+    public static final String ACTION_SEARCH_HOST_READY = "com.yuen.jpdict.SEARCH_HOST_READY";
+    public static final String EXTRA_SEARCH_HOST_TOKEN = "search_host_token";
     public static final String EXTRA_LOOKUP_PRIVATE = "lookup_private";
     public static final String EXTRA_HOST_SEARCH = "host_search";
     public static final String ACTION_LOOKUP_HOST_FINISH =
@@ -475,7 +477,8 @@ public class FloatingService extends Service {
     private void toggleSearchPanel() {
         try {
             if (searchPanel != null) {
-                if (searchPanel.getVisibility() != View.VISIBLE) {
+                if (searchPanel.getVisibility() != View.VISIBLE ||
+                        (searchPanel instanceof FloatingSearchView && ((FloatingSearchView)searchPanel).isLookupPaused())) {
                     openSearchHost();
                     return;
                 }
@@ -511,7 +514,7 @@ public class FloatingService extends Service {
         }
     }
 
-    private void showSearchPanel() {
+    private void showSearchPanel(android.os.IBinder token) {
         if (!Settings.canDrawOverlays(this) || wm == null) return;
         removeResultCard();
         FloatingSearchView root = new FloatingSearchView(this, currentSearchQuery,
@@ -532,7 +535,7 @@ public class FloatingService extends Service {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                 (searchPanelHosted ? WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE : 0);
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(-1, -1,
-                overlayType(), flags, PixelFormat.TRANSLUCENT);
+                WindowManager.LayoutParams.TYPE_APPLICATION_PANEL, flags, PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
         if (Build.VERSION.SDK_INT >= 30) {
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
@@ -545,11 +548,21 @@ public class FloatingService extends Service {
         searchPanel = root;
         searchPanelLp = lp;
         if (searchKeyboardRequested) root.prefillClipboardOnFocus();
+        mountSearchPanel(token);
+    }
+
+    private void mountSearchPanel(android.os.IBinder token) {
+        if (!(searchPanel instanceof FloatingSearchView) || token == null) return;
+        FloatingSearchView root = (FloatingSearchView) searchPanel;
+        if (root.isAttachedToWindow() && searchPanelLp.token == token) return;
         try {
-            wm.addView(root, lp);
+            clearSearchBackCallback();
+            if (root.getParent() != null) wm.removeViewImmediate(root);
+            searchPanelLp.token = token;
+            wm.addView(root, searchPanelLp);
             root.requestApplyInsets();
             root.requestFocus();
-            if (!searchPanelHosted) registerSearchBackCallback();
+            registerSearchBackCallback();
             bringBubbleToFront();
             DictionaryOperation.overlayAdded(this);
             if (searchKeyboardRequested) {
@@ -560,6 +573,9 @@ public class FloatingService extends Service {
             }
             markAction("SHOW_SEARCH_PANEL_FINISH");
             openDrawerWhenReady();
+        } catch (WindowManager.BadTokenException staleHost) {
+            // Configuration changes may arrive before the replacement host attaches.
+            recordHandledCrash("mountSearchPanel", staleHost);
         } catch (Throwable error) {
             root.dispose();
             searchPanel = null;
@@ -770,7 +786,6 @@ public class FloatingService extends Service {
             // The Activity protects its search return route before launching
             // the external app. Keep this exact surface, including chip state.
             rootSearchForLookup();
-            searchPanel.setVisibility(View.INVISIBLE);
             sendBroadcast(new Intent(ACTION_LOOKUP_HOST_EXTERNAL).setPackage(getPackageName())
                     .putExtra(EXTRA_HOST_SESSION, activeHostSession)
                     .putExtra(EXTRA_LOOKUP_QUERY, query));
@@ -1902,23 +1917,33 @@ public class FloatingService extends Service {
             // search surface for density/font changes, retaining its draft
             // and privacy state while leaving the real bubble mounted.
             boolean hosted = searchPanelHosted;
+            android.os.IBinder token = searchPanelLp.token;
+            boolean paused = searchPanel instanceof FloatingSearchView && ((FloatingSearchView)searchPanel).isLookupPaused();
             int visibility = searchPanel.getVisibility();
             String pageRequest = pendingSearchPageRequest;
             String pageHostSession = pendingSearchPageHostSession;
             String experience = pendingDrawerExperience;
             removeSearchPanel(false);
             searchPanelHosted = hosted;
-            showSearchPanel();
+            showSearchPanel(token);
             pendingSearchPageRequest = pageRequest;
             pendingSearchPageHostSession = pageHostSession;
             pendingDrawerExperience = experience;
-            if (visibility != View.VISIBLE || !pageRequest.isEmpty()) rootSearchForLookup();
+            if (paused || visibility != View.VISIBLE || !pageRequest.isEmpty()) rootSearchForLookup();
             if (searchPanel != null) searchPanel.setVisibility(visibility);
             openDrawerWhenReady();
         }
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        android.os.IBinder token = intent == null || intent.getExtras() == null ? null
+                : intent.getExtras().getBinder(EXTRA_SEARCH_HOST_TOKEN);
+        if (intent != null && ACTION_SEARCH_HOST_READY.equals(intent.getAction())) {
+            if (activeHostSession.equals(intent.getStringExtra(EXTRA_HOST_SESSION))) {
+                mountSearchPanel(token);
+            }
+            return START_STICKY;
+        }
         if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())
                 && intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)
                 && !intent.hasExtra(FloatingSearchRoutes.EXTRA_PAGE_REQUEST)) {
@@ -1982,6 +2007,7 @@ public class FloatingService extends Service {
             removeLookupOverlay(true);
             lookupOverlayHosted = false;
             lookupPrivateMode = false;
+            mountSearchPanel(token);
             if (searchPanel != null) searchPanel.setVisibility(View.VISIBLE);
             if (searchPanel instanceof FloatingSearchView) ((FloatingSearchView)searchPanel).resumeAfterLookup();
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
@@ -1994,7 +2020,7 @@ public class FloatingService extends Service {
             if (Settings.canDrawOverlays(this) && searchPanel == null) {
                 if (intent.getBooleanExtra(EXTRA_LOOKUP_HOSTED, false)) {
                     searchPanelHosted = true;
-                    showSearchPanel();
+                    showSearchPanel(token);
                 } else {
                     openSearchHost();
                 }
@@ -2007,6 +2033,7 @@ public class FloatingService extends Service {
             String mode = normalizeLookupMode(intent.getStringExtra(EXTRA_LOOKUP_MODE));
             boolean returnToSearch =
                     intent.getBooleanExtra(EXTRA_RETURN_TO_SEARCH, false);
+            if (returnToSearch) mountSearchPanel(token);
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 

@@ -798,6 +798,7 @@ final class FloatingSearchView extends FrameLayout {
         drawerMotion.snap(state.isDrawerOpen() ? drawerMotion.limit() : 0);
         hideKeyboard();
     }
+    boolean isLookupPaused() { return clipboardSuspended; }
     void resumeAfterLookup() {
         clipboardSuspended = false;
         suggestions.resume();
