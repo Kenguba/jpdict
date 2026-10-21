@@ -146,9 +146,9 @@ final class PageTransitionValidation {
                     .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, true)
                     .putExtra(FloatingService.EXTRA_LOOKUP_QUERY, "hold on");
             dispatch(test, service, lookup);
-            check(search.isAttachedToWindow() && search.getVisibility() == View.INVISIBLE
+            check(search.isAttachedToWindow() && search.getVisibility() == View.VISIBLE
                             && field("searchPanel").get(service) == search && service.activity == null,
-                    "Hosted third-party lookup retains the same hidden search window");
+                    "Hosted third-party lookup retains the same visible search window");
             check(service.broadcast != null && FloatingService.ACTION_LOOKUP_HOST_EXTERNAL.equals(service.broadcast.getAction())
                             && context.getPackageName().equals(service.broadcast.getPackage())
                             && "external-host".equals(service.broadcast.getStringExtra(FloatingService.EXTRA_HOST_SESSION))
@@ -165,9 +165,9 @@ final class PageTransitionValidation {
             dispatch(test, service, returning);
             dispatch(test, service, new Intent(FloatingService.ACTION_LOOKUP_DISMISS)
                     .putExtra(FloatingService.EXTRA_HOST_SESSION, "former-host"));
-            check(search.isAttachedToWindow() && search.getVisibility() == View.INVISIBLE
+            check(search.isAttachedToWindow() && search.getVisibility() == View.VISIBLE
                             && "external-host".equals(field("activeHostSession").get(service)),
-                    "Former hosts cannot reveal, dispose or take ownership of an external lookup return");
+                    "Former hosts cannot dispose or take ownership of an external lookup return");
             returning.putExtra(FloatingService.EXTRA_HOST_SESSION, "external-host");
             dispatch(test, service, returning);
             check(search.isAttachedToWindow() && search.getVisibility() == View.VISIBLE
@@ -178,12 +178,13 @@ final class PageTransitionValidation {
                     "Returning from an external lookup cannot replace the live private draft with stale Intent text");
             dispatch(test, service, lookup);
             onMain(test, () -> {
+                ((View)field("searchPanel").get(service)).setVisibility(View.INVISIBLE);
                 java.lang.reflect.Method toggle = FloatingService.class.getDeclaredMethod("toggleSearchPanel");
                 toggle.setAccessible(true); toggle.invoke(service);
             });
             check(search.isAttachedToWindow() && field("searchPanel").get(service) == search
                             && service.activity != null && service.activity.getBooleanExtra(FloatingService.EXTRA_HOST_SEARCH, false),
-                    "A bubble tap during external lookup opens its host without discarding hidden composer content");
+                    "A bubble tap opens a hidden retained search without discarding composer content");
             dispatch(test, service, new Intent(FloatingService.ACTION_LOOKUP_DISMISS)
                     .putExtra(FloatingService.EXTRA_HOST_SESSION, "external-host"));
             check(!search.isAttachedToWindow() && field("searchPanel").get(service) == null

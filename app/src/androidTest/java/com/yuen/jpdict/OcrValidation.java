@@ -826,7 +826,7 @@ final class OcrValidation {
                         "A delayed stop from the old projection cannot silently cancel a fresh pickup");
             });
             int finalLeft = Math.round(finalX+1)-20;
-            float y = 700-12*density;
+            float y = rendered.exactCenterY()-48*density;
             app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",session)
                     .putExtra("words",new String[]{"日本語"}).putExtra("boxes",new int[]{finalLeft,(int)y-10,finalLeft+44,(int)y+10}));
             Thread.sleep(100); // Deliver the main-thread preview result before releasing the pointer.
@@ -836,8 +836,8 @@ final class OcrValidation {
             awaitAction(request,MainActivity.ScreenCaptureService.ACT_OCR_REFINE);
             check(MainActivity.ScreenCaptureService.ACT_OCR_REFINE.equals(request.get().getAction()), "Release requests localized refinement on the same captured frame");
             check("日本語".equals(request.get().getStringExtra("seed"))
-                            && Math.abs(request.get().getFloatExtra("aim_x",0)-(finalX+1))<0.1f,
-                    "Aim uses the requested position before WindowManager renders the move");
+                            && Math.abs(request.get().getFloatExtra("aim_x",0)-(finalLeft+rendered.width()/2f))<0.1f,
+                    "Aim uses the requested bubble centre before WindowManager renders the move");
             app.sendBroadcast(new Intent(MainActivity.ScreenCaptureService.ACTION_PREVIEW).setPackage(app.getPackageName()).putExtra("session",session)
                     .putExtra("refined",true).putExtra("text","日本語"));
             for (int n = 0; n < 30 && query.get() == null; n++) Thread.sleep(50);

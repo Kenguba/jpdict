@@ -22,22 +22,38 @@ public final class OcrGestureRulesTest {
                 "A replacement pointer area permits capture at exactly 150ms, never at 149ms");
         OcrPointerGeometry pointer = new OcrPointerGeometry();
         check(pointer.horizontalAim(122,1000,1)==122,
-                "The crosshair follows the raw touch coordinate instead of the bubble center");
+                "The chosen horizontal anchor is preserved before edge clamping");
         check(pointer.horizontalAim(0,1000,1)==4 && pointer.horizontalAim(1000,1000,1)==996,
                 "The crosshair stays visible at both display edges");
         check(pointer.horizontalAim(2100,2160,2)==2100,
-                "Touch coordinates are preserved across display densities");
-        check(pointer.update(800,844,1000,1) == 788 && !pointer.below(), "Pointer normally clears the top of the bubble");
-        check(pointer.update(896,940,1000,1) == 952 && pointer.below(), "Bubble-height plus pointer clearance enters the lower-screen mode");
-        check(pointer.update(882,926,1000,1) == 938 && pointer.below(), "Small return motion cannot flip the pointer repeatedly");
-        check(pointer.update(872,916,1000,1) == 860 && !pointer.below(), "24dp extra room returns the pointer above");
+                "Horizontal anchors retain screen pixels across display densities");
+        check(pointer.update(800,844,1000,1) == 774 && !pointer.below(), "Pointer normally stays 48dp above the bubble centre");
+        check(pointer.update(896,940,1000,1) == 966 && pointer.below(), "Bubble-height plus pointer clearance enters the lower-screen mode");
+        check(pointer.update(882,926,1000,1) == 952 && pointer.below(), "Small return motion cannot flip the pointer repeatedly");
+        check(pointer.update(858,902,1000,1) == 832 && !pointer.below(), "24dp extra room returns the pointer above");
         pointer.update(956,1000,1000,1);
         float bottomTop = pointer.clampBubbleTop(956,44,1000,1);
-        check(bottomTop == 940 && pointer.update(bottomTop,bottomTop+44,1000,1) == 996, "Reserved edge clearance exposes the bottommost pointer");
+        check(bottomTop == 926 && pointer.update(bottomTop,bottomTop+44,1000,1) == 996, "Reserved edge clearance exposes the bottommost pointer");
         pointer.reset();
-        check(pointer.clampBubbleTop(0,44,1000,1) == 16 && pointer.update(16,60,1000,1) == 4, "Topmost pointer remains outside the bubble and on screen");
+        check(pointer.clampBubbleTop(0,44,1000,1) == 30 && pointer.update(30,74,1000,1) == 4, "Topmost pointer keeps the fixed centre offset on screen");
         pointer.reset();
-        check(pointer.update(1792,1880,2000,2) == 1904 && pointer.below(), "Geometry thresholds use dp across display densities");
+        check(pointer.update(1792,1880,2000,2) == 1932 && pointer.below(), "Geometry thresholds use dp across display densities");
+        for (float density : new float[]{.75f,1,1.5f,2,2.3f,2.625f,3.175f}) for (int size : new int[]{24,44,100}) {
+            float height = Math.round(size*density), screen = 1000*density, offset = 48*density;
+            pointer.reset();
+            float normal = pointer.update(120*density,120*density+height,screen,density);
+            check(Math.abs(normal-(120*density+height/2-offset))<.001f,
+                    "All supported sizes use a 48dp centre offset above, including fractional densities");
+            float top = Math.round(pointer.clampBubbleTop(0,height,screen,density));
+            check(Math.abs(pointer.update(top,top+height,screen,density)-(top+height/2-offset))<.001f,
+                    "Integer window positioning retains the upper offset at the display boundary");
+            pointer.update(screen-height,screen,screen,density);
+            top = Math.round(pointer.clampBubbleTop(screen-height,height,screen,density));
+            check(Math.abs(pointer.update(top,top+height,screen,density)-(top+height/2+offset))<.001f,
+                    "All supported sizes retain the lower offset at the display boundary");
+            check(top+height/2+offset<=screen-4*density+.001f,
+                    "Rounded bubble bounds leave the full pointer radius inside the display");
+        }
         check(OcrPickupMode.direction(0, -50, 28) == 0, "Up selects sentence");
         check(OcrPickupMode.direction(50, 0, 28) == 1, "Right selects Japanese");
         check(OcrPickupMode.direction(0, 50, 28) == 2 && OcrPickupMode.forDirection(2) == OcrPickupMode.CHINESE, "Down selects Chinese");

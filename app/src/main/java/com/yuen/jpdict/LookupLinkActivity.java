@@ -146,6 +146,14 @@ public final class LookupLinkActivity extends Activity {
         hostVisible = true;
     }
 
+    @Override public void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (Settings.canDrawOverlays(this) && (showingSearch ||
+                getIntent().getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false))) {
+            sendLookupAction(FloatingService.ACTION_SEARCH_HOST_READY);
+        }
+    }
+
     @Override protected void onPostResume() {
         super.onPostResume();
         // A settings/search page launched above this bridge protects it from
@@ -321,8 +329,7 @@ public final class LookupLinkActivity extends Activity {
     }
 
     private void sendLookupAction(String action) {
-        Intent back = new Intent(this, FloatingService.class).setAction(action)
-                .putExtra(FloatingService.EXTRA_HOST_SESSION, hostSession);
+        Intent back = hostRequest(action);
         try {
             if (Build.VERSION.SDK_INT >= 26) {
                 startForegroundService(back);
@@ -332,6 +339,14 @@ public final class LookupLinkActivity extends Activity {
         } catch (Throwable ignored) {
             finishBridge();
         }
+    }
+
+    private Intent hostRequest(String action) {
+        Bundle extras = new Bundle();
+        extras.putBinder(FloatingService.EXTRA_SEARCH_HOST_TOKEN, getWindow().getDecorView().getWindowToken());
+        return new Intent(this, FloatingService.class).setAction(action)
+                .putExtra(FloatingService.EXTRA_HOST_SESSION, hostSession)
+                .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true).putExtras(extras);
     }
 
     private void markHostAction(String action) {
@@ -433,12 +448,9 @@ public final class LookupLinkActivity extends Activity {
             return;
         }
 
-        Intent show = new Intent(this, FloatingService.class)
-                .setAction(FloatingService.ACTION_SHOW_LOOKUP_OVERLAY)
-                .putExtra(FloatingService.EXTRA_HOST_SESSION, hostSession)
+        Intent show = hostRequest(FloatingService.ACTION_SHOW_LOOKUP_OVERLAY)
                 .putExtra(FloatingService.EXTRA_LOOKUP_QUERY, query)
                 .putExtra(FloatingService.EXTRA_LOOKUP_MODE, mode)
-                .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
                 .putExtra(FloatingService.EXTRA_LOOKUP_PRIVATE,
                         source.getBooleanExtra(FloatingService.EXTRA_LOOKUP_PRIVATE, false))
                 .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,
@@ -468,10 +480,7 @@ public final class LookupLinkActivity extends Activity {
             finishBridge();
             return;
         }
-        Intent show = new Intent(this, FloatingService.class)
-                .setAction(FloatingService.ACTION_SHOW_SEARCH)
-                .putExtra(FloatingService.EXTRA_HOST_SESSION, hostSession)
-                .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
+        Intent show = hostRequest(FloatingService.ACTION_SHOW_SEARCH)
                 .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,
                         source.getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false))
                 .putExtra(FloatingService.EXTRA_SEARCH_QUERY,

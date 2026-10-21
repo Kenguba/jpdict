@@ -31,6 +31,9 @@ final class OcrInteractionRegressionValidation {
         Set<View> windows = Collections.newSetFromMap(new IdentityHashMap<>());
         int[] mounts = {0}, removals = {0};
         WindowManager realWindows = (WindowManager)app.getSystemService(Context.WINDOW_SERVICE);
+        android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
+        realWindows.getDefaultDisplay().getRealMetrics(screen);
+        float density = app.getResources().getDisplayMetrics().density;
         WindowManager countedWindows = (WindowManager)Proxy.newProxyInstance(WindowManager.class.getClassLoader(),
                 new Class<?>[]{WindowManager.class}, (proxy, method, args) -> {
                     if ("addView".equals(method.getName())) {
@@ -60,7 +63,12 @@ final class OcrInteractionRegressionValidation {
         int[] moves = {0};
         OcrPickupController.Host host = new OcrPickupController.Host() {
             public Rect position() { return new Rect(position); }
-            public Rect move(int x, int y) { moves[0]++; position.offsetTo(x, y); return new Rect(position); }
+            public Rect move(int x, int y) {
+                moves[0]++;
+                position.offsetTo(Math.max(0, Math.min(x, screen.widthPixels-position.width())),
+                        Math.max(0, Math.min(y, screen.heightPixels-position.height())));
+                return new Rect(position);
+            }
             public void save() {}
             public void tap() {}
             public void lookup(String text) { queries.add(text); }
@@ -87,6 +95,41 @@ final class OcrInteractionRegressionValidation {
                 owner.set(new OcrPickupController(context, host)); listener.set(owner.get().listener());
                 Choreographer.getInstance().postFrameCallback(frames);
             });
+            // The real listeners must anchor every grip to the requested bubble position,
+            // including at display edges where the finger can keep moving after the bubble stops.
+            for (int sample=0; sample<18; sample++) {
+                final int size = Math.round(new int[]{24,44,100}[(sample/3)%3]*density), grip = sample%3;
+                View.OnTouchListener active = sample<9 ? listener.get() : owner.get().listener();
+                main(test, () -> {
+                    int left = (screen.widthPixels-size)/2, top = Math.round(56*density);
+                    position.set(left, top, left+size, top+size);
+                    float x = left+(grip==0 ? 1 : grip==1 ? size/2f : size-1), y = position.exactCenterY();
+                    touch(test, active, view, MotionEvent.ACTION_DOWN, x, y);
+                    checkPointer(owner.get(), position, position.exactCenterY()-48*density, "Off-centre DOWN");
+                    touch(test, active, view, MotionEvent.ACTION_MOVE, x+40*density, y);
+                    checkPointer(owner.get(), position, position.exactCenterY()-48*density, "Ordinary drag");
+                    touch(test, active, view, MotionEvent.ACTION_MOVE, screen.widthPixels-1, y);
+                    check(position.right==screen.widthPixels, "The right edge clamps the bubble before its pointer is positioned");
+                    checkPointer(owner.get(), position, position.exactCenterY()-48*density, "Right edge");
+                    touch(test, active, view, MotionEvent.ACTION_MOVE, 1, y);
+                    check(position.left==0, "The left edge clamps the bubble before its pointer is positioned");
+                    checkPointer(owner.get(), position, position.exactCenterY()-48*density, "Left edge");
+                    touch(test, active, view, MotionEvent.ACTION_MOVE, x, 1);
+                    checkPointer(owner.get(), position, position.exactCenterY()-48*density, "Upper edge");
+                    touch(test, active, view, MotionEvent.ACTION_MOVE, x, screen.heightPixels-1);
+                    checkPointer(owner.get(), position, position.exactCenterY()+48*density, "Lower edge");
+                    float threshold = size+Math.max(0,52*density-size/2f);
+                    float lowerTop = screen.heightPixels-size-threshold-12*density;
+                    touch(test, active, view, MotionEvent.ACTION_MOVE, x, y+lowerTop-top);
+                    checkPointer(owner.get(), position, position.exactCenterY()+48*density, "Inside the side-switch hysteresis");
+                    float upperTop = screen.heightPixels-size-threshold-24*density-1;
+                    touch(test, active, view, MotionEvent.ACTION_MOVE, x, y+upperTop-top);
+                    checkPointer(owner.get(), position, position.exactCenterY()-48*density, "After the side-switch hysteresis");
+                    touch(test, active, view, MotionEvent.ACTION_CANCEL, x, y);
+                    check(position.left==left && position.top==top, "Cancel restores the original bubble after edge dragging");
+                });
+            }
+            main(test, () -> position.set(400, 700, 488, 788));
             // Repeated hide must preserve the original 140ms deadline.
             touch(test, listener.get(), view, MotionEvent.ACTION_DOWN, 440, 740);
             touch(test, listener.get(), view, MotionEvent.ACTION_MOVE, 540, 840);
@@ -118,7 +161,6 @@ final class OcrInteractionRegressionValidation {
             main(test, () -> check(field(owner.get(), "overlay") == null, "Repeated pointer gestures release their window"));
 
             // Real 700ms holds, drawing, slow/fast movement and all directions.
-            float density = app.getResources().getDisplayMetrics().density;
             for (int round=0; round<20; round++) {
                 position.set(400, 700, 488, 788);
                 pressedAt[0] = SystemClock.uptimeMillis();
@@ -170,8 +212,6 @@ final class OcrInteractionRegressionValidation {
             main(test, () -> check(requests.size()==beforeCancel && !(Boolean)field(owner.get(), "armed"),
                     "Releasing in the centre cancels without starting a task"));
             // Cancellation preserves the fixed bubble and ring at every edge and size.
-            android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
-            realWindows.getDefaultDisplay().getRealMetrics(screen);
             for (int sample=0; sample<12; sample++) {
                 final int next = sample%4, size = Math.round(new int[]{24,44,100}[sample/4]*density);
                 main(test, () -> {
@@ -255,6 +295,10 @@ final class OcrInteractionRegressionValidation {
         check(ring != null && (Float)field(ring, "x") == bubble.exactCenterX()
                         && (Float)field(ring, "y") == bubble.exactCenterY(),
                 phase + " ring stays centred on the anchored bubble throughout its fade");
+    }
+    private void checkPointer(OcrPickupController owner, Rect bubble, float y, String phase) {
+        check((Float)field(owner, "aimX")==bubble.exactCenterX() && Math.abs((Float)field(owner, "aimY")-y)<.01f,
+                phase + " keeps the pointer on the bubble centre with the existing vertical clearance");
     }
     private static Object field(Object target, String name) {
         try { Field field=target.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(target); }

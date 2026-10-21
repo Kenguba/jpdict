@@ -41,7 +41,7 @@ final class OcrLivePipelineValidation {
         int[] hits = new int[5];
         for (int i=0;i<hits.length;i++) hits[i]=Math.round(100+ink.measureText("the ")+ink.measureText("first",0,i)+ink.measureText("first",i,i+1)/2);
         int y = Math.round(500+(ink.ascent()+ink.descent())/2);
-        int gap = Math.round(12*app.getResources().getDisplayMetrics().density);
+        int gap = Math.round(48*app.getResources().getDisplayMetrics().density)-44;
         Rect position = new Rect(x-144, y+gap, x-56, y+gap+88);
         View paper = new View(app) {
             @Override protected void onDraw(Canvas canvas) {
