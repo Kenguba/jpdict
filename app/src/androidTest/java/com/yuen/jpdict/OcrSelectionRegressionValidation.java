@@ -251,6 +251,7 @@ final class OcrSelectionRegressionValidation {
         AtomicReference<View> pointer = new AtomicReference<>();
         onMain(test, () -> {
             OcrPickupController controller = new OcrPickupController(context, new OcrPickupController.Host() {
+                public View anchor() { throw new AssertionError("Bitmap-only fixture has no window"); }
                 public Rect position() { return new Rect(); }
                 public Rect move(int x,int y) { return new Rect(); }
                 public void save() {}
@@ -300,6 +301,12 @@ final class OcrSelectionRegressionValidation {
                                     aimX.setAccessible(true); aimY.setAccessible(true);
                                     aimX.setFloat(owner.get(),x); aimY.setFloat(owner.get(),y);
                                     pointer.get().layout(0,0,size[0],size[1]); pointer.get().draw(new Canvas(frame));
+                                    java.lang.reflect.Field markerField = pointer.get().getClass().getDeclaredField("marker");
+                                    markerField.setAccessible(true);
+                                    View marker = (View)markerField.get(pointer.get());
+                                    int edge = Math.round(44*density); marker.layout(0,0,edge,edge);
+                                    Canvas markerCanvas = new Canvas(frame);
+                                    markerCanvas.translate(x-edge/2f,y-edge/2f); marker.draw(markerCanvas);
                                 } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
                             });
                             List<MultilingualOcrRecognizer.Region> regions = recognize(test,recognizer,frame,OcrLanguageSettings.Language.ENGLISH,false);

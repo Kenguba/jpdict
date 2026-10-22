@@ -111,7 +111,8 @@ public final class DictionaryInstrumentation extends Instrumentation {
                     finish(android.app.Activity.RESULT_OK, result); return;
                 }
                 if ("p0".equals(ocrMode)) {
-                    result.putString("stream", OcrInteractionRegressionValidation.run(this)
+                    result.putString("stream", OcrBubbleWindowValidation.run(this)
+                            + OcrInteractionRegressionValidation.run(this)
                             + CaptureThreadRegressionValidation.run(this)
                             + OcrSelectionRegressionValidation.run(this));
                     finish(android.app.Activity.RESULT_OK, result); return;

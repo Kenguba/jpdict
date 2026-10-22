@@ -694,10 +694,19 @@ final class OcrValidation {
         };
         final Rect position = new Rect(400, 700, 444, 744);
         final Rect rendered = new Rect(position);
+        View bubble = new View(app);
+        WindowManager windows = (WindowManager)app.getSystemService(Context.WINDOW_SERVICE);
+        WindowManager.LayoutParams bubbleParams = OcrBubbleWindowValidation.params(44,44);
+        bubbleParams.x=position.left; bubbleParams.y=position.top;
         int[] moves = {0}, saves = {0}, taps = {0}; AtomicReference<String> query = new AtomicReference<>();
         OcrPickupController.Host host = new OcrPickupController.Host() {
+            public View anchor() { return bubble; }
             public Rect position() { return new Rect(rendered); }
-            public Rect move(int x, int y) { position.offsetTo(x, y); moves[0]++; return new Rect(position); }
+            public Rect move(int x, int y) {
+                position.offsetTo(x, y); moves[0]++;
+                bubbleParams.x=x; bubbleParams.y=y; windows.updateViewLayout(bubble,bubbleParams);
+                return new Rect(position);
+            }
             public void save() { saves[0]++; }
             public void tap() { taps[0]++; }
             public void lookup(String text) { query.set(text); }
@@ -707,7 +716,10 @@ final class OcrValidation {
         boolean wasReady = MainActivity.ScreenCaptureService.READY;
         MainActivity.ScreenCaptureService.READY = false;
         try {
-            onMain(instrumentation, () -> { owner.set(new OcrPickupController(capture, host)); listener.set(owner.get().listener()); view.set(new View(app)); });
+            onMain(instrumentation, () -> {
+                windows.addView(bubble,bubbleParams);
+                owner.set(new OcrPickupController(capture, host)); listener.set(owner.get().listener()); view.set(bubble);
+            });
             onMain(instrumentation,()->{
                 synchronized(MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS){
                     MainActivity.ScreenCaptureService.RETIRED_PREVIEW_TASKS.add(-901L);
@@ -990,6 +1002,7 @@ final class OcrValidation {
                 }
                 destinations.select(previousDestination);
                 languages.setLanguage(previousLanguage);
+                if (bubble.isAttachedToWindow()) windows.removeViewImmediate(bubble);
             });
             MainActivity.ScreenCaptureService.READY = wasReady;
         }

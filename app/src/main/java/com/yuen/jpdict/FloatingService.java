@@ -439,8 +439,9 @@ public class FloatingService extends Service {
             private int screenOffsetX, screenOffsetY;
             private final DisplayMetrics screen = new DisplayMetrics();
             private final Rect movedPosition = new Rect();
+            @Override public View anchor() { return bubbleTopProxy != null ? bubbleTopProxy : bubble; }
             @Override public Rect position() {
-                View owner = bubbleTopProxy != null ? bubbleTopProxy : bubble;
+                View owner = anchor();
                 int[] location = new int[2]; owner.getLocationOnScreen(location);
                 screenOffsetX = location[0] - bubbleLp.x; screenOffsetY = location[1] - bubbleLp.y;
                 return new Rect(location[0], location[1], location[0] + bubbleLp.width, location[1] + bubbleLp.height);
