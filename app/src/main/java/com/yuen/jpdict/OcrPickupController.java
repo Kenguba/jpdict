@@ -12,6 +12,7 @@ import java.util.*;
 final class OcrPickupController implements AutoCloseable {
     private static final long OCR_TIMEOUT_MS = 20_000;
     interface Host {
+        View anchor();
         Rect position();
         Rect move(int x, int y);
         void save();
@@ -315,6 +316,7 @@ final class OcrPickupController implements AutoCloseable {
     }
     private void removeWindow(View view) {
         if (view == null) return;
+        if (view instanceof SelectionView) removeWindow(((SelectionView)view).marker);
         try { wm.removeView(view); }
         catch (IllegalArgumentException ignored) { /* OEM window teardown may race the animation end. */ }
     }
@@ -348,6 +350,7 @@ final class OcrPickupController implements AutoCloseable {
     private void showOverlay() {
         if (overlay != null) {
             overlay.frozen = null;
+            overlay.attachPointer();
             if (overlayHiding) {
                 overlayHiding = false; overlay.animate().withEndAction(null).cancel();
                 overlay.animate().alpha(1).setDuration(140).start();
@@ -358,6 +361,7 @@ final class OcrPickupController implements AutoCloseable {
         overlay = new SelectionView(context);
         overlay.setAlpha(0);
         wm.addView(overlay, overlayParams());
+        overlay.attachPointer();
         overlay.animate().alpha(1).setDuration(140).start();
         DictionaryOperation.overlayAdded(context);
     }
@@ -424,9 +428,38 @@ final class OcrPickupController implements AutoCloseable {
     @Override public void close() { closed = true; cancel(); main.removeCallbacksAndMessages(null); context.unregisterReceiver(receiver); }
     private final class SelectionView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint pointerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final View marker = new View(context) {
+            @Override protected void onDraw(Canvas canvas) {
+                canvas.drawCircle(getWidth()/2f, getHeight()/2f, 4*density, pointerPaint);
+            }
+        };
+        private final WindowManager.LayoutParams markerParams = overlayParams();
         private final int[] location = new int[2];
         private Picture frozen;
-        SelectionView(Context c) { super(c); }
+        SelectionView(Context c) {
+            super(c);
+            pointerPaint.setStyle(Paint.Style.STROKE); pointerPaint.setStrokeWidth(density);
+            pointerPaint.setColor(selected == null ? 0x66168af2 : 0x6600a777);
+            // A child surface follows the bubble without a separate screen-position redraw.
+            markerParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_PANEL;
+            markerParams.flags &= ~WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+            markerParams.gravity = Gravity.TOP | Gravity.LEFT;
+            animate().setUpdateListener(animation -> marker.setAlpha(getAlpha()));
+        }
+        void attachPointer() {
+            IBinder token = host.anchor().getWindowToken();
+            if (markerParams.token != token && marker.getParent() != null) wm.removeViewImmediate(marker);
+            int y = Math.round(aimY-aimBubble.exactCenterY());
+            boolean changed = markerParams.y != y || markerParams.width != aimBubble.width()
+                    || markerParams.height != aimBubble.height();
+            markerParams.token = token;
+            markerParams.y = y;
+            markerParams.width = aimBubble.width(); markerParams.height = aimBubble.height();
+            if (marker.getParent() == null) {
+                marker.setAlpha(getAlpha()); wm.addView(marker, markerParams);
+            } else if (changed) wm.updateViewLayout(marker, markerParams);
+        }
         void freeze() {
             if (frozen != null || getWidth() <= 0 || getHeight() <= 0) return;
             frozen = new Picture();
@@ -448,9 +481,8 @@ final class OcrPickupController implements AutoCloseable {
             }
             // Keep glyph strokes visible in MediaProjection: opaque outlines
             // erase letters from the input before OCR can read them.
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(density);
-            paint.setColor(selected == null ? 0x66168af2 : 0x6600a777);
-            canvas.drawCircle(aimX, aimY, 4*density, paint); paint.setStyle(Paint.Style.FILL);
+            pointerPaint.setColor(selected == null ? 0x66168af2 : 0x6600a777);
+            marker.invalidate();
             if (!captureVisible || (waiting && released)) { canvas.restore(); return; }
             String tip = waiting ? "识别中 · 继续按住并拖动" : selected == null ? "移动准星对准文字 · 松手取词" : mode.label+" · 可来回划选 · 松手查词";
             paint.setTextSize(12*density);

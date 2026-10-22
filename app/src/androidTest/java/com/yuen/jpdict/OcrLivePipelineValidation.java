@@ -53,6 +53,7 @@ final class OcrLivePipelineValidation {
         View bubble = new View(app); bubble.setBackgroundColor(0xff168af2);
         WindowManager.LayoutParams paperParams = params(-1, -1), bubbleParams = params(88,88);
         OcrPickupController.Host host = new OcrPickupController.Host() {
+            public View anchor() { return bubble; }
             public Rect position() { return new Rect(position); }
             public Rect move(int left, int top) {
                 position.offsetTo(left,top); bubbleParams.x=left; bubbleParams.y=top;

@@ -60,13 +60,23 @@ final class OcrInteractionRegressionValidation {
             @Override public void startActivity(Intent request) { throw new AssertionError("Unexpected authorization"); }
         };
         Rect position = new Rect(400, 700, 488, 788);
+        View view = new View(app);
+        WindowManager.LayoutParams bubbleParams = OcrBubbleWindowValidation.params(88, 88);
         int[] moves = {0};
         OcrPickupController.Host host = new OcrPickupController.Host() {
-            public Rect position() { return new Rect(position); }
+            public View anchor() { return view; }
+            public Rect position() {
+                bubbleParams.width=position.width(); bubbleParams.height=position.height();
+                bubbleParams.x=position.left; bubbleParams.y=position.top;
+                realWindows.updateViewLayout(view,bubbleParams);
+                return new Rect(position);
+            }
             public Rect move(int x, int y) {
                 moves[0]++;
                 position.offsetTo(Math.max(0, Math.min(x, screen.widthPixels-position.width())),
                         Math.max(0, Math.min(y, screen.heightPixels-position.height())));
+                bubbleParams.x=position.left; bubbleParams.y=position.top;
+                realWindows.updateViewLayout(view,bubbleParams);
                 return new Rect(position);
             }
             public void save() {}
@@ -75,7 +85,6 @@ final class OcrInteractionRegressionValidation {
         };
         AtomicReference<OcrPickupController> owner = new AtomicReference<>();
         AtomicReference<View.OnTouchListener> listener = new AtomicReference<>();
-        View view = new View(app);
         boolean ready = MainActivity.ScreenCaptureService.READY;
         OcrLanguageSettings.Language language = OcrLanguageSettings.get(app).language();
         long[] lastFrame = {0};
@@ -90,6 +99,7 @@ final class OcrInteractionRegressionValidation {
         };
         try {
             main(test, () -> {
+                realWindows.addView(view,bubbleParams);
                 MainActivity.ScreenCaptureService.READY = true;
                 OcrLanguageSettings.get(app).setLanguage(OcrLanguageSettings.Language.ENGLISH);
                 owner.set(new OcrPickupController(context, host)); listener.set(owner.get().listener());
@@ -278,6 +288,7 @@ final class OcrInteractionRegressionValidation {
             main(test, () -> {
                 measuring[0]=false; Choreographer.getInstance().removeFrameCallback(frames);
                 if (owner.get()!=null) owner.get().close();
+                if (view.isAttachedToWindow()) realWindows.removeViewImmediate(view);
                 check(windows.isEmpty() && mounts[0]==removals[0], "All OCR windows are released exactly once");
                 MainActivity.ScreenCaptureService.READY=ready;
                 OcrLanguageSettings.get(app).setLanguage(language);
