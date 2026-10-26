@@ -99,7 +99,7 @@ public final class DictionaryActivity extends FloatingSearchPageActivity {
                     }
                 });
             }, this::report);
-        } else repository.execute(repository::reload, error -> {
+        } else repository.execute(() -> {}, error -> {
             if (isFinishing() || isDestroyed() || downloads || pageGeneration != generation) return;
             if (error != null) { report(error); return; }
             installed();
