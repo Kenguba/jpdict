@@ -50,7 +50,7 @@ abstract class FloatingSearchPageActivity extends Activity {
                 close ? SearchIconView.Kind.CLOSE : SearchIconView.Kind.BACK);
         back.setPadding(pageDp(11), pageDp(11), pageDp(11), pageDp(11));
         back.setContentDescription(close ? "关闭设置" : "返回");
-        back.setOnClickListener(v -> FloatingSearchRoutes.finishPage(this));
+        back.setOnClickListener(v -> onBackPressed());
         toolbar.addView(back, new LinearLayout.LayoutParams(pageDp(44), pageDp(44)));
         TextView label = new TextView(this);
         label.setText(title);
