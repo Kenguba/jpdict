@@ -23,3 +23,9 @@ description: JPDict Android APK 的版本分配、构建、打包、签名、Rel
 ## Agent
 
 简单核对和日志整理可以委托可用低成本子 Agent；实际发布由明确授权下的 Agent 顺序执行，复杂故障升级给主 Agent，不硬编码模型或多级 Agent。
+
+## 自动构建约定
+
+- 推 main 即触发其云端构建工作流并发布 Release（阶段默认 R），不看提交信息、不挑路径；非发布任务推送前须意识到会触发正式发版
+- 手动触发可选阶段 A、D、B、T、C、R、P、H；无签名密钥时只出 debug 包、不发 Release
+- 本仓构建地点固定为 GitHub 云端，与 jpcard 的 github 通道词等价；jpcard 不带 github 时走四台免费机，本仓无免费机线
